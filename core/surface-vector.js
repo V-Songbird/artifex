@@ -45,8 +45,14 @@ const RASTER_ONLY = {
 /** Trim a number for output: short enough to keep files small, exact enough to plot. */
 function n(v) {
   if (!Number.isFinite(v)) throw new Error(`vector surface: non-finite coordinate ${v}`);
-  // String(-0) is already "0" in JavaScript, so no negative-zero guard is
-  // needed here. An earlier one was dead code that no check could fail.
+  // String(-0) is already "0" in JavaScript, so no negative-zero guard is needed
+  // HERE, and an earlier one was dead code that no check could fail.
+  //
+  // That is a fact about String(), not a general rule, and reading it as one
+  // cost this project a bug: toFixed(6) renders -0 as "-0.000000", so the same
+  // pattern in a coordinate KEY does need the guard. See examples/contours.js.
+  // Math.round below returns -0 for a small negative input, and String turns it
+  // into "0" -- which is why this line is safe and that one was not.
   return String(Math.round(v * 1e4) / 1e4);
 }
 

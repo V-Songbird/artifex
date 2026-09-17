@@ -12,7 +12,7 @@
 
 'use strict';
 
-const { validate, frameT, frameCount, solve } = require('./piece.js');
+const { validate, frameT, frameCount, frameDen, clockAt, solve } = require('./piece.js');
 const { VectorSurface } = require('./surface-vector.js');
 
 /**
@@ -30,10 +30,11 @@ function drawFrame(surface, piece, solved, t, opt = {}) {
   const scale = opt.scale === undefined ? 1 : opt.scale;
   if (!Number.isFinite(scale) || scale <= 0) throw new Error('render: scale must be a positive finite number');
   const tt = frameT(piece, t);
+  const clock = clockAt(piece, t);
   if (surface.save) surface.save();
   if (scale !== 1 && surface.scale) surface.scale(scale, scale);
   try {
-    piece.draw(surface, solved.state, tt);
+    piece.draw(surface, solved.state, tt, clock);
   } finally {
     if (surface.restore) surface.restore();
   }
@@ -71,12 +72,18 @@ function renderVector(piece, opt = {}) {
  * The playheads of every drawn frame, in order. One entry for a still.
  * A video export walks exactly this list: the frames are a property of the
  * piece, never of how fast the machine happened to be.
+ *
+ * It walks the lattice directly rather than sampling it. Sampling i/(n-1) and
+ * letting frameT round is what dropped the middle frame of every timeline in
+ * this library for as long as the function existed -- n samples over a lattice
+ * that had n+1 positions, with Math.round quietly choosing which one to lose.
  */
 function playheads(piece) {
   const p = validate(piece);
   const n = frameCount(p);
   if (n === 1) return [0];
-  return Array.from({ length: n }, (_, i) => frameT(p, i / (n - 1)));
+  const den = frameDen(p);
+  return Array.from({ length: n }, (_, i) => i / den);
 }
 
 module.exports = { drawFrame, renderVector, playheads };

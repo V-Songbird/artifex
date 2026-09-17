@@ -48,7 +48,11 @@ test('size must be a positive finite box, and carries no other keys', () => {
 test('A STILL IS A LEGAL PIECE, and a timeline is opt-in', () => {
   assert.doesNotThrow(() => validate({ ...minimal(), time: null }));
   assert.doesNotThrow(() => validate({ ...minimal(), time: { duration: 4, hz: 12 } }));
-  assert.doesNotThrow(() => validate({ ...minimal(), time: { duration: 4, hz: 12, hold: 1 } }));
+  assert.doesNotThrow(() => validate({ ...minimal(), time: { duration: 4, hz: 12, loop: true } }));
+  // `hold` was accepted by the contract, asserted by this very test, and read
+  // by nothing -- a declaration that could not fail, two commits after the same
+  // disease was cured for `params`. It is gone, and it is refused by name.
+  assert.throws(() => validate({ ...minimal(), time: { duration: 4, hz: 12, hold: 1 } }), /unknown key\(s\) in time: hold/);
   assert.throws(() => validate({ ...minimal(), time: { duration: 4, hz: 12, fps: 24 } }), /unknown key\(s\) in time: fps/);
   assert.throws(() => validate({ ...minimal(), time: { duration: 0, hz: 12 } }), /time\.duration must be a positive/);
 });
@@ -64,9 +68,12 @@ test('a timeline quantises to the drawn-frame grid, and clamps outside [0,1]', (
   assert.equal(frameCount(p), 20);
   assert.equal(frameT(p, 0), 0);
   assert.equal(frameT(p, 1), 1);
-  assert.equal(frameT(p, 0.5), 0.5);
+  // 20 frames span [0,1] inclusive, so they sit at i/19 and NOTHING lands on
+  // 0.5. The old lattice put them at i/20 -- 21 positions for 20 frames -- and
+  // that spare position is the frame every video export used to drop.
+  assert.equal(frameT(p, 0.5), 10 / 19);
   // 0.47 * 20 = 9.4 -> frame 9 -> 0.45
-  assert.ok(Math.abs(frameT(p, 0.47) - 0.45) < 1e-12);
+  assert.ok(Math.abs(frameT(p, 0.47) - 9 / 19) < 1e-12);
   assert.equal(frameT(p, -3), 0);
   assert.equal(frameT(p, 7), 1);
 });

@@ -14,7 +14,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { validate, solve, frameT, frameCount } = require('../core/piece.js');
+const { validate, solve, frameT, frameCount, frameDen, frameIndex } = require('../core/piece.js');
 const { renderVector, drawFrame, playheads } = require('../core/render.js');
 const { VectorSurface } = require('../core/surface-vector.js');
 const font = require('../examples/stroke-font.js');
@@ -30,18 +30,35 @@ function grab(fn) {
 // ---------------------------------------------------------------------------
 // A recording surface. Canvas2D-shaped, records what it was asked to do.
 //
-// It exists because three of the five examples are raster and Node has no
-// canvas, so without it a raster piece's `draw` could only be claimed to work.
-// It records STYLE as well as geometry, because the difference between a line
-// arriving and a finished line fading in lives entirely in the style.
+// It exists because Node has no canvas, so without it a raster piece's `draw`
+// could only be claimed to work. It records STYLE as well as geometry, because
+// the difference between a line arriving and a finished line fading in lives
+// entirely in the style.
+//
+// IT IMPLEMENTS THE WHOLE SURFACE, AND A TEST BELOW ENFORCES THAT. It used to
+// implement a third of it, and because it is what `npm test` hands a piece, it
+// was the real drawing API: anything it lacked failed the suite with a bare
+// TypeError. Five independent authors writing five unrelated pieces all
+// discovered this and all redesigned their work around it -- no curves, no
+// clip, no gradients, no transform stack. One of them lost Beziers, clipping
+// and gradients and called the result "materially cruder". `roundRect` was the
+// sharpest case: core/surface-vector.js carries a comment saying it exists
+// "because hard-edged graphic work has no other way to make one", and using it
+// failed the suite.
+//
+// A measuring instrument that silently narrows what can be measured is worse
+// than no instrument. This is the fix, and the drift guard is what keeps it.
 // ---------------------------------------------------------------------------
 class Recorder {
   constructor() {
     this.ops = [];
     this.arcs = [];
-    this._s = { fillStyle: '#000', strokeStyle: '#000', lineWidth: 1, globalAlpha: 1, lineCap: 'butt', lineJoin: 'miter' };
+    this._s = {
+      fillStyle: '#000', strokeStyle: '#000', lineWidth: 1, globalAlpha: 1,
+      lineCap: 'butt', lineJoin: 'miter', miterLimit: 10, lineDashOffset: 0,
+    };
+    this._dash = [];
     this._stack = [];
-    this._k = 1;
     // A REAL transform. Recording `scale` without applying it would make the
     // 1x/8x check measure this class instead of the piece, and it would pass
     // for the wrong reason -- which is the failure mode this whole project is
@@ -56,19 +73,39 @@ class Recorder {
     }
   }
 
-  save() { this._stack.push({ ...this._s, k: this._k, m: this._m }); this.ops.push('save'); }
+  // ---- state ----
+  save() { this._stack.push({ ...this._s, m: this._m, dash: this._dash }); this.ops.push('save'); }
 
   restore() {
     const p = this._stack.pop();
-    if (p) { this._k = p.k; this._m = p.m; delete p.k; delete p.m; this._s = p; }
+    if (p) { this._m = p.m; this._dash = p.dash; delete p.m; delete p.dash; this._s = p; }
     this.ops.push('restore');
   }
 
-  scale(x, y) {
-    this._m = [this._m[0] * x, this._m[1] * x, this._m[2] * y, this._m[3] * y, this._m[4], this._m[5]];
-    this._k *= Math.sqrt(Math.abs(x * y));
-    this.ops.push(`scale(${x},${y})`);
+  // ---- transform ----
+  transform(a, b, c, d, e, f) { this._mul([a, b, c, d, e, f]); this.ops.push('transform'); }
+
+  setTransform(a, b, c, d, e, f) { this._m = [a, b, c, d, e, f]; this.ops.push('setTransform'); }
+
+  resetTransform() { this._m = [1, 0, 0, 1, 0, 0]; this.ops.push('resetTransform'); }
+
+  translate(x, y) { this._mul([1, 0, 0, 1, x, y]); this.ops.push('translate'); }
+
+  scale(x, y) { this._mul([x, 0, 0, y, 0, 0]); this.ops.push(`scale(${x},${y})`); }
+
+  rotate(a) { this._mul([Math.cos(a), Math.sin(a), -Math.sin(a), Math.cos(a), 0, 0]); this.ops.push('rotate'); }
+
+  _mul(m) {
+    const o = this._m;
+    this._m = [
+      o[0] * m[0] + o[2] * m[1], o[1] * m[0] + o[3] * m[1],
+      o[0] * m[2] + o[2] * m[3], o[1] * m[2] + o[3] * m[3],
+      o[0] * m[4] + o[2] * m[5] + o[4], o[1] * m[4] + o[3] * m[5] + o[5],
+    ];
   }
+
+  /** Uniform scale of the current transform, as the vector surface computes it. */
+  get _k() { return Math.sqrt(Math.abs(this._m[0] * this._m[3] - this._m[1] * this._m[2])); }
 
   _x(x, y) { return this._m[0] * x + this._m[2] * y + this._m[4]; }
 
@@ -87,32 +124,127 @@ class Recorder {
     return [r(px), r(py)];
   }
 
+  /** Extend the box by a radius around a point, in device units. */
+  _rad(x, y, rad) {
+    const k = rad * this._k;
+    this._pt(x, y);
+    const cx = this._x(x, y);
+    const cy = this._y(x, y);
+    this._box[0] = Math.min(this._box[0], cx - k);
+    this._box[1] = Math.min(this._box[1], cy - k);
+    this._box[2] = Math.max(this._box[2], cx + k);
+    this._box[3] = Math.max(this._box[3], cy + k);
+    return k;
+  }
+
   get bbox() { return this._box; }
 
+  // ---- path ----
   beginPath() { this.ops.push('beginPath'); }
+
+  closePath() { this.ops.push('closePath'); }
 
   moveTo(x, y) { this.ops.push(`M${this._pt(x, y).join(',')}`); }
 
   lineTo(x, y) { this.ops.push(`L${this._pt(x, y).join(',')}`); }
 
-  rect(x, y, w, h) { const a = this._pt(x, y); this._pt(x + w, y + h); this.ops.push(`R${a.join(',')},${r(w * this._k)},${r(h * this._k)}`); }
+  bezierCurveTo(a, b, c, d, e, f) {
+    this.ops.push(`C${this._pt(a, b).join(',')},${this._pt(c, d).join(',')},${this._pt(e, f).join(',')}`);
+  }
 
-  fillRect(x, y, w, h) { const a = this._pt(x, y); this._pt(x + w, y + h); this.ops.push(`FR${a.join(',')},${r(w * this._k)},${r(h * this._k)}:${this._s.fillStyle}`); }
+  quadraticCurveTo(a, b, c, d) {
+    this.ops.push(`Q${this._pt(a, b).join(',')},${this._pt(c, d).join(',')}`);
+  }
 
-  arc(x, y, rad, a, b) {
-    const key = `A${this._pt(x, y).join(',')},${r(rad * this._k)}:${this._s.fillStyle}:${r(this._s.globalAlpha)}`;
+  arcTo(x1, y1, x2, y2, rad) {
+    this.ops.push(`T${this._pt(x1, y1).join(',')},${this._pt(x2, y2).join(',')},${r(rad * this._k)}`);
+  }
+
+  rect(x, y, w, h) {
+    const a = this._pt(x, y);
+    this._pt(x + w, y + h);
+    this.ops.push(`R${a.join(',')},${r(w * this._k)},${r(h * this._k)}`);
+  }
+
+  roundRect(x, y, w, h, radii = 0) {
+    const a = this._pt(x, y);
+    this._pt(x + w, y + h);
+    this.ops.push(`RR${a.join(',')},${r(w * this._k)},${r(h * this._k)},${JSON.stringify(radii)}`);
+  }
+
+  arc(x, y, rad, a, b, ccw = false) {
+    // The RADIUS reaches the bounding box and the ANGLES reach the digest.
+    // They used to reach neither: a piece made entirely of discs passed the
+    // 1x/8x check with radii that never scaled, and a change of arc phase or
+    // sweep was invisible to every determinism check in this file.
+    const k = this._rad(x, y, rad);
+    const key = `A${r(this._x(x, y))},${r(this._y(x, y))},${r(k)},${r(a)},${r(b)},${ccw ? 1 : 0}`
+      + `:${paint(this._s.fillStyle)}:${r(this._s.globalAlpha)}`;
     this.ops.push(key);
     this.arcs.push(key);
   }
 
-  fill() { this.ops.push(`fill:${this._s.fillStyle}:${r(this._s.globalAlpha)}`); }
+  ellipse(x, y, rx, ry, rot, a, b, ccw = false) {
+    this._rad(x, y, Math.max(rx, ry));
+    this.ops.push(`E${r(this._x(x, y))},${r(this._y(x, y))},${r(rx * this._k)},${r(ry * this._k)},${r(rot)},${r(a)},${r(b)},${ccw ? 1 : 0}`);
+  }
 
-  stroke() { this.ops.push(`stroke:${this._s.strokeStyle}:${r(this._s.lineWidth * this._k)}`); }
+  // ---- paint ----
+  fill(rule) { this.ops.push(`fill:${paint(this._s.fillStyle)}:${r(this._s.globalAlpha)}${rule ? ':' + rule : ''}`); }
+
+  stroke() { this.ops.push(`stroke:${paint(this._s.strokeStyle)}:${r(this._s.lineWidth * this._k)}`); }
+
+  clip(rule) { this.ops.push(`clip${rule ? ':' + rule : ''}`); }
+
+  fillRect(x, y, w, h) {
+    const a = this._pt(x, y);
+    this._pt(x + w, y + h);
+    this.ops.push(`FR${a.join(',')},${r(w * this._k)},${r(h * this._k)}:${paint(this._s.fillStyle)}`);
+  }
+
+  strokeRect(x, y, w, h) {
+    const a = this._pt(x, y);
+    this._pt(x + w, y + h);
+    this.ops.push(`SR${a.join(',')},${r(w * this._k)},${r(h * this._k)}:${paint(this._s.strokeStyle)}:${r(this._s.lineWidth * this._k)}`);
+  }
+
+  clearRect(x, y, w, h) {
+    const a = this._pt(x, y);
+    this._pt(x + w, y + h);
+    this.ops.push(`XR${a.join(',')},${r(w * this._k)},${r(h * this._k)}`);
+  }
+
+  // ---- dashes ----
+  setLineDash(a) { this._dash = Array.isArray(a) ? a.slice() : []; this.ops.push(`dash=[${this._dash.join(',')}]`); }
+
+  getLineDash() { return this._dash.slice(); }
+
+  // ---- paint servers ----
+  createLinearGradient(x0, y0, x1, y1) { return new RecordedGradient(this, `lg(${r(x0)},${r(y0)},${r(x1)},${r(y1)})`); }
+
+  createRadialGradient(x0, y0, r0, x1, y1, r1) {
+    return new RecordedGradient(this, `rg(${r(x0)},${r(y0)},${r(r0)},${r(x1)},${r(y1)},${r(r1)})`);
+  }
+
+  get markCount() { return this.ops.filter((o) => /^(fill|stroke:|FR|SR)/.test(o)).length; }
 
   get digest() { return this.ops.join('|'); }
 }
 
+class RecordedGradient {
+  constructor(rec, head) { this.rec = rec; this.stops = []; this.head = head; }
+
+  addColorStop(offset, color) { this.stops.push(`${r(offset)}:${color}`); return this; }
+
+  toString() { return `${this.head}{${this.stops.join(';')}}`; }
+}
+
 const r = (v) => (Number.isFinite(v) ? Math.round(v * 1e3) / 1e3 : String(v));
+
+/** Resolve a paint for the digest. A gradient reaches it as its stops, not as
+ *  "[object Object]" -- otherwise two different gradients record identically
+ *  and the determinism checks cannot tell them apart. */
+const paint = (style) => (style instanceof RecordedGradient ? style.toString() : String(style));
 
 function record(raw, seed, t, params) {
   const p = validate(raw);
@@ -124,6 +256,65 @@ function record(raw, seed, t, params) {
 // ---------------------------------------------------------------------------
 // The set
 // ---------------------------------------------------------------------------
+
+test('THE RECORDER IMPLEMENTS THE WHOLE SURFACE, so the suite cannot narrow the art', () => {
+  // The drift guard. Without it the harness fell to a third of the surface and
+  // became the real drawing API by accident -- five independent authors each
+  // discovered it by crashing into it, and each quietly made smaller work.
+  //
+  // `toSVG` is the one exclusion: it is how you read a vector surface's RESULT,
+  // not something a draw function calls.
+  const OUTPUT_ONLY = new Set(['toSVG']);
+  const surface = Object.getOwnPropertyNames(VectorSurface.prototype)
+    .filter((k) => k !== 'constructor' && !k.startsWith('_') && !OUTPUT_ONLY.has(k));
+  const rec = new Recorder();
+
+  const missing = surface.filter((k) => !(k in rec));
+  assert.deepEqual(missing, [],
+    `the test harness is missing ${missing.length} member(s) of the surface it stands in for: `
+    + `${missing.join(', ')}. A piece using one of these works in a browser and in SVG, and `
+    + 'fails npm test with a bare TypeError.');
+
+  // And prove it behaviourally: every drawing call in the vocabulary must run
+  // on BOTH surfaces without throwing. A stub that exists and does nothing
+  // would pass the check above.
+  const calls = [
+    ['beginPath'], ['moveTo', 1, 2], ['lineTo', 3, 4], ['closePath'],
+    ['bezierCurveTo', 1, 2, 3, 4, 5, 6], ['quadraticCurveTo', 1, 2, 3, 4],
+    ['arcTo', 1, 2, 3, 4, 1], ['rect', 0, 0, 5, 5], ['roundRect', 0, 0, 5, 5, 1],
+    ['arc', 5, 5, 3, 0, 1], ['ellipse', 5, 5, 3, 2, 0, 0, 1],
+    ['fill'], ['stroke'], ['clip'], ['fillRect', 0, 0, 2, 2],
+    ['strokeRect', 0, 0, 2, 2],
+    ['save'], ['translate', 1, 1], ['rotate', 0.1], ['scale', 2, 2],
+    ['transform', 1, 0, 0, 1, 1, 1], ['setTransform', 1, 0, 0, 1, 0, 0],
+    ['resetTransform'], ['restore'],
+    ['setLineDash', [2, 1]], ['getLineDash'],
+    ['createLinearGradient', 0, 0, 1, 1], ['createRadialGradient', 0, 0, 0, 1, 1, 1],
+  ];
+  for (const [name, ...args] of calls) {
+    for (const g of [new Recorder(), new VectorSurface({ w: 10, h: 10 })]) {
+      assert.doesNotThrow(() => g[name](...args), `${g.constructor.name}.${name}()`);
+    }
+  }
+
+  // `clearRect` is the one op the two surfaces are MEANT to disagree about: a
+  // raster piece may erase, and SVG has no eraser. The recorder takes it, the
+  // vector surface refuses it BY NAME, and that difference is exactly what
+  // declaring an output is for.
+  assert.doesNotThrow(() => new Recorder().clearRect(0, 0, 1, 1));
+  assert.throws(() => new VectorSurface({ w: 10, h: 10 }).clearRect(0, 0, 1, 1),
+    /clearRect\(\) cannot erase/);
+
+  // Every style property must be settable and readable on both.
+  for (const [k, v] of [['fillStyle', '#123'], ['strokeStyle', '#456'], ['lineWidth', 2],
+    ['globalAlpha', 0.5], ['lineCap', 'round'], ['lineJoin', 'bevel'],
+    ['miterLimit', 3], ['lineDashOffset', 1]]) {
+    for (const g of [new Recorder(), new VectorSurface({ w: 10, h: 10 })]) {
+      g[k] = v;
+      assert.equal(g[k], v, `${g.constructor.name}.${k}`);
+    }
+  }
+});
 
 test('there is never exactly one example', () => {
   // One example is a template, and a template is a scope.
@@ -465,10 +656,60 @@ test('the playhead is quantised to the drawn-frame grid for every timeline', () 
   for (const n of NAMES) {
     const p = validate(EXAMPLES[n]);
     if (!p.time) continue;
-    const n_ = p.time.duration * p.time.hz;
+    // Against the lattice the piece actually has, not against duration*hz --
+    // those were two different numbers whenever the product was not an integer.
+    const den = frameDen(p);
     for (const t of [0.013, 0.37, 0.61, 0.999]) {
       const q = frameT(p, t);
-      assert.ok(Math.abs(q * n_ - Math.round(q * n_)) < 1e-9, `${p.name}: ${t} -> ${q} is off the grid`);
+      assert.ok(Math.abs(q * den - Math.round(q * den)) < 1e-9, `${p.name}: ${t} -> ${q} is off the grid`);
     }
   }
+});
+
+// ---- the instrument, and the delivery tool ---------------------------------
+
+test('the recorder sees an arc as an area, not as a point', () => {
+  // The 1x/8x check reads the recorder's bounding box. It used to take only the
+  // arc's CENTRE, so a piece made entirely of discs would have passed with radii
+  // that never scaled at all. `drift` is such a piece and passed only because of
+  // its full-bleed background.
+  const g = new Recorder();
+  g.arc(50, 50, 20, 0, Math.PI * 2);
+  assert.deepEqual(g.bbox, [30, 30, 70, 70], 'the radius must reach the box');
+
+  const big = new Recorder();
+  big.scale(4, 4);
+  big.arc(50, 50, 20, 0, Math.PI * 2);
+  assert.deepEqual(big.bbox, [120, 120, 280, 280], 'and it must scale with the transform');
+});
+
+test('the recorder sees an arc sweep, so a change of phase cannot hide', () => {
+  // The angles used to be discarded, which made a change of arc phase or sweep
+  // invisible to the determinism, frame-distinctness and seed-difference checks.
+  const a = new Recorder();
+  a.arc(10, 10, 5, 0, Math.PI);
+  const b = new Recorder();
+  b.arc(10, 10, 5, Math.PI, Math.PI * 2);
+  assert.notEqual(a.digest, b.digest, 'two different sweeps recorded identically');
+
+  const ccw = new Recorder();
+  ccw.arc(10, 10, 5, 0, Math.PI, true);
+  assert.notEqual(a.digest, ccw.digest, 'and direction is part of the mark');
+});
+
+test('the page builder refuses to write a bundle with a hole in it', () => {
+  // The delivery tool used to exit 0 over a page that threw on load and rendered
+  // nothing -- every example, not just the new one -- while every other check
+  // stayed green.
+  const { modules, checkResolvable } = require('../tools/build-page.js');
+  const real = modules();
+
+  assert.ok(real.includes('examples/index.js'), 'the index is bundled');
+  assert.equal(real[real.length - 1], 'examples/index.js', 'and it comes last, because it requires the others');
+  for (const n of NAMES) assert.ok(real.includes(`examples/${n}.js`), `${n} is discovered, not listed`);
+  assert.doesNotThrow(() => checkResolvable(real));
+
+  const e = grab(() => checkResolvable(real.filter((m) => m !== 'core/rand.js')));
+  assert.match(e.message, /would throw on load and render nothing/);
+  assert.match(e.message, /core\/rand\.js, which is not bundled/);
 });

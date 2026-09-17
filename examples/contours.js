@@ -162,7 +162,17 @@ function marchingSquares(f, cols, rows, level, out) {
   return out;
 }
 
-const key = (p) => `${p[0].toFixed(6)},${p[1].toFixed(6)}`;
+// `|| 0` collapses -0 onto 0. Without it, two identical points computed by
+// different arithmetic -- one landing on -1e-17, the other on +1e-17 -- key as
+// "-0.000000" and "0.000000" and stop matching. String(-0) is already "0", so
+// an earlier guard elsewhere in this project was dead code and was deleted;
+// toFixed is NOT the same and the lesson does not carry over. On a tessellation
+// this exact hole cut sixteen strands dead in the middle of the sheet with
+// nothing thrown. Here the grid never goes negative, so it has never fired --
+// which is precisely why it needs a test rather than an argument.
+const key = (p) => `${q6(p[0])},${q6(p[1])}`;
+
+const q6 = (v) => (Math.round(v * 1e6) / 1e6 || 0).toFixed(6);
 
 /**
  * Join segments end to end into polylines. Endpoints on a shared cell edge are

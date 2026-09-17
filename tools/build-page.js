@@ -16,19 +16,70 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
-const MODULES = [
-  'core/piece.js',
-  'core/rand.js',
-  'core/surface-vector.js',
-  'core/render.js',
-  'examples/stroke-font.js',
-  'examples/drift.js',
-  'examples/specimen.js',
-  'examples/readout.js',
-  'examples/partition.js',
-  'examples/contours.js',
-  'examples/index.js',
-];
+/**
+ * The modules to bundle, DISCOVERED rather than listed.
+ *
+ * This was a hand-maintained array, which made it a second place that had to
+ * agree with examples/index.js. When it did not, the build printed a success
+ * line and exited 0, and the page then threw
+ *
+ *     Uncaught Error: module not bundled: examples/<name>.js
+ *
+ * on load and rendered NOTHING -- not just the new piece, every piece -- while
+ * the test suite, the mutation suite, the lint and the example renderer all
+ * stayed green. Four of five authors adding an example hit it. The one artefact
+ * a human actually looks at was the one with no check on it.
+ *
+ * A list cannot disagree with the directory it is derived from.
+ */
+function modules() {
+  const files = (dir) => fs.readdirSync(path.join(ROOT, dir))
+    .filter((f) => f.endsWith('.js'))
+    .sort()
+    .map((f) => dir + '/' + f);
+  // index.js last: it requires the others.
+  return [
+    ...files('core'),
+    ...files('examples').filter((f) => f !== 'examples/index.js'),
+    'examples/index.js',
+  ];
+}
+
+const MODULES = modules();
+
+/**
+ * Resolve every require inside every bundled module exactly as the page's own
+ * __resolve does, and refuse to write a bundle with a hole in it.
+ *
+ * Discovery above removes the fault class; this catches what discovery cannot:
+ * a typo, or a module reaching outside the bundled directories. A build that
+ * cannot produce a working page must say so instead of exiting 0.
+ */
+function checkResolvable(ids) {
+  const have = new Set(ids);
+  const resolve = (from, spec) => {
+    if (spec[0] !== '.') return spec;
+    const base = from.split('/').slice(0, -1);
+    for (const part of spec.split('/')) {
+      if (part === '.') continue;
+      else if (part === '..') base.pop();
+      else base.push(part);
+    }
+    return base.join('/');
+  };
+  const bad = [];
+  for (const id of ids) {
+    const src = fs.readFileSync(path.join(ROOT, id), 'utf8');
+    for (const m of src.matchAll(/require\('([^']+)'\)/g)) {
+      if (m[1].startsWith('node:')) continue;
+      const target = resolve(id, m[1]);
+      if (!have.has(target)) bad.push(id + ' requires ' + m[1] + ' -> ' + target + ', which is not bundled');
+    }
+  }
+  if (bad.length) {
+    throw new Error('build: this page would throw on load and render nothing.\n  ' + bad.join('\n  '));
+  }
+}
 
 function wrap(rel) {
   const src = fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -65,6 +116,10 @@ function __require(from) {
 `;
 
 function html(bundle) {
+  // Counted, never written out: the word "Five" shipped in the delivered page
+  // for as long as there were five examples, and stayed there when there were six.
+  const count = MODULES.filter((m) => m.startsWith('examples/')
+    && m !== 'examples/index.js' && m !== 'examples/stroke-font.js').length;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -112,8 +167,8 @@ function html(bundle) {
 <div class="wrap">
   <aside>
     <h1>Artifex</h1>
-    <p class="sub">Five idioms that break each other's assumptions. The seed and
-    the playhead are the only inputs.</p>
+    <p class="sub">${count} idioms that break each other's assumptions. The seed
+    and the playhead are the only inputs.</p>
 
     <div class="pieces" id="pieces"></div>
 
@@ -373,6 +428,7 @@ select(names[0]);
 }
 
 function main() {
+  checkResolvable(MODULES);
   const bundle = MODULES.map(wrap).join('\n');
   const page = html(bundle);
   const out = path.join(ROOT, 'out');
@@ -382,4 +438,8 @@ function main() {
   console.log(`${path.relative(ROOT, file)}  ${(Buffer.byteLength(page) / 1024).toFixed(1)} kB  ${MODULES.length} modules, no dependencies`);
 }
 
-main();
+// Requirable, so the resolution check can be tested. Without this the only
+// check the delivery tool has would itself be unchecked.
+if (require.main === module) main();
+
+module.exports = { modules, checkResolvable };

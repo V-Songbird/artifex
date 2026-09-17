@@ -112,13 +112,43 @@ passed every check last time.
   size: { w, h },                 // the DESIGN BOX. It never changes.
   state: () => ({}),              // a fresh object per solve
   build: [['stage name', fn]],    // pure in the seed; named, so a throw is reportable
-  draw(surface, state, t),        // pure in (state, t)
+  draw(surface, state, t, clock), // pure in (state, t). t is NORMALISED, [0,1]
   seed: 1,                        // zero is a seed
-  time: null,                     // or { duration, hz, hold? }
+  time: null,                     // or { duration, hz, loop? }
   outputs: ['raster'],            // add 'vector' to claim plotter/print output
   params: {},                     // declared knobs, each of which must move the output
 }
 ```
+
+**`t` is normalised and quantised**: always in `[0, 1]`, always on the drawn-frame
+grid, never seconds and never a frame number. The fourth argument is where those
+live:
+
+```js
+draw(g, s, t, clock) {
+  clock.frame      // which drawn frame this is, 0 .. frames-1
+  clock.frames     // how many there are
+  clock.seconds    // where that frame sits in the piece's own time
+  clock.hz         // and the rate it was declared at
+  clock.loop       // whether t=1 is t=0 again
+}
+```
+
+Before this existed, a piece with a fixed timestep had to restate its own
+`duration` and `hz` as constants to recover a frame index — one fact in two
+places, and editing the timeline without editing the constants indexed the wrong
+frame in silence.
+
+**Declared parameters arrive as `state.params.<name>`**, already validated
+against the range you declared. An unknown or out-of-range one is refused by
+name.
+
+**`loop` decides where the frames sit**, and it is not cosmetic. A looping piece
+has n frames at `i/n` and `t=1` is `t=0` again, so it can repeat seamlessly. A
+piece that does not loop has n frames at `i/(n-1)` and its last frame is the
+completed one, so a reveal finishes. Not being able to say which is how a video
+export in this library came to drop its middle frame, for every timeline, for as
+long as the walk existed.
 
 The **design box never changes**. Aspect ratio, device scale and output medium
 are render-time choices — that is the whole reason one piece serves four
@@ -134,10 +164,16 @@ outputs.
 | a plotter / print SVG | `renderVector(piece)` — declare `outputs: ['raster','vector']` first |
 
 **Chain your segments before you draw them.** A plotter lifts the pen between
-paths and lifting is the slow, ugly part; `contours` turns 6021 segments into 47
-pen-down paths, and it matches endpoints exactly rather than within a tolerance,
-because points computed by the same expression from the same inputs are
-bit-identical.
+paths and lifting is the slow, ugly part. There is **no chaining primitive in
+this library yet** — `examples/contours.js` has a private `chain()` that turns
+6021 segments into 47 pen-down paths, and it is worth reading and copying. It
+matches endpoints exactly rather than within a tolerance, because points computed
+by the same expression from the same inputs are bit-identical.
+
+Copy the key function with its guard. `String(-0)` is `"0"`, but
+`(-0).toFixed(6)` is `"-0.000000"` — so two identical points computed different
+ways can key differently and stop matching. On a tessellation that cut sixteen
+strands dead in the middle of the sheet, with nothing thrown.
 
 **A raster check must render into its own canvas** created with
 `willReadFrequently: true`. A displayed canvas is GPU-rasterised until the
@@ -196,8 +232,12 @@ produced one beautiful seed. Render nine and look at all of them.
   re-rolled, not of the seed.
 - **A cached layer may not read the playhead.** It freezes the frame it was built
   on and the piece silently stops animating there. One did, for four months.
-- **Quantise the whole frame, not just the reveal.** Advance a simulation to the
-  drawn playhead and draw *there*, or the motion slides under the stepped drawing.
+- **Solve a simulation in `build`; make `draw` a lookup.** Advancing a system
+  inside `draw` makes `draw` stateful, so landing on t=0.3 gives whatever the
+  previous call left behind and the piece is unscrubbable. Step the whole
+  trajectory once, store a snapshot per drawn frame, and have `draw` read
+  `clock.frame`. Quantise the whole frame, not just the reveal: a simulation
+  advanced continuously under a stepped drawing slides.
 - **A straight run can vanish.** Curvature-based resampling can drop a two-point
   stroke below a station minimum. A letter lost its crossbar that way, and the
   page read as a broken font rather than a caller error.

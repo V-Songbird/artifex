@@ -52,8 +52,8 @@ const MUTATIONS = [
   {
     why: 'the playhead is not quantised to the drawn-frame grid',
     file: 'core/piece.js',
-    from: '  return Math.min(1, Math.round(tt * n) / n);',
-    to: '  return tt;',
+    from: '  return frameIndex(piece, t) / frameDen(piece);',
+    to: '  return Math.min(1, Math.max(0, t));',
     expect: 'a timeline quantises to the drawn-frame grid, and clamps outside [0,1]',
   },
   {
@@ -259,6 +259,83 @@ const MUTATIONS = [
     to: 'setTransform(a, b, c, d, e, f) { this._st.m = mul(this._st.m, [a, b, c, d, e, f]); return this; }',
     expect: 'setTransform REPLACES the transform where transform() multiplies it',
   },
+
+  // --- the frame lattice, after the field test found it dropping frames ------
+  {
+    why: 'a piece that does not loop is walked on the looping lattice, so a frame is lost',
+    file: 'core/piece.js',
+    from: '  return piece.time.loop ? n : n - 1;',
+    to: '  return n;',
+    expect: 'playheads visits EVERY drawn frame exactly once, and none of them twice',
+  },
+  {
+    why: 'playheads samples the grid instead of walking it -- the original dropped-frame bug',
+    file: 'core/render.js',
+    from: '  return Array.from({ length: n }, (_, i) => i / den);',
+    to: '  return Array.from({ length: n }, (_, i) => frameT(p, i / (n - 1)));',
+    expect: 'playheads visits EVERY drawn frame exactly once, and none of them twice',
+  },
+  {
+    why: 'a looping playhead does not wrap, so t=1 is a frame past the end',
+    file: 'core/piece.js',
+    from: '    return Math.round(tt * n) % n;',
+    to: '    return Math.round(tt * n);',
+    expect: 'the frame index is an integer in [0, frames-1] wherever the playhead lands',
+  },
+  {
+    why: 'the clock reports seconds against the duration instead of the draw rate',
+    file: 'core/piece.js',
+    from: '    seconds: piece.time ? frame / piece.time.hz : 0,',
+    to: '    seconds: piece.time ? frame / piece.time.duration : 0,',
+    expect: 'draw is handed a clock, so a piece need not restate its own timeline',
+  },
+  {
+    why: 'draw is handed the playhead and nothing else, so a piece must restate its own timeline',
+    file: 'core/render.js',
+    from: '    piece.draw(surface, solved.state, tt, clock);',
+    to: '    piece.draw(surface, solved.state, tt);',
+    expect: 'draw is handed a clock, so a piece need not restate its own timeline',
+  },
+
+  // --- the measuring instrument ---------------------------------------------
+  {
+    why: 'the harness loses a surface operation, and quietly forbids an example from using it',
+    file: 'tests/examples.test.js',
+    from: '  roundRect(x, y, w, h, radii = 0) {',
+    to: '  roundRectRemoved(x, y, w, h, radii = 0) {',
+    expect: 'THE RECORDER IMPLEMENTS THE WHOLE SURFACE, so the suite cannot narrow the art',
+  },
+  {
+    why: 'an arc is recorded as a point, so a piece of pure discs passes the resolution check',
+    file: 'tests/examples.test.js',
+    from: '    const k = this._rad(x, y, rad);',
+    to: '    const k = rad * this._k; this._pt(x, y);',
+    expect: 'the recorder sees an arc as an area, not as a point',
+  },
+  {
+    why: 'an arc forgets its sweep, so a change of phase is invisible to every determinism check',
+    file: 'tests/examples.test.js',
+    from: "    const key = `A${r(this._x(x, y))},${r(this._y(x, y))},${r(k)},${r(a)},${r(b)},${ccw ? 1 : 0}`",
+    to: "    const key = `A${r(this._x(x, y))},${r(this._y(x, y))},${r(k)}`",
+    expect: 'the recorder sees an arc sweep, so a change of phase cannot hide',
+  },
+
+  // --- the delivery tool ------------------------------------------------------
+  {
+    why: 'the page builder writes a bundle with a hole in it and exits 0',
+    file: 'tools/build-page.js',
+    from: '  if (bad.length) {',
+    to: '  if (false) {',
+    expect: 'the page builder refuses to write a bundle with a hole in it',
+  },
+  {
+    why: 'the page builder goes back to a hand-maintained module list',
+    file: 'tools/build-page.js',
+    from: "    ...files('examples').filter((f) => f !== 'examples/index.js'),",
+    to: "    'examples/drift.js',",
+    expect: 'the page builder refuses to write a bundle with a hole in it',
+  },
+
 ];
 
 function copyDir(src, dst) {

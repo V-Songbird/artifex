@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { renderVector, playheads, drawFrame } = require('../core/render.js');
-const { validate, solve } = require('../core/piece.js');
+const { validate, solve, frameT, frameCount, frameDen, frameIndex } = require('../core/piece.js');
 const { VectorSurface } = require('../core/surface-vector.js');
 
 function grab(fn) {
@@ -151,4 +151,89 @@ test('a piece that draws nothing produces a document with no marks', () => {
   // any check whose pass condition is "no difference".
   const p = validate({ name: 'empty', size: { w: 10, h: 10 }, outputs: ['raster', 'vector'], draw() {} });
   assert.equal(renderVector(p).marks, 0);
+});
+
+// ---- the frame lattice, after the walk was found to drop its middle -------
+
+test('playheads visits EVERY drawn frame exactly once, and none of them twice', () => {
+  // The bug this replaces: frameCount said n, frameT quantised onto n+1 lattice
+  // positions, and playheads sampled i/(n-1) -- so Math.round silently dropped
+  // exactly one frame, always the middle one, for every timeline in the
+  // library. A video export was missing its centre frame and nothing said so.
+  for (const time of [
+    { duration: 8, hz: 30 }, { duration: 6, hz: 24 }, { duration: 1, hz: 4 },
+    { duration: 8, hz: 24, loop: true }, { duration: 1.5, hz: 7 }, { duration: 2, hz: 0.5 },
+  ]) {
+    const p = bars({ time });
+    const n = frameCount(p);
+    const ph = playheads(p);
+    const den = frameDen(p);
+    const label = `${time.duration}x${time.hz}${time.loop ? ' loop' : ''}`;
+
+    assert.equal(ph.length, n, `${label}: walked ${ph.length} of ${n} frames`);
+    assert.equal(new Set(ph).size, n, `${label}: a frame was walked twice`);
+    assert.deepEqual(ph, [...ph].sort((a, b) => a - b), `${label}: out of order`);
+
+    // Every walked playhead is a FIXED POINT of the quantiser. If it is not,
+    // the walk and the grid are two different lattices, which is the fault.
+    for (const t of ph) assert.equal(frameT(p, t), t, `${label}: ${t} is not on the grid`);
+
+    // And the walk covers the grid: no index is unreachable.
+    const walked = new Set(ph.map((t) => Math.round(t * den)));
+    for (let i = 0; i < n; i++) assert.ok(walked.has(i), `${label}: frame index ${i} is never walked`);
+  }
+});
+
+test('a looping timeline closes: its last frame is not the first one again', () => {
+  const loop = bars({ time: { duration: 4, hz: 10, loop: true } });
+  const ph = playheads(loop);
+  assert.equal(ph.length, 40);
+  assert.equal(ph[0], 0);
+  assert.equal(ph[39], 39 / 40, 'the last frame stops short of 1');
+  assert.equal(frameT(loop, 1), 0, 't=1 IS t=0 on a loop, so the piece can repeat seamlessly');
+  assert.equal(frameT(loop, 2.25), frameT(loop, 0.25), 'and the playhead wraps');
+});
+
+test('a timeline that does not loop reaches its final state', () => {
+  const once = bars({ time: { duration: 4, hz: 10 } });
+  const ph = playheads(once);
+  assert.equal(ph.length, 40);
+  assert.equal(ph[39], 1, 'the last frame IS the completed one, so a reveal finishes');
+  assert.equal(frameT(once, 1), 1);
+  assert.equal(frameT(once, 7), 1, 'and it clamps rather than wrapping');
+});
+
+test('draw is handed a clock, so a piece need not restate its own timeline', () => {
+  // Before this, `draw` got the playhead and nothing else, so any piece with a
+  // fixed timestep declared its own duration and hz a second time as module
+  // constants -- one fact in two places, and editing the timeline without
+  // editing the constants indexed the wrong frame in silence.
+  let seen = null;
+  const p = validate({
+    name: 'clocked',
+    size: { w: 10, h: 10 },
+    time: { duration: 4, hz: 25 },
+    draw(g, s, t, clock) { seen = clock; },
+  });
+  drawFrame(new VectorSurface(p.size), p, solve(p, 1), 0.5);
+  assert.deepEqual(seen, { frame: 50, frames: 100, seconds: 2, duration: 4, hz: 25, loop: false });
+
+  drawFrame(new VectorSurface(p.size), p, solve(p, 1), 1);
+  assert.equal(seen.frame, 99, 'the last frame index is frames-1, not frames');
+
+  const still = validate({ name: 'unclocked', size: { w: 10, h: 10 }, draw(g, s, t, clock) { seen = clock; } });
+  drawFrame(new VectorSurface(still.size), still, solve(still, 1), 0.7);
+  assert.deepEqual(seen, { frame: 0, frames: 1, seconds: 0, duration: 0, hz: 0, loop: false },
+    'and a still gets a clock that says it has no timeline');
+});
+
+test('the frame index is an integer in [0, frames-1] wherever the playhead lands', () => {
+  for (const time of [{ duration: 3, hz: 11 }, { duration: 3, hz: 11, loop: true }, { duration: 0.4, hz: 9 }]) {
+    const p = bars({ time });
+    const n = frameCount(p);
+    for (let k = -50; k <= 250; k++) {
+      const i = frameIndex(p, k / 200);
+      assert.ok(Number.isInteger(i) && i >= 0 && i < n, `${k / 200} -> ${i} of ${n}`);
+    }
+  }
 });

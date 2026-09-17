@@ -50,7 +50,7 @@ const FIELDS = {
   draw: {
     required: true,
     check: (v) => (typeof v === 'function' ? null : 'must be a function (surface, state, t)'),
-    doc: 'draw(surface, state, t). Pure in (state, t). Must not read a wall '
+    doc: 'draw(surface, state, t, clock). Pure in (state, t). Must not read a wall '
        + 'clock, must not mutate state in a way a later call can see, and must '
        + 'produce the same marks for the same (seed, t).',
   },
@@ -98,17 +98,21 @@ const FIELDS = {
       // its suite failed any piece whose last frame did not carry more marks
       // than its first. See docs/subject-neutrality.md, N6.
       if (v === null) return null;
-      if (!v || typeof v !== 'object') return 'must be null (a still) or { duration, hz, hold? }';
+      if (!v || typeof v !== 'object') return 'must be null (a still) or { duration, hz, loop? }';
       if (!Number.isFinite(v.duration) || v.duration <= 0) return 'time.duration must be a positive finite number of seconds';
       if (!Number.isFinite(v.hz) || v.hz <= 0) return 'time.hz must be a positive finite draw rate';
-      if (v.hold !== undefined && (!Number.isFinite(v.hold) || v.hold < 0)) return 'time.hold must be a non-negative number of seconds';
-      const known = ['duration', 'hz', 'hold'];
+      if (v.loop !== undefined && typeof v.loop !== 'boolean') return 'time.loop must be true or false';
+      const known = ['duration', 'hz', 'loop'];
       const extra = Object.keys(v).filter((k) => !known.includes(k));
       if (extra.length) return `unknown key(s) in time: ${extra.join(', ')}`;
       return null;
     },
-    doc: 'null for a still, or { duration, hz, hold? }. The playhead is the only '
-       + 'clock; nothing may read a wall clock.',
+    doc: 'null for a still, or { duration, hz, loop? }. The playhead is the only '
+       + 'clock; nothing may read a wall clock. `loop` decides where the frames '
+       + 'sit: a looping piece has n frames at i/n and t=1 is t=0 again, so it '
+       + 'can repeat seamlessly; a piece that does not loop has n frames at '
+       + 'i/(n-1) and its last frame is the completed one. Not being able to say '
+       + 'which is how a video export came to drop its middle frame.',
   },
 
   outputs: {
@@ -185,22 +189,72 @@ function validate(piece) {
   return out;
 }
 
+/** Number of distinct drawn frames. 1 for a still. */
+function frameCount(piece) {
+  if (!piece.time) return 1;
+  return Math.max(1, Math.round(piece.time.duration * piece.time.hz));
+}
+
+/**
+ * The denominator of the drawn-frame lattice.
+ *
+ * THIS IS THE FIX FOR A REAL BUG. These functions used to disagree: frameCount
+ * rounded `duration * hz`, frameT divided by the UNROUNDED product, and
+ * playheads walked i/(n-1) over a lattice that had n+1 positions. The result
+ * was that a video export silently dropped exactly one frame -- always the
+ * middle one -- for every timeline in the library. On a piece with a musical
+ * structure the lost frame was the downbeat where the phrase came round again.
+ *
+ * The root cause was not arithmetic. It was that the contract could not say
+ * whether a piece LOOPS, so there was no way to know which lattice was meant.
+ */
+function frameDen(piece) {
+  const n = frameCount(piece);
+  if (n === 1) return 1;
+  return piece.time.loop ? n : n - 1;
+}
+
+/** Which drawn frame a playhead falls on. 0 for a still. */
+function frameIndex(piece, t) {
+  if (!piece.time) return 0;
+  const n = frameCount(piece);
+  if (n === 1) return 0;
+  if (piece.time.loop) {
+    const tt = t - Math.floor(t);            // wraps, so t=1 is t=0 again
+    return Math.round(tt * n) % n;
+  }
+  return Math.round(Math.min(1, Math.max(0, t)) * (n - 1));
+}
+
 /**
  * The drawn-frame grid. A piece is drawn at held playheads, never at continuous
  * ones: advancing a simulation continuously under a stepped drawing makes the
  * motion slide. A still quantises to 0.
  */
 function frameT(piece, t) {
-  const tt = Math.min(1, Math.max(0, t));
   if (!piece.time) return 0;
-  const n = piece.time.duration * piece.time.hz;
-  return Math.min(1, Math.round(tt * n) / n);
+  return frameIndex(piece, t) / frameDen(piece);
 }
 
-/** Number of distinct drawn frames. 1 for a still. */
-function frameCount(piece) {
-  if (!piece.time) return 1;
-  return Math.max(1, Math.round(piece.time.duration * piece.time.hz));
+/**
+ * Everything a piece may know about where it is in its own timeline.
+ *
+ * `draw` used to receive the playhead and nothing else, so any piece with a
+ * fixed timestep had to restate its own `duration` and `hz` as module constants
+ * to recover a frame index -- one fact in two places, and editing the timeline
+ * without editing the constants indexed the wrong frame in silence.
+ */
+function clockAt(piece, t) {
+  const frames = frameCount(piece);
+  const frame = frameIndex(piece, t);
+  return {
+    frame,
+    frames,
+    seconds: piece.time ? frame / piece.time.hz : 0,
+    duration: piece.time ? piece.time.duration : 0,
+    hz: piece.time ? piece.time.hz : 0,
+    loop: piece.time ? !!piece.time.loop : false,
+  };
 }
 
 /**
@@ -242,4 +296,4 @@ function solve(piece, seed, params) {
   return { state, seed: sd, stages: { ms, of: piece.build.length, error } };
 }
 
-module.exports = { FIELDS, OUTPUTS, PieceError, validate, frameT, frameCount, solve };
+module.exports = { FIELDS, OUTPUTS, PieceError, validate, frameT, frameCount, frameDen, frameIndex, clockAt, solve };

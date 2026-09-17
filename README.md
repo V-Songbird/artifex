@@ -57,13 +57,13 @@ Early. What exists and is tested:
 | `examples/` | five pieces spanning idioms that break each other — see [docs/example-set.md](docs/example-set.md) |
 | `tools/build-page.js` | one self-contained HTML file: the live backend, the raster backend at any scale, a transport |
 | `tools/lint-unread.js` | every declared name must have a reader. No build, no browser, no art — it runs first |
-| `tests/` | 96 tests |
-| `tests/negative.js` | 32 mutations, each naming the test it must trip. A suite that has never been red is not evidence. |
+| `tests/` | 105 tests |
+| `tests/negative.js` | 42 mutations, each naming the test it must trip. A suite that has never been red is not evidence. |
 
 ```bash
-npm test            # 96 tests
-npm run negative    # break it on purpose; 32 caught, 0 escaped, 0 misnamed
-npm run lint        # every declared name must have a reader
+npm test            # 105 tests
+npm run negative    # break it on purpose; 42 caught, 0 escaped, 0 misnamed
+npm run lint        # every declared name must have a reader, every contract key a consumer
 npm run examples    # render every example that declares vector, and report what it reached
 npm run page        # build out/index.html, then open it
 ```
