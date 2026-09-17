@@ -216,6 +216,49 @@ const MUTATIONS = [
     to: '  if (false && surface.scale) surface.scale(scale, scale);',
     expect: 'N7 -- macro geometry is preserved from 1x to 8x',
   },
+// --- the accessors that were implemented and never once run ---------------
+  {
+    why: 'strokeRect fills instead of stroking, so it means one thing live and another on export',
+    file: 'core/surface-vector.js',
+    from: 'strokeRect(x, y, w, h) { this.beginPath(); this.rect(x, y, w, h); return this.stroke(); }',
+    to: 'strokeRect(x, y, w, h) { this.beginPath(); this.rect(x, y, w, h); return this.fill(); }',
+    expect: 'strokeRect is a rect and a stroke, so the live path and the vector path agree',
+  },
+  {
+    why: 'resetTransform is a no-op, so a caller escaping a transform stack keeps it',
+    file: 'core/surface-vector.js',
+    from: 'resetTransform() { this._st.m = [1, 0, 0, 1, 0, 0]; return this; }',
+    to: 'resetTransform() { return this; }',
+    expect: 'resetTransform drops the whole transform stack back to identity',
+  },
+  {
+    why: 'a mitre limit is written for joins that have no mitre',
+    file: 'core/surface-vector.js',
+    from: "st.lineJoin === 'miter' && st.miterLimit !== 10 ?",
+    to: 'st.miterLimit !== 10 ?',
+    expect: 'miterLimit reaches the document, and only where it can matter',
+  },
+  {
+    why: 'the dash offset ignores the transform, so a print comes back with screen-sized dashes',
+    file: 'core/surface-vector.js',
+    from: 'stroke-dashoffset="${n(st.lineDashOffset * k)}"',
+    to: 'stroke-dashoffset="${n(st.lineDashOffset)}"',
+    expect: 'a dash offset is written, and scales with the transform like the dashes do',
+  },
+  {
+    why: 'getLineDash hands out the live array, so a caller can change the surface by accident',
+    file: 'core/surface-vector.js',
+    from: 'getLineDash() { return this._st.lineDash.slice(); }',
+    to: 'getLineDash() { return this._st.lineDash; }',
+    expect: 'getLineDash hands back a copy, so a caller cannot reach in and change it',
+  },
+  {
+    why: 'setTransform composes instead of replacing, so a piece cannot escape an outer transform',
+    file: 'core/surface-vector.js',
+    from: 'setTransform(a, b, c, d, e, f) { this._st.m = [a, b, c, d, e, f]; return this; }',
+    to: 'setTransform(a, b, c, d, e, f) { this._st.m = mul(this._st.m, [a, b, c, d, e, f]); return this; }',
+    expect: 'setTransform REPLACES the transform where transform() multiplies it',
+  },
 ];
 
 function copyDir(src, dst) {

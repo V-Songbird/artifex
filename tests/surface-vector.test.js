@@ -294,3 +294,119 @@ test('toSVG is safe to call more than once', () => {
   g.beginPath(); g.rect(0, 0, 1, 1); g.fill();
   assert.equal(g.toSVG(), g.toSVG());
 });
+
+// ---- the five accessors that existed without ever being exercised ----------
+//
+// Found by scanning every declared name for a reader: implemented, wired to
+// real emission, and never once run. Unproven code is a liability whatever it
+// looks like, and the answer for a Canvas2D-shaped surface is not to delete the
+// shape -- a method that works on a canvas and throws on export is a divergence
+// between two outputs the whole design exists to keep identical.
+
+test('strokeRect is a rect and a stroke, so the live path and the vector path agree', () => {
+  const a = S();
+  a.strokeStyle = '#111';
+  a.lineWidth = 3;
+  a.strokeRect(10, 20, 30, 40);
+
+  const b = S();
+  b.strokeStyle = '#111';
+  b.lineWidth = 3;
+  b.beginPath(); b.rect(10, 20, 30, 40); b.stroke();
+
+  assert.equal(a.toSVG(), b.toSVG());
+  assert.match(a.toSVG(), /stroke="#111"/);
+  assert.equal(a.markCount, 1);
+});
+
+test('resetTransform drops the whole transform stack back to identity', () => {
+  const g = S();
+  g.translate(40, 40);
+  g.scale(3, 3);
+  g.rotate(1);
+  g.resetTransform();
+  g.beginPath(); g.moveTo(7, 9); g.lineTo(11, 13); g.stroke();
+  assert.equal(firstPathD(g.toSVG()), 'M7 9L11 13');
+});
+
+test('resetTransform does not survive a restore', () => {
+  // It sets the CTM; it does not pop the stack. A caller that saved a transform
+  // must still get it back, or save/restore means two different things.
+  const g = S();
+  g.save();
+  g.translate(10, 10);
+  g.resetTransform();
+  g.restore();
+  g.beginPath(); g.moveTo(0, 0); g.lineTo(1, 1); g.stroke();
+  assert.equal(firstPathD(g.toSVG()), 'M0 0L1 1');
+});
+
+test('miterLimit reaches the document, and only where it can matter', () => {
+  const on = S();
+  on.lineJoin = 'miter';
+  on.miterLimit = 2;
+  on.beginPath(); on.moveTo(0, 0); on.lineTo(5, 0); on.lineTo(5, 5); on.stroke();
+  assert.match(on.toSVG(), /stroke-miterlimit="2"/);
+  assert.equal(on.miterLimit, 2, 'and it reads back');
+
+  const dflt = S();
+  dflt.beginPath(); dflt.moveTo(0, 0); dflt.lineTo(5, 0); dflt.stroke();
+  assert.doesNotMatch(dflt.toSVG(), /stroke-miterlimit/, 'the default 10 is not written out');
+
+  const round = S();
+  round.lineJoin = 'round';
+  round.miterLimit = 2;
+  round.beginPath(); round.moveTo(0, 0); round.lineTo(5, 0); round.stroke();
+  assert.doesNotMatch(round.toSVG(), /stroke-miterlimit/, 'nor is it written for a join that has no mitre');
+});
+
+test('a dash offset is written, and scales with the transform like the dashes do', () => {
+  // A dash pattern is a LENGTH, so it must scale with the CTM or a dashed line
+  // exported at print scale comes back with screen-sized dashes.
+  const g = S();
+  g.scale(4, 4);
+  g.setLineDash([6, 2]);
+  g.lineDashOffset = 3;
+  g.beginPath(); g.moveTo(0, 0); g.lineTo(10, 0); g.stroke();
+  const svg = g.toSVG();
+  assert.match(svg, /stroke-dasharray="24 8"/);
+  assert.match(svg, /stroke-dashoffset="12"/);
+});
+
+test('an offset with no dash pattern writes nothing', () => {
+  const g = S();
+  g.lineDashOffset = 3;
+  g.beginPath(); g.moveTo(0, 0); g.lineTo(10, 0); g.stroke();
+  assert.doesNotMatch(g.toSVG(), /stroke-dashoffset/);
+});
+
+test('getLineDash hands back a copy, so a caller cannot reach in and change it', () => {
+  const g = S();
+  g.setLineDash([4, 1]);
+  const got = g.getLineDash();
+  assert.deepEqual(got, [4, 1]);
+  got[0] = 999;
+  assert.deepEqual(g.getLineDash(), [4, 1]);
+
+  const given = [7, 2];
+  g.setLineDash(given);
+  given[0] = 999;
+  assert.deepEqual(g.getLineDash(), [7, 2], 'and it took a copy on the way in too');
+});
+
+test('setTransform REPLACES the transform where transform() multiplies it', () => {
+  // Found by the unread-name lint after the other five: the page calls it on a
+  // real canvas, so a piece may too, and a surface that lacks it would throw on
+  // export from a piece that worked live.
+  const replaced = S();
+  replaced.scale(5, 5);
+  replaced.setTransform(2, 0, 0, 2, 10, 10);
+  replaced.beginPath(); replaced.moveTo(1, 1); replaced.lineTo(2, 2); replaced.stroke();
+  assert.equal(firstPathD(replaced.toSVG()), 'M12 12L14 14');
+
+  const multiplied = S();
+  multiplied.scale(5, 5);
+  multiplied.transform(2, 0, 0, 2, 10, 10);
+  multiplied.beginPath(); multiplied.moveTo(1, 1); multiplied.lineTo(2, 2); multiplied.stroke();
+  assert.equal(firstPathD(multiplied.toSVG()), 'M60 60L70 70', 'transform() composes with what was there');
+});

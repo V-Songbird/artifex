@@ -8,14 +8,17 @@ tests that can actually fail.
 const { renderVector } = require('./core/render.js');
 
 const { svg, marks } = renderVector({
-  name: 'lattice',
-  size: { w: 420, h: 420 },
-  outputs: ['raster', 'vector'],
+  name: 'my-piece',
+  size: { w: 420, h: 420 },          // the DESIGN BOX. It never changes.
+  outputs: ['raster', 'vector'],     // 'vector' is a claim, and it is checked
   state: () => ({ cells: [] }),
   build: [['lay the grid', (s) => { /* pure in the seed */ }]],
   draw(g, s, t) { /* pure in (state, t) */ },
 }, { seed: 20260917 });
 ```
+
+Or start from a real one: `require('./examples/contours.js')`. Five of them
+ship, and [none is the starter](docs/example-set.md).
 
 ## The one property everything rests on
 
@@ -53,12 +56,14 @@ Early. What exists and is tested:
 | `core/render.js` | one frame to any surface, at any scale, with the playhead quantised to the drawn-frame grid |
 | `examples/` | five pieces spanning idioms that break each other — see [docs/example-set.md](docs/example-set.md) |
 | `tools/build-page.js` | one self-contained HTML file: the live backend, the raster backend at any scale, a transport |
-| `tests/` | 88 tests |
-| `tests/negative.js` | 26 mutations, each naming the test it must trip. A suite that has never been red is not evidence. |
+| `tools/lint-unread.js` | every declared name must have a reader. No build, no browser, no art — it runs first |
+| `tests/` | 96 tests |
+| `tests/negative.js` | 32 mutations, each naming the test it must trip. A suite that has never been red is not evidence. |
 
 ```bash
-npm test            # 88 tests
-npm run negative    # break it on purpose; 26 caught, 0 escaped, 0 misnamed
+npm test            # 96 tests
+npm run negative    # break it on purpose; 32 caught, 0 escaped, 0 misnamed
+npm run lint        # every declared name must have a reader
 npm run examples    # render every example that declares vector, and report what it reached
 npm run page        # build out/index.html, then open it
 ```
