@@ -119,6 +119,103 @@ const MUTATIONS = [
     to: '  const scale = Math.min(2, opt.scale === undefined ? 1 : opt.scale);',
     expect: 'scale is not capped, so print resolution is reachable',
   },
+
+  // --- the stochastic source ----------------------------------------------
+  {
+    why: 'the two halves of an address run together, so unrelated quantities share a value',
+    file: 'core/rand.js',
+    from: '    h = fnv1a(SEP + property, h);',
+    to: '    h = fnv1a(property, h);',
+    expect: 'the two halves of an address do not run together',
+  },
+  {
+    why: 'the finaliser is dropped, so consecutive indices walk slowly',
+    file: 'core/rand.js',
+    from: '    return mix32(h ^ Math.imul(index | 0, 0x9e3779b1)) / 4294967296;',
+    to: '    return ((h ^ Math.imul(index | 0, 0x9e3779b1)) >>> 0) / 4294967296;',
+    expect: 'near addresses do not give near values',
+  },
+  {
+    why: 'noise2 ignores the field name, so every irregularity has one cause',
+    file: 'core/rand.js',
+    from: "function noise2(R, x, y, name = 'field') {",
+    to: "function noise2(R, x, y, ignored = 'field') { const name = 'field';",
+    expect: 'two named fields are independent at the same point',
+  },
+  {
+    why: 'every fbm octave reads the same field, so the octaves buy nothing',
+    file: 'core/rand.js',
+    from: 'sum += amp * noise2(R, x * (1 << o), y * (1 << o), `${name}/${o}`);',
+    to: 'sum += amp * noise2(R, x * (1 << o), y * (1 << o), name);',
+    expect: 'fbm octaves are separate fields, not one field read at two scales',
+  },
+
+  // --- declared parameters --------------------------------------------------
+  {
+    why: 'a declared parameter never reaches the build, so it cannot move the output',
+    file: 'core/piece.js',
+    from: '    state.params[k] = v;',
+    to: '    state.params[k] = d.value;',
+    expect: 'EVERY DECLARED PARAMETER MOVES THE OUTPUT, at three pins and not two',
+  },
+  {
+    why: 'a parameter outside its declared range is accepted',
+    file: 'core/piece.js',
+    from: '    if (!Number.isFinite(v) || v < d.min || v > d.max) {',
+    to: '    if (false) {',
+    expect: 'an undeclared parameter is refused by name',
+  },
+
+  // --- the examples, which are the real specification -----------------------
+  {
+    why: 'THE CROSSBAR: a two-point straight run is filtered out of a glyph',
+    file: 'examples/stroke-font.js',
+    from: '    for (const run of glyph(ch)) {',
+    to: '    for (const run of glyph(ch).filter((q) => q.length > 2)) {',
+    expect: 'specimen: every run of every glyph survives being drawn',
+  },
+  {
+    why: 'an unknown character quietly draws a different glyph',
+    file: 'examples/stroke-font.js',
+    from: "  if (src === undefined || src === '') return [];",
+    to: "  if (src === undefined || src === '') return glyph('X');",
+    expect: 'specimen: an unknown character is a gap, never a substituted glyph',
+  },
+  {
+    why: 'a line fades up instead of arriving, so every laid dab changes with the playhead',
+    file: 'examples/drift.js',
+    from: '        g.globalAlpha = 0.03 + st.press * 0.05 * (0.5 + grit * 0.9);',
+    to: '        g.globalAlpha = progress * 0.08;',
+    expect: 'drift: THE LINE ARRIVES -- a pen travels, it does not fade up',
+  },
+  {
+    why: 'the subdivision is uniform, so every cell gets the same attention',
+    file: 'examples/partition.js',
+    from: 'const keep = d < maxDepth && w > 15 && h > 15 && (want * 0.95 + grain * 0.32) > 0.44;',
+    to: 'const keep = d < maxDepth && w > 15 && h > 15 && (0.95 + grain * 0.32) > 0.44;',
+    expect: 'partition: detail falls away from the focus rather than filling the sheet',
+  },
+  {
+    why: 'contour segments are not chained, so a plotter lifts the pen thousands of times',
+    file: 'examples/contours.js',
+    from: '      s.paths = chain(segs).map((pts) => pts.map(([gx, gy]) => [',
+    to: '      s.paths = segs.map((pts) => pts.map(([gx, gy]) => [',
+    expect: 'contours: chaining collapses the segments into few pen-down paths',
+  },
+  {
+    why: 'the seed reaches the DATA, so a re-roll makes the piece say something else',
+    file: 'examples/readout.js',
+    from: '          digit: Number(DIGITS[k]),',
+    to: '          digit: Number(DIGITS[(k + s.seed) % DIGITS.length]),',
+    expect: 'readout: the DATA is not seeded, and the presentation is',
+  },
+  {
+    why: 'render scale is ignored entirely, so a print is the size of a screen',
+    file: 'core/render.js',
+    from: '  if (scale !== 1 && surface.scale) surface.scale(scale, scale);',
+    to: '  if (false && surface.scale) surface.scale(scale, scale);',
+    expect: 'N7 -- macro geometry is preserved from 1x to 8x',
+  },
 ];
 
 function copyDir(src, dst) {

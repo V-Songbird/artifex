@@ -57,7 +57,7 @@ function renderVector(piece, opt = {}) {
       + `then refuse any raster operation by name rather than dropping it.`,
     );
   }
-  const solved = solve(p, opt.seed);
+  const solved = solve(p, opt.seed, opt.params);
   if (solved.stages.error) {
     const e = solved.stages.error;
     throw new Error(`render: build stage "${e.stage}" (${e.at + 1} of ${e.of}) threw: ${e.message}`);

@@ -28,9 +28,13 @@ primitive or an example that only makes sense for one kind of art, that is a
 defect — report it. The full charter is `docs/subject-neutrality.md`, and it
 outranks convenience, elegance and performance.
 
-**2. Randomness is addressed, never sequential.** `R(entity, property, index)`
-hashes its arguments. There is no stream. Adding one element must not move
-another, because on a generic piece people edit constantly.
+**2. Randomness is addressed, never sequential.** `core/rand.js`:
+`const R = rng(seed)`, then `R(entity, property, index)` hashes its arguments.
+There is no stream. Adding one element must not move another, because on a
+generic piece people edit constantly. `noise2(R, x, y, name)` and
+`fbm(R, x, y, octaves, name)` are built on it, and the **name** is what keeps
+two fields independent — one field serving every irregularity is why generative
+work looks generated.
 
 **3. The playhead is the only clock.** No `Date.now()`, no `performance.now()`,
 no `requestAnimationFrame` timestamp reaching a mark. A still has no clock at
@@ -69,6 +73,28 @@ Then `npm test` and `npm run negative`. The second one breaks the library on
 purpose and checks that the **right** test notices; a suite that has never been
 red is not evidence.
 
+`npm run page` builds `out/index.html` — every example, a seed field, a
+transport, PNG at 1x/4x/8x and SVG export, in one self-contained file.
+
+## Read an example before you write a piece
+
+**Open the one whose idiom is closest to what you are making, and none of them
+is the starter.** They exist because they break each other's assumptions, and
+the notes at the top of each say what it is in the set to prove.
+
+| `examples/` | idiom | time | declares |
+|---|---|---|---|
+| `drift.js` | organic, painterly — dabs, opacity, a flow field | 240 frames | **raster only** |
+| `specimen.js` | hard-edged, typographic — a stroke font, straight runs | a still | raster + vector |
+| `readout.js` | data-driven — a fixed dataset the seed may not touch | 144 frames | raster + vector |
+| `partition.js` | recursive subdivision — area, not marks | a still | raster + vector |
+| `contours.js` | plotter-native — one pen, one weight, no fills | a still | raster + vector |
+
+Two of them keep general mathematics *out* of the core on purpose — a stroke
+font and marching squares — because only one example reaches each, and a core
+module reached by one kind of art is a preset in disguise. Move them when a
+second piece needs them, not before.
+
 ## The contract
 
 `core/piece.js` **is** the contract. It is not described anywhere else, because
@@ -106,6 +132,17 @@ outputs.
 | a print-resolution still | same, at `scale: 8` or higher. **Not capped.** |
 | a video | walk `playheads(piece)`; the frames are a property of the piece, never of how fast the machine is |
 | a plotter / print SVG | `renderVector(piece)` — declare `outputs: ['raster','vector']` first |
+
+**Chain your segments before you draw them.** A plotter lifts the pen between
+paths and lifting is the slow, ugly part; `contours` turns 6021 segments into 47
+pen-down paths, and it matches endpoints exactly rather than within a tolerance,
+because points computed by the same expression from the same inputs are
+bit-identical.
+
+**A raster check must render into its own canvas** created with
+`willReadFrequently: true`. A displayed canvas is GPU-rasterised until the
+browser decides otherwise, and its anti-aliasing changes when it switches — that
+is a property of the browser, not of your piece.
 
 The surface is **Canvas2D-shaped** in all four, so one `draw` reaches all of
 them unchanged.
@@ -168,6 +205,14 @@ produced one beautiful seed. Render nine and look at all of them.
   renders a table fitted in linear light a stop dark.
 - **A check whose pass condition is "no difference" is satisfied by nothing
   happening.** Pair every bound with a floor that must be non-zero.
+- **A declared parameter that the build never reads moves nothing.** Sweep every
+  one of them at three pins — min, value, max — because a cyclic parameter has
+  the same value at both ends. This project reproduced that defect from scratch
+  within an hour of writing the rule down.
+- **A flow field plus starts around a focus defaults to looking botanical.**
+  Integrating `(f - 0.5)` into a heading makes every stroke an arc of a circle,
+  because `f` barely changes over one stroke. Steer *towards* the field with
+  inertia, and let the focus modulate size and density rather than position.
 
 ## What this cannot do
 

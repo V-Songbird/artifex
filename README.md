@@ -47,20 +47,33 @@ Early. What exists and is tested:
 
 | | |
 |---|---|
-| `core/piece.js` | the contract — one source of truth, unknown keys refused by name, a still is a legal piece |
+| `core/piece.js` | the contract — one source of truth, unknown keys refused by name, a still is a legal piece, declared parameters that must move the output |
+| `core/rand.js` | the stochastic source: **addressed, never sequential**, plus smooth fields built on it |
 | `core/surface-vector.js` | a Canvas2D-shaped surface that emits SVG, and refuses every raster operation **by name** |
 | `core/render.js` | one frame to any surface, at any scale, with the playhead quantised to the drawn-frame grid |
-| `tests/` | 51 tests |
-| `tests/negative.js` | 13 mutations, each naming the test it must trip. A suite that has never been red is not evidence. |
+| `examples/` | five pieces spanning idioms that break each other — see [docs/example-set.md](docs/example-set.md) |
+| `tools/build-page.js` | one self-contained HTML file: the live backend, the raster backend at any scale, a transport |
+| `tests/` | 88 tests |
+| `tests/negative.js` | 26 mutations, each naming the test it must trip. A suite that has never been red is not evidence. |
 
 ```bash
-npm test        # 51 tests
-npm run negative  # break it on purpose; 13 caught, 0 escaped, 0 misnamed
+npm test            # 88 tests
+npm run negative    # break it on purpose; 26 caught, 0 escaped, 0 misnamed
+npm run examples    # render every example that declares vector, and report what it reached
+npm run page        # build out/index.html, then open it
 ```
 
-Not yet built: the live and raster backends, the video walk, the check suite as a
-shipped tool, the example set, and the mathematics import. The
-[findings index](docs/README.md) is where the design for all of it comes from.
+| example | idiom | time | declares |
+|---|---|---|---|
+| `drift` | organic, painterly | 240 frames | **raster only**, and means it |
+| `specimen` | hard-edged, typographic | a still | raster + vector |
+| `readout` | data-driven — **the seed does not decide what it says** | 144 frames | raster + vector |
+| `partition` | recursive subdivision, made of area | a still | raster + vector |
+| `contours` | plotter-native: one pen, one weight, no fills | a still | raster + vector |
+
+Not yet built: the video walk, the check suite as a shipped tool, and the
+mathematics import. The [findings index](docs/README.md) is where the design for
+all of it comes from.
 
 ## Documentation
 

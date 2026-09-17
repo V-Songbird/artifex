@@ -208,10 +208,25 @@ function frameCount(piece) {
  * ones that finished. A build that reports `ms.length > 0` can hide a stage it
  * skipped; the count has to match.
  */
-function solve(piece, seed) {
+function solve(piece, seed, params) {
   const sd = seed === undefined ? piece.seed : seed >>> 0;
   const state = piece.state();
   state.seed = sd;
+  // Declared parameters reach the build as VALUES. A `params` block that never
+  // arrives anywhere is a declaration that cannot fail, which is the disease
+  // this project catalogued 23 cases of.
+  state.params = {};
+  for (const [k, p] of Object.entries(piece.params)) state.params[k] = p.value;
+  for (const [k, v] of Object.entries(params || {})) {
+    if (!(k in piece.params)) {
+      throw new PieceError(`unknown param: ${k}. Declared: ${Object.keys(piece.params).join(', ') || '(none)'}`);
+    }
+    const d = piece.params[k];
+    if (!Number.isFinite(v) || v < d.min || v > d.max) {
+      throw new PieceError(`params.${k} must be a finite number in [${d.min}, ${d.max}], got ${v}`);
+    }
+    state.params[k] = v;
+  }
   const ms = [];
   let error = null;
   for (const [name, fn] of piece.build) {
