@@ -1,0 +1,22 @@
+{
+  "name": "artifex",
+  "version": "0.1.0",
+  "description": "Programmatic art for AI agents: write one piece, render it to a page, a video, a print or a plotter, and check it with tests that can fail.",
+  "license": "MIT",
+  "author": {
+    "name": "Victor Villegas",
+    "email": "victor.villegas@tuta.com"
+  },
+  "homepage": "https://github.com/V-Songbird/artifex",
+  "repository": "https://github.com/V-Songbird/artifex",
+  "keywords": [
+    "generative-art",
+    "procedural",
+    "creative-coding",
+    "svg",
+    "plotter",
+    "canvas",
+    "deterministic",
+    "animation"
+  ]
+}
