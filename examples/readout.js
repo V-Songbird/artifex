@@ -16,6 +16,9 @@
 'use strict';
 
 const { rng } = require('../core/rand.js');
+const { clamp, pick } = require('../core/num.js');
+const { mix } = require('../core/colour.js');
+const { stroke } = require('../core/path.js');
 
 const DIGITS = (
   '1415926535' + '8979323846' + '2643383279' + '5028841971' + '6939937510'
@@ -68,7 +71,7 @@ module.exports = {
 
     ['choose the presentation', (s) => {
       const R = rng(s.seed);
-      s.accent = ACCENTS[Math.floor(R('sheet', 'accent') * ACCENTS.length)];
+      s.accent = pick(ACCENTS, R('sheet', 'accent'));
       for (const c of s.cells) {
         // Material irregularity, addressed per cell: adding a digit at the end
         // cannot move the jitter of the ones before it.
@@ -103,10 +106,11 @@ module.exports = {
 
     // --- the filled slots, arriving one at a time -----------------------
     for (const c of s.cells) {
-      const arrived = Math.max(0, Math.min(c.digit, Math.floor((scan - c.k) * 2.4)));
+      const arrived = clamp(Math.floor((scan - c.k) * 2.4), 0, c.digit);
       if (arrived <= 0) continue;
       const [x, y] = cellOrigin(c);
-      g.fillStyle = c.digit >= 7 ? s.accent : INK;
+      // The value carries the digit a third way, mixed in linear light.
+      g.fillStyle = c.digit >= 7 ? s.accent : mix(MUTE, INK, 0.35 + c.digit / 9);
       for (let i = 0; i < arrived; i++) {
         const sy = y + CELL_H - 7 - (i + 1) * slotPitch();
         g.beginPath();
@@ -124,18 +128,15 @@ module.exports = {
     g.lineTo(W - M, ty);
     g.stroke();
 
-    const done = Math.max(0, Math.min(s.cells.length, Math.floor(scan)));
+    const done = clamp(Math.floor(scan), 0, s.cells.length);
     if (done >= 2) {
       g.strokeStyle = INK;
       g.lineWidth = 1.6;
       g.lineJoin = 'round';
-      g.beginPath();
-      for (let k = 0; k < done; k++) {
-        const x = M + (k / (s.cells.length - 1)) * GRID_W;
-        const y = ty - (s.cells[k].digit / 9) * TAPE_H;
-        if (k === 0) g.moveTo(x, y); else g.lineTo(x, y);
-      }
-      g.stroke();
+      stroke(g, s.cells.slice(0, done).map((c, k) => [
+        M + (k / (s.cells.length - 1)) * GRID_W,
+        ty - (c.digit / 9) * TAPE_H,
+      ]));
     }
 
     // --- the scan -------------------------------------------------------

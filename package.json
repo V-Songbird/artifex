@@ -9,6 +9,7 @@
     "negative": "node tests/negative.js",
     "lint": "node tools/lint-unread.js",
     "page": "node tools/build-page.js",
+    "seeds": "node tools/contact-sheet.js",
     "examples": "node tools/render-examples.js"
   },
   "engines": { "node": ">=20" }

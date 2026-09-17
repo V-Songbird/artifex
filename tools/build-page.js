@@ -442,4 +442,10 @@ function main() {
 // check the delivery tool has would itself be unchecked.
 if (require.main === module) main();
 
-module.exports = { modules, checkResolvable };
+/** The module runtime plus every bundled module, for any page that wants them. */
+function bundle() {
+  checkResolvable(MODULES);
+  return [RUNTIME].concat(MODULES.map(wrap)).join(String.fromCharCode(10));
+}
+
+module.exports = { modules, checkResolvable, bundle, MODULES };

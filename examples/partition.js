@@ -15,6 +15,8 @@
 'use strict';
 
 const { rng, noise2 } = require('../core/rand.js');
+const { clamp01, pick } = require('../core/num.js');
+const { mix } = require('../core/colour.js');
 
 const W = 900;
 const H = 900;
@@ -66,7 +68,7 @@ module.exports = {
         const keep = d < maxDepth && w > 15 && h > 15 && (want * 0.95 + grain * 0.32) > 0.44;
 
         if (!keep) {
-          s.cells.push({ x, y, w, h, d, addr, want });
+          s.cells.push({ x, y, w, h, d, addr, want, grain });
           return;
         }
         // Split the long way, at a ratio that is never 1/2 -- a run of exact
@@ -91,12 +93,14 @@ module.exports = {
       for (const c of s.cells) {
         // Five excellent marks beat fifty equivalent ones: only cells close to
         // the focus are allowed a saturated colour, and only a few of those.
-        const heat = Math.max(0, Math.min(1, c.want * 1.25));
+        const heat = clamp01(c.want * 1.25);
         const roll = R('cell', c.addr);
         if (roll < heat * 0.42) {
-          c.fill = PALETTE[2 + Math.floor(R('cell', `${c.addr}/hue`) * 4)];
+          c.fill = pick(PALETTE.slice(2), R('cell', `${c.addr}/hue`));
         } else {
-          c.fill = roll < 0.55 ? PALETTE[0] : PALETTE[1];
+          // Mixed IN LINEAR LIGHT, so the quiet cells sit where the light
+          // between the two grounds actually is, not where their numbers average.
+          c.fill = mix(PALETTE[0], PALETTE[1], c.grain);
         }
       }
     }],

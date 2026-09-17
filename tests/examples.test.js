@@ -493,15 +493,27 @@ test('every core module is reached by at least one example, and none by only one
     for (const f of seen) reach[f].push(n);
   }
 
-  // piece.js and render.js are reached through the harness rather than by an
-  // import in the piece itself; a piece does not require its own contract.
-  const drawn = ['rand.js'];
-  for (const f of drawn) {
+  // DERIVED, not listed. This used to name one module by hand, so the rule it
+  // was written to enforce -- move a module into core when a second piece needs
+  // it -- had no teeth for any module added afterwards.
+  //
+  // A core module is example-facing if any example imports it. Those must be
+  // reached by at least TWO, or they are a preset wearing a core module's
+  // clothes. The contract, the renderer and the surface are reached through the
+  // harness rather than by an import, because a piece does not require its own
+  // contract; they are reported rather than counted.
+  const facing = core.filter((f) => reach[f].length > 0);
+  assert.ok(facing.length >= 3, `only ${facing.length} core module(s) are reached by any example`);
+
+  for (const f of facing) {
     assert.ok(reach[f].length >= 2,
-      `core/${f} is reached by ${reach[f].length} example(s) (${reach[f].join(', ') || 'none'}). `
-      + 'A core module reached by one kind of art is a preset wearing a core module\'s clothes.');
+      `core/${f} is reached by exactly one example (${reach[f].join(', ')}). `
+      + 'A core module reached by one kind of art is a preset wearing a core '
+      + "module's clothes -- either a second piece needs it, or it belongs beside "
+      + 'the one piece that does.');
   }
-  // Published, so the number is visible on every run rather than assumed.
+
+  // Published, so the numbers are visible on every run rather than assumed.
   const report = core.map((f) => `${f}: ${reach[f].length ? reach[f].join(' ') : '(via the harness)'}`);
   assert.ok(report.length, report.join(' | '));
 });

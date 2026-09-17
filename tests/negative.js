@@ -198,8 +198,8 @@ const MUTATIONS = [
   {
     why: 'contour segments are not chained, so a plotter lifts the pen thousands of times',
     file: 'examples/contours.js',
-    from: '      s.paths = chain(segs).map((pts) => pts.map(([gx, gy]) => [',
-    to: '      s.paths = segs.map((pts) => pts.map(([gx, gy]) => [',
+    from: '      const traced = chain(segs).map((pts) => pts.map(([gx, gy]) => [',
+    to: '      const traced = segs.map((pts) => pts.map(([gx, gy]) => [',
     expect: 'contours: chaining collapses the segments into few pen-down paths',
   },
   {
@@ -334,6 +334,113 @@ const MUTATIONS = [
     from: "    ...files('examples').filter((f) => f !== 'examples/index.js'),",
     to: "    'examples/drift.js',",
     expect: 'the page builder refuses to write a bundle with a hole in it',
+  },
+
+
+  // --- the arithmetic five authors wrote for themselves ---------------------
+  {
+    why: 'turn takes the long way round, so a heading swings back across the wrap',
+    file: 'core/num.js',
+    from: '  if (d > half) d -= period;',
+    to: '  if (false) d -= period;',
+    expect: 'turn takes the SHORT way round, including across the wrap',
+  },
+  {
+    why: 'turn ignores its period, so undirected marks steer as if they had a direction',
+    file: 'core/num.js',
+    from: 'function turn(from, to, period = Math.PI * 2) {',
+    to: 'function turn(from, to, ignored = Math.PI * 2) { const period = Math.PI * 2;',
+    expect: 'turn with period PI is for marks that have no direction',
+  },
+  {
+    why: 'pick falls off the end of its list when the value is exactly 1',
+    file: 'core/num.js',
+    from: '  return list[Math.min(list.length - 1, Math.floor(clamp01(u) * list.length))];',
+    to: '  return list[Math.floor(clamp01(u) * list.length)];',
+    expect: 'pick covers the whole list and never falls off the end',
+  },
+  {
+    why: 'a centred draw is narrowed, so every seed comes out a sibling of the last',
+    file: 'core/num.js',
+    from: '  return (u + v) / 2;',
+    to: '  return (u + v + 0.5) / 3;',
+    expect: 'centred is a TRIANGULAR draw, and two is not three',
+  },
+  {
+    why: 'smoothstep is a straight line, so nothing eases',
+    file: 'core/num.js',
+    from: '  return u * u * (3 - 2 * u);',
+    to: '  return u;',
+    expect: 'smoothstep is flat at both edges and steepest in the middle',
+  },
+
+  // --- colour, in the light it is actually mixed in --------------------------
+  {
+    why: 'colours are mixed in DISPLAY space, so every midpoint comes out a stop dark',
+    file: 'core/colour.js',
+    from: '  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;',
+    to: '  return c;',
+    expect: 'MIXING HAPPENS IN LINEAR LIGHT, which is the whole point of the module',
+  },
+  {
+    why: 'the sRGB encode is dropped, so a value fitted in linear light is written out raw',
+    file: 'core/colour.js',
+    from: '  return c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055;',
+    to: '  return c;',
+    expect: 'sRGB encode and decode are inverses',
+  },
+  {
+    why: 'readableOn guesses instead of measuring, so type goes on the wrong ground',
+    file: 'core/colour.js',
+    from: '    if (c > score) { score = c; best = o; }',
+    to: '    if (c < score) { score = c; best = o; }',
+    expect: 'contrast is symmetric and bounded, and readableOn measures rather than assumes',
+  },
+  {
+    why: 'a hex value is emitted without clamping, so an out-of-range colour becomes nonsense',
+    file: 'core/colour.js',
+    from: "  const byte = (v) => Math.round(clamp01(v) * 255).toString(16).padStart(2, '0');",
+    to: "  const byte = (v) => Math.round(v * 255).toString(16).padStart(2, '0');",
+    expect: 'hex parses three, four, six and eight digits, and round-trips',
+  },
+
+  // --- polylines, and the design box ----------------------------------------
+  {
+    why: 'THE CROSSBAR AGAIN: the polyline helper filters a two-point run',
+    file: 'core/path.js',
+    from: '  if (!pts || pts.length === 0) return g;',
+    to: '  if (!pts || pts.length < 3) return g;',
+    expect: 'a two-point run is a polyline like any other',
+  },
+  {
+    why: 'a clipped line is rejoined across the gap, drawing a stroke the piece never asked for',
+    file: 'core/path.js',
+    from: '    if (run && same(run[run.length - 1], seg[0])) run.push(seg[1]);',
+    to: '    if (run) run.push(seg[1]);',
+    expect: 'a line that leaves the box and comes back returns as TWO runs',
+  },
+  {
+    why: 'a run that grazes a corner is kept, so a plotter lifts and puts down for nothing',
+    file: 'core/path.js',
+    from: '  return runs.filter((r) => r.some((q) => !same(q, r[0])));',
+    to: '  return runs;',
+    expect: 'a segment that only grazes a corner is a pen lift, not a mark',
+  },
+  {
+    why: 'the design box ignores its inset, so a piece clips to the bleed',
+    file: 'core/path.js',
+    from: '  return [inset, inset, size.w - inset, size.h - inset];',
+    to: '  return [0, 0, size.w, size.h];',
+    expect: 'clipping keeps what is inside the design box and drops what is not',
+  },
+
+  // --- the instrument the documentation names and did not ship ---------------
+  {
+    why: 'the contact sheet rolls its seeds, so nobody can point at the bad one twice',
+    file: 'tools/contact-sheet.js',
+    from: '      var seed = i + 1;',
+    to: '      var seed = Math.floor(Math.random() * 1000);',
+    expect: 'the contact sheet renders reproducible seeds, not random ones',
   },
 
 ];

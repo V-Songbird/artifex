@@ -12,6 +12,8 @@
 'use strict';
 
 const { rng } = require('../core/rand.js');
+const { pick } = require('../core/num.js');
+const { readableOn, contrast } = require('../core/colour.js');
 const font = require('./stroke-font.js');
 
 const ROWS = ['ABCDEFGHIJKLM', 'NOPQRSTUVWXYZ', '0123456789&?!', ".,-:;'()*/"];
@@ -56,7 +58,12 @@ module.exports = {
       // The caller chooses the text; the seed chooses the ink. Two inputs, two
       // jobs, neither one silently overruling the other.
       s.sample = SAMPLES[Math.min(SAMPLES.length - 1, Math.round(s.params.sample))];
-      s.accent = ACCENTS[Math.floor(R('sheet', 'accent') * ACCENTS.length)];
+      s.accent = pick(ACCENTS, R('sheet', 'accent'));
+      // MEASURED, not assumed. The reversed block used to set paper-coloured
+      // type on whichever accent the seed chose, which is a bet that every
+      // accent is dark enough. This asks.
+      s.reversed = readableOn(s.accent, [PAPER, INK]);
+      s.reversedContrast = contrast(s.accent, s.reversed);
     }],
 
     ['lay the baseline grid', (s) => {
@@ -134,7 +141,7 @@ module.exports = {
     const by0 = 860;
     g.fillStyle = s.accent;
     g.fillRect(bx, by0, bw, bh);
-    g.strokeStyle = PAPER;
+    g.strokeStyle = s.reversed;
     g.lineWidth = 3.4;
     font.text(g, 'REVERSED', bx + 26, by0 + 30, 40);
     g.lineWidth = 1.3;
@@ -148,6 +155,7 @@ module.exports = {
       `SEED ${s.seed}`,
       `${font.runCount(ROWS.join(''))} RUNS IN THE CHARACTER SET`,
       `${s.sample.length} CHARACTERS IN THE SAMPLE`,
+      `REVERSED AT ${s.reversedContrast.toFixed(1)} TO 1, MEASURED`,
       'DECLARED: RASTER, VECTOR',
       'TIME: NONE. A STILL IS A LEGAL PIECE.',
     ];

@@ -18,6 +18,7 @@
 'use strict';
 
 const { rng, fbm } = require('../core/rand.js');
+const { stroke, clipPolyline, boxOf } = require('../core/path.js');
 
 const W = 1000;
 const H = 700;
@@ -67,9 +68,6 @@ module.exports = {
             const d = Math.hypot(u - w.x, (v - w.y) * (H / W));
             h += w.sign * Math.exp(-(d * d) / (2 * w.r * w.r)) * 0.85;
           }
-          // Fall away at the edges so contours close inside the sheet instead of
-          // running off it. An open contour on a plotter is a line to nowhere.
-          h -= Math.pow(Math.max(Math.abs(u - 0.5), Math.abs(v - 0.5)) * 2, 6) * 0.6;
           f[j * (COLS + 1) + i] = h;
         }
       }
@@ -88,10 +86,21 @@ module.exports = {
         marchingSquares(s.field, COLS, ROWS, level, segs);
       }
       s.segments = segs.length;
-      s.paths = chain(segs).map((pts) => pts.map(([gx, gy]) => [
+      const traced = chain(segs).map((pts) => pts.map(([gx, gy]) => [
         M + (gx / COLS) * (W - 2 * M),
         M + (gy / ROWS) * (H - 2 * M),
       ]));
+
+      // CLIPPED, not faded. The field used to be forced down at the edges so
+      // every contour closed inside the sheet -- which changes the data to fit
+      // the frame, and is the mirror image of letting the frame do the
+      // composition. A topographic plot clips at the sheet edge; the lines that
+      // run off simply run off. A polyline that leaves and comes back returns
+      // as two runs, because joining them would draw a stroke across the middle
+      // of the picture that the piece never asked for, and a plotter would draw
+      // it too.
+      const box = boxOf({ w: W, h: H }, M);
+      s.paths = traced.flatMap((pts) => clipPolyline(pts, box));
       s.penLifts = s.paths.length;
     }],
   ],
@@ -105,12 +114,7 @@ module.exports = {
     g.lineJoin = 'round';
     g.lineCap = 'round';
 
-    for (const pts of s.paths) {
-      g.beginPath();
-      g.moveTo(pts[0][0], pts[0][1]);
-      for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]);
-      g.stroke();
-    }
+    for (const pts of s.paths) stroke(g, pts);
   },
 };
 

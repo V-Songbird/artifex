@@ -76,6 +76,52 @@ red is not evidence.
 `npm run page` builds `out/index.html` — every example, a seed field, a
 transport, PNG at 1x/4x/8x and SVG export, in one self-contained file.
 
+## What the library gives you
+
+Small on purpose — nothing here assumes a subject. Everything else you write.
+
+```js
+require('./core/rand.js')    // rng(seed) -> R(entity, property, index), noise2, fbm
+require('./core/num.js')     // clamp, clamp01, lerp, unlerp, remap, smoothstep,
+                             // turn, pick, chance, centred
+require('./core/colour.js')  // rgb, hex, mix, luma, contrast, readableOn
+require('./core/path.js')    // poly, stroke, fill, clipPolyline, clipSegment, boxOf
+```
+
+Three of those modules exist because five people were handed this library and
+asked to make five unrelated pieces, and **all five wrote `clamp` and a polyline
+loop, and four wrote a colour mix.** If you find yourself writing something the
+next piece would also want, that is a defect in the library — report it.
+
+**`mix` works in linear light.** `mix('#000','#fff',0.5)` is `#bcbcbc`, not
+`#808080`: the first is the colour of half the light, the second is the average
+of two numbers and reads a stop dark. Three of the four authors who needed a
+blend wrote the second one, because nothing was there.
+
+**`turn(from, to)` is a trap, not a convenience.** Steering a heading with a raw
+subtraction sends a mark the long way round exactly when the angle crosses π,
+which is invisible on most frames. For a mark with no direction — a hatch, a
+grain, a line with no arrowhead — use `turn(from, to, Math.PI)`.
+
+**`centred(u, v)` takes two values, and two is not three.** Averaging n uniforms
+shrinks the spread as 1/√n. An author reaching for a centred distribution
+averaged three and got nine seeds that came out as nine siblings.
+
+**`clipPolyline` returns RUNS, not one line.** A line that leaves the design box
+and comes back is two marks; joining them draws a stroke across the middle of
+the picture that you never asked for, and a plotter draws it too.
+
+## Look at nine seeds
+
+```bash
+npm run seeds              # every example, nine seeds, one page
+npm run seeds drift 16 0.5 # one piece, sixteen seeds, at a playhead
+```
+
+The checks catch roughly half the defects. The other half are compositional and
+this is the only instrument for them. The seeds are the first N integers, not
+random ones, so "seed 6 is the bad one" still means something tomorrow.
+
 ## Read an example before you write a piece
 
 **Open the one whose idiom is closest to what you are making, and none of them
@@ -243,6 +289,20 @@ produced one beautiful seed. Render nine and look at all of them.
   page read as a broken font rather than a caller error.
 - **Display values are not linear light.** `round(v*255)` with no sRGB encode
   renders a table fitted in linear light a stop dark.
+- **A limiter that is always binding is not a limiter, it is the animation.**
+  A simulation cooled by a falling ceiling on displacement had the ceiling
+  binding on essentially every frame for seven of nine seeds — the motion on
+  screen was the cooling curve and the physics was only choosing directions.
+  Measure how often a clamp actually clamps.
+- **Curvature is not occlusion.** Using the Laplacian of a height field for
+  ambient occlusion brightens every hollow and darkens every apex if the sign is
+  wrong — and with the sign right it still gives every mound a bright core and a
+  dark ring, because a mound is negatively curved at its apex and positively
+  curved around its rim. It took a horizon sweep to be right.
+- **A sequential address gets written by reflex.** Keying a value on an output
+  index — `R('dither', 'f', facets.length)` — reads as addressed and is not: the
+  index moves whenever something ahead of it is dropped. An author who had read
+  non-negotiable 2 an hour earlier wrote it anyway.
 - **A check whose pass condition is "no difference" is satisfied by nothing
   happening.** Pair every bound with a floor that must be non-zero.
 - **A declared parameter that the build never reads moves nothing.** Sweep every

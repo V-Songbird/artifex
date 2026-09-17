@@ -23,10 +23,14 @@
 'use strict';
 
 const { rng, fbm, noise2 } = require('../core/rand.js');
+const { clamp01, lerp, pick } = require('../core/num.js');
 
 const W = 1000;
 const H = 700;
-const PAPER = 'hsl(42 28% 93%)';
+// Three grounds, stated as art direction rather than as machinery: warm,
+// neutral and cool paper. N2 -- a default whose reason names a subject is a
+// preset, so these are a preset the piece opts into.
+const GROUNDS = ['hsl(42 28% 93%)', 'hsl(0 0% 94%)', 'hsl(210 22% 94%)'];
 
 module.exports = {
   name: 'drift',
@@ -46,6 +50,7 @@ module.exports = {
     ['choose the light', (s) => {
       const R = rng(s.seed);
       s.hue = Math.floor(R('light', 'hue') * 360);
+      s.ground = pick(GROUNDS, R('light', 'ground'));
       s.split = 24 + R('light', 'split') * 130;     // how far the second hue sits
       s.focus = [0.3 + R('light', 'fx') * 0.4, 0.3 + R('light', 'fy') * 0.4];
     }],
@@ -136,7 +141,7 @@ module.exports = {
   draw(g, s, t) {
     const R = rng(s.seed);
 
-    g.fillStyle = PAPER;
+    g.fillStyle = s.ground;
     g.fillRect(0, 0, W, H);
 
     // A ground: broad, low-contrast, laid before anything else, so the strokes
@@ -153,7 +158,7 @@ module.exports = {
     }
 
     for (const st of s.strokes) {
-      const progress = clamp((t - st.birth) / st.span);
+      const progress = clamp01((t - st.birth) / st.span);
       if (progress <= 0) continue;
 
       const n = st.pts.length;
@@ -180,7 +185,7 @@ module.exports = {
         // finished frame would treat every surface as though one particulate
         // process had affected all of them equally.
         const grit = R('medium', `d${st.i}`, k);
-        const r = (1.2 + st.press * 12) * taper * (0.78 + grit * 0.44);
+        const r = lerp(1.2, 13.2, st.press / 1.2) * taper * (0.78 + grit * 0.44);
         if (r <= 0.05) continue;
 
         g.globalAlpha = 0.03 + st.press * 0.05 * (0.5 + grit * 0.9);
@@ -207,4 +212,3 @@ module.exports = {
   },
 };
 
-function clamp(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }

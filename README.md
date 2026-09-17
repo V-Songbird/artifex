@@ -52,20 +52,25 @@ Early. What exists and is tested:
 |---|---|
 | `core/piece.js` | the contract — one source of truth, unknown keys refused by name, a still is a legal piece, declared parameters that must move the output |
 | `core/rand.js` | the stochastic source: **addressed, never sequential**, plus smooth fields built on it |
+| `core/num.js` | the arithmetic every piece was writing for itself — five outside authors all wrote `clamp` |
+| `core/colour.js` | mixing **in linear light**, luminance, contrast, and a readable ink measured rather than guessed |
+| `core/path.js` | polylines, and the first operation the design box ever had: clip to it |
 | `core/surface-vector.js` | a Canvas2D-shaped surface that emits SVG, and refuses every raster operation **by name** |
 | `core/render.js` | one frame to any surface, at any scale, with the playhead quantised to the drawn-frame grid |
 | `examples/` | five pieces spanning idioms that break each other — see [docs/example-set.md](docs/example-set.md) |
 | `tools/build-page.js` | one self-contained HTML file: the live backend, the raster backend at any scale, a transport |
-| `tools/lint-unread.js` | every declared name must have a reader. No build, no browser, no art — it runs first |
-| `tests/` | 105 tests |
-| `tests/negative.js` | 42 mutations, each naming the test it must trip. A suite that has never been red is not evidence. |
+| `tools/lint-unread.js` | every declared name must have a reader, every contract key a consumer. No build, no browser, no art |
+| `tools/contact-sheet.js` | nine seeds on one page — the instrument the docs name as the only one for compositional faults |
+| `tests/` | 128 tests |
+| `tests/negative.js` | 56 mutations, each naming the test it must trip. A suite that has never been red is not evidence. |
 
 ```bash
-npm test            # 105 tests
-npm run negative    # break it on purpose; 42 caught, 0 escaped, 0 misnamed
+npm test            # 128 tests
+npm run negative    # break it on purpose; 56 caught, 0 escaped, 0 misnamed
 npm run lint        # every declared name must have a reader, every contract key a consumer
 npm run examples    # render every example that declares vector, and report what it reached
 npm run page        # build out/index.html, then open it
+npm run seeds       # nine seeds of every example on one page, and LOOK
 ```
 
 | example | idiom | time | declares |
