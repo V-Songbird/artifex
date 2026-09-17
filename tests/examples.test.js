@@ -89,8 +89,6 @@ class Recorder {
 
   get bbox() { return this._box; }
 
-  translate(x, y) { this._m = [...this._m.slice(0, 4), this._x(x, y), this._y(x, y)]; this.ops.push('translate'); }
-
   beginPath() { this.ops.push('beginPath'); }
 
   moveTo(x, y) { this.ops.push(`M${this._pt(x, y).join(',')}`); }
@@ -110,8 +108,6 @@ class Recorder {
   fill() { this.ops.push(`fill:${this._s.fillStyle}:${r(this._s.globalAlpha)}`); }
 
   stroke() { this.ops.push(`stroke:${this._s.strokeStyle}:${r(this._s.lineWidth * this._k)}`); }
-
-  get marks() { return this.ops.filter((o) => o.startsWith('fill') || o.startsWith('stroke:') || o.startsWith('FR')).length; }
 
   get digest() { return this.ops.join('|'); }
 }

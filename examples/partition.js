@@ -66,7 +66,7 @@ module.exports = {
         const keep = d < maxDepth && w > 15 && h > 15 && (want * 0.95 + grain * 0.32) > 0.44;
 
         if (!keep) {
-          s.cells.push({ x, y, w, h, d, addr, want, grain });
+          s.cells.push({ x, y, w, h, d, addr, want });
           return;
         }
         // Split the long way, at a ratio that is never 1/2 -- a run of exact
@@ -88,7 +88,6 @@ module.exports = {
 
     ['ink the cells', (s) => {
       const R = rng(s.seed);
-      let inked = 0;
       for (const c of s.cells) {
         // Five excellent marks beat fifty equivalent ones: only cells close to
         // the focus are allowed a saturated colour, and only a few of those.
@@ -96,14 +95,10 @@ module.exports = {
         const roll = R('cell', c.addr);
         if (roll < heat * 0.42) {
           c.fill = PALETTE[2 + Math.floor(R('cell', `${c.addr}/hue`) * 4)];
-          c.ink = true;
-          inked++;
         } else {
           c.fill = roll < 0.55 ? PALETTE[0] : PALETTE[1];
-          c.ink = false;
         }
       }
-      s.inked = inked;
     }],
   ],
 

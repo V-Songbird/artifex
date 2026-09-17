@@ -114,4 +114,4 @@ function fbm(R, x, y, octaves = 4, name = 'field') {
   return sum / norm;
 }
 
-module.exports = { rng, noise2, fbm, mix32, fnv1a };
+module.exports = { rng, noise2, fbm };

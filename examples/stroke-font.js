@@ -121,4 +121,4 @@ function text(g, str, x, y, size) {
   return pen - (ADVANCE - 4) * k;
 }
 
-module.exports = { glyph, runCount, width, text, ADVANCE, GLYPHS };
+module.exports = { glyph, runCount, width, text, GLYPHS };
