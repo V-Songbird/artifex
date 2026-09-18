@@ -159,6 +159,17 @@ function octaveNames(name, octaves) {
 /**
  * Summed octaves, normalised to [0, 1). Each octave is its OWN named field, so
  * the octaves are independent rather than one field read at two scales.
+ *
+ * KNOWN DEFECT, MEASURED, NOT YET FIXED. The frequency doubles exactly, so the
+ * lattice lines of every octave pass through every integer coordinate -- and
+ * `noise2` is value noise with a smoothstep fade, whose derivative is exactly
+ * zero across each of its own lattice lines. Together they leave a grid of lines
+ * where the field's gradient vanishes: at four octaves the median |d/dx| on
+ * x = integer is 1.8e-6, against 0.35 elsewhere. Texturing & Modeling (3rd ed.,
+ * p. 88) multiplies by 2.17 instead for exactly this reason, and measured here
+ * that restores 0.28. Changing it changes every picture that uses fbm, so it
+ * waits for a decision. Nothing that differentiates a field should be built on
+ * this until it is fixed. See docs/source-library-scan.md §8.1.
  */
 function fbm(R, x, y, octaves = 4, name = 'field') {
   const ns = octaveNames(name, octaves);
