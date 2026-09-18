@@ -19,6 +19,7 @@
 
 const { rng, fbm } = require('../core/rand.js');
 const { stroke, clipPolyline, boxOf } = require('../core/path.js');
+const { chain } = require('../core/geom.js');
 
 const W = 1000;
 const H = 700;
@@ -165,63 +166,3 @@ function marchingSquares(f, cols, rows, level, out) {
   }
   return out;
 }
-
-// `|| 0` collapses -0 onto 0. Without it, two identical points computed by
-// different arithmetic -- one landing on -1e-17, the other on +1e-17 -- key as
-// "-0.000000" and "0.000000" and stop matching. String(-0) is already "0", so
-// an earlier guard elsewhere in this project was dead code and was deleted;
-// toFixed is NOT the same and the lesson does not carry over. On a tessellation
-// this exact hole cut sixteen strands dead in the middle of the sheet with
-// nothing thrown. Here the grid never goes negative, so it has never fired --
-// which is precisely why it needs a test rather than an argument.
-const key = (p) => `${q6(p[0])},${q6(p[1])}`;
-
-const q6 = (v) => (Math.round(v * 1e6) / 1e6 || 0).toFixed(6);
-
-/**
- * Join segments end to end into polylines. Endpoints on a shared cell edge are
- * computed from the same two corner values by the same expression, so they are
- * bit-identical and can be matched exactly rather than within a tolerance.
- *
- * The fix is never a tolerance -- it is a key chosen by the data's own
- * structure.
- */
-function chain(segs) {
-  const ends = new Map();
-  const used = new Array(segs.length).fill(false);
-  for (let i = 0; i < segs.length; i++) {
-    for (const p of segs[i]) {
-      const k = key(p);
-      if (!ends.has(k)) ends.set(k, []);
-      ends.get(k).push(i);
-    }
-  }
-
-  const step = (k) => {
-    for (const i of ends.get(k) || []) {
-      if (used[i]) continue;
-      const [a, b] = segs[i];
-      if (key(a) === k) { used[i] = true; return b; }
-      if (key(b) === k) { used[i] = true; return a; }
-    }
-    return null;
-  };
-
-  const paths = [];
-  for (let i = 0; i < segs.length; i++) {
-    if (used[i]) continue;
-    used[i] = true;
-    const pts = [segs[i][0], segs[i][1]];
-    for (let p = step(key(pts[pts.length - 1])); p; p = step(key(pts[pts.length - 1]))) {
-      pts.push(p);
-      if (key(p) === key(pts[0])) break;          // closed
-    }
-    for (let p = step(key(pts[0])); p; p = step(key(pts[0]))) {
-      pts.unshift(p);
-      if (key(p) === key(pts[pts.length - 1])) break;
-    }
-    paths.push(pts);
-  }
-  return paths;
-}
-

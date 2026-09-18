@@ -42,18 +42,41 @@ const RASTER_ONLY = {
   createConicGradient: 'SVG has no conic gradient; approximate it with geometry',
 };
 
-/** Trim a number for output: short enough to keep files small, exact enough to plot. */
+/**
+ * Trim a number for output: short enough to keep files small, exact enough to
+ * plot.
+ *
+ * THE HOTTEST LINE IN THE WHOLE LIBRARY. Every coordinate of every point of
+ * every path goes through here twice, and a profile of a piece with a 600 kB
+ * document put 19.5% of the render inside this one function. It is worth the
+ * three extra lines.
+ *
+ * What costs the time is turning a DOUBLE into a string: the engine has to
+ * search for the shortest decimal that round-trips. Turning a small INTEGER into
+ * a string does not -- and after rounding to four places the value is an
+ * integer, scaled. So the string is assembled from that integer and the division
+ * never happens.
+ *
+ * String(-0) is already "0" in JavaScript, so no negative-zero guard is needed
+ * HERE, and an earlier one was dead code that no check could fail. That is a
+ * fact about String(), not a general rule, and reading it as one cost this
+ * project a bug: toFixed(6) renders -0 as "-0.000000", so the same pattern in a
+ * coordinate KEY does need the guard. The `i === 0` line below keeps the same
+ * promise for the same reason, explicitly rather than by luck.
+ */
 function n(v) {
   if (!Number.isFinite(v)) throw new Error(`vector surface: non-finite coordinate ${v}`);
-  // String(-0) is already "0" in JavaScript, so no negative-zero guard is needed
-  // HERE, and an earlier one was dead code that no check could fail.
-  //
-  // That is a fact about String(), not a general rule, and reading it as one
-  // cost this project a bug: toFixed(6) renders -0 as "-0.000000", so the same
-  // pattern in a coordinate KEY does need the guard. See examples/contours.js.
-  // Math.round below returns -0 for a small negative input, and String turns it
-  // into "0" -- which is why this line is safe and that one was not.
-  return String(Math.round(v * 1e4) / 1e4);
+  const i = Math.round(v * 1e4);
+  if (i === 0) return '0';                                   // covers -0 without a special case
+  if (i % 10000 === 0) return String(i / 10000);             // a whole number, which most are
+  const neg = i < 0;
+  const a = neg ? -i : i;
+  const whole = (a / 10000) | 0;
+  // Four digits, then the trailing zeros cut. padStart is on a string of at most
+  // four characters, so it costs nothing worth measuring.
+  let frac = String(a % 10000).padStart(4, '0');
+  while (frac.charCodeAt(frac.length - 1) === 48) frac = frac.slice(0, -1);
+  return `${neg ? '-' : ''}${whole}.${frac}`;
 }
 
 function esc(s) {

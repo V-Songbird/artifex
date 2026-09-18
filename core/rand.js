@@ -52,11 +52,43 @@ const SEP = String.fromCharCode(0);
  *
  * Returns a value in [0, 1). Zero is a seed.
  */
+// How many (entity, property) pairs one source will remember. Past this the
+// memo stops growing and every further pair takes the long way -- slower, never
+// wrong. A piece that builds a fresh entity name per mark would otherwise hold
+// one cache entry per mark for the life of the render.
+const MEMO_MAX = 8192;
+
+/**
+ * Build the addressed source for one seed.
+ *
+ *   const R = rng(7);
+ *   R('stroke', 'length', 12)   // always the same number for that address
+ *
+ * Returns a value in [0, 1). Zero is a seed.
+ *
+ * THE MEMO IS NOT AN OPTIMISATION OF THE VALUES, ONLY OF THE ARITHMETIC. An
+ * address is hashed in two halves: the (entity, property) pair, then the index.
+ * The first half is a pure function of two strings and does not depend on the
+ * index at all -- and the callers that matter ask for the same pair over and
+ * over. `noise2` asks four times in a row for the four corners of one lattice
+ * cell; `fbm` does that once per octave; a field sampled over a grid does it
+ * once per sample point.
+ *
+ * So the pair's hash is remembered, and what used to be two string walks plus a
+ * concatenation per call becomes two map lookups. Same hash, same value, same
+ * picture -- tests/rand.test.js pins the actual numbers, and would fail if this
+ * were a change rather than a shortcut.
+ *
+ * Keyed two levels deep rather than on `entity + SEP + property`, because
+ * building that key would reintroduce the allocation this exists to remove.
+ */
 function rng(seed) {
   if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) {
     throw new Error(`rng: seed must be an integer in [0, 2^32-1], got ${seed}`);
   }
   const base = mix32(fnv1a('artifex', seed >>> 0));
+  const memo = new Map();
+  let memoSize = 0;
 
   return function R(entity, property, index = 0) {
     if (typeof entity !== 'string' || typeof property !== 'string') {
@@ -65,8 +97,16 @@ function rng(seed) {
     if (!Number.isInteger(index)) {
       throw new Error(`R(entity, property, index): index must be an integer, got ${index}`);
     }
-    let h = fnv1a(entity, base);
-    h = fnv1a(SEP + property, h);
+    let inner = memo.get(entity);
+    let h = inner === undefined ? undefined : inner.get(property);
+    if (h === undefined) {
+      h = fnv1a(SEP + property, fnv1a(entity, base));
+      if (memoSize < MEMO_MAX) {
+        if (inner === undefined) { inner = new Map(); memo.set(entity, inner); }
+        inner.set(property, h);
+        memoSize++;
+      }
+    }
     return mix32(h ^ Math.imul(index | 0, 0x9e3779b1)) / 4294967296;
   };
 }
@@ -98,18 +138,39 @@ function noise2(R, x, y, name = 'field') {
   return (a0 + (b0 - a0) * u) * (1 - v) + (a1 + (b1 - a1) * u) * v;
 }
 
+// The octave names, built once per field name and then reused.
+//
+// `${name}/${o}` is the same handful of strings on every call, and a field is
+// sampled thousands of times per picture. Handing back the SAME string object
+// each time is what lets the memo in `rng` find the pair without re-hashing the
+// characters: a freshly built string carries no hash yet, an old one does.
+//
+// Module-level and unbounded by design: the keys are field names a piece writes
+// in its source, so there are as many as the author typed.
+const OCTAVE_NAMES = new Map();
+
+function octaveNames(name, octaves) {
+  let ns = OCTAVE_NAMES.get(name);
+  if (ns === undefined) { ns = []; OCTAVE_NAMES.set(name, ns); }
+  for (let o = ns.length; o < octaves; o++) ns.push(`${name}/${o}`);
+  return ns;
+}
+
 /**
  * Summed octaves, normalised to [0, 1). Each octave is its OWN named field, so
  * the octaves are independent rather than one field read at two scales.
  */
 function fbm(R, x, y, octaves = 4, name = 'field') {
+  const ns = octaveNames(name, octaves);
   let sum = 0;
   let amp = 1;
   let norm = 0;
+  let f = 1;
   for (let o = 0; o < octaves; o++) {
-    sum += amp * noise2(R, x * (1 << o), y * (1 << o), `${name}/${o}`);
+    sum += amp * noise2(R, x * f, y * f, ns[o]);
     norm += amp;
     amp *= 0.5;
+    f *= 2;
   }
   return sum / norm;
 }

@@ -12,4 +12,5 @@ module.exports = {
   readout: require('./readout.js'),
   partition: require('./partition.js'),
   contours: require('./contours.js'),
+  packing: require('./packing.js'),
 };

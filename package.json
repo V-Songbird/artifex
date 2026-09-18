@@ -10,7 +10,10 @@
     "lint": "node tools/lint-unread.js",
     "page": "node tools/build-page.js",
     "seeds": "node tools/contact-sheet.js",
-    "examples": "node tools/render-examples.js"
+    "examples": "node tools/render-examples.js",
+    "bench": "node tools/bench.js"
   },
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  }
 }

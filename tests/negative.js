@@ -124,8 +124,8 @@ const MUTATIONS = [
   {
     why: 'the two halves of an address run together, so unrelated quantities share a value',
     file: 'core/rand.js',
-    from: '    h = fnv1a(SEP + property, h);',
-    to: '    h = fnv1a(property, h);',
+    from: '      h = fnv1a(SEP + property, fnv1a(entity, base));',
+    to: '      h = fnv1a(property, fnv1a(entity, base));',
     expect: 'the two halves of an address do not run together',
   },
   {
@@ -145,8 +145,8 @@ const MUTATIONS = [
   {
     why: 'every fbm octave reads the same field, so the octaves buy nothing',
     file: 'core/rand.js',
-    from: 'sum += amp * noise2(R, x * (1 << o), y * (1 << o), `${name}/${o}`);',
-    to: 'sum += amp * noise2(R, x * (1 << o), y * (1 << o), name);',
+    from: '    sum += amp * noise2(R, x * f, y * f, ns[o]);',
+    to: '    sum += amp * noise2(R, x * f, y * f, name);',
     expect: 'fbm octaves are separate fields, not one field read at two scales',
   },
 
@@ -441,6 +441,95 @@ const MUTATIONS = [
     from: '      var seed = i + 1;',
     to: '      var seed = Math.floor(Math.random() * 1000);',
     expect: 'the contact sheet renders reproducible seeds, not random ones',
+  },
+
+
+  // --- the memo: an optimisation must not become a change ------------------
+  {
+    why: 'the memo stores a hash that is not the address\'s, so the second read of an address differs from the first',
+    file: 'core/rand.js',
+    from: '        inner.set(property, h);',
+    to: '        inner.set(property, h + 1);',
+    expect: 'ONE SOURCE, ASKED TWICE, ANSWERS THE SAME',
+  },
+  {
+    why: 'the memo is keyed on the index too, so it never hits and the seed still works',
+    file: 'core/rand.js',
+    from: '      h = fnv1a(SEP + property, fnv1a(entity, base));',
+    to: '      h = fnv1a(SEP + property, fnv1a(entity, base + index));',
+    expect: 'ONE SOURCE, ASKED TWICE, ANSWERS THE SAME',
+  },
+  {
+    why: 'every fbm octave gets the SAME cached name, so the octaves collapse',
+    file: 'core/rand.js',
+    from: '  for (let o = ns.length; o < octaves; o++) ns.push(`${name}/${o}`);',
+    to: '  for (let o = ns.length; o < octaves; o++) ns.push(`${name}/0`);',
+    expect: 'fbm octaves are separate fields, not one field read at two scales',
+  },
+
+  // --- geometry: the list three independent populations wrote ---------------
+  {
+    why: 'the centroid is the mean of the vertex list, so a crowded edge drags it',
+    file: 'core/geom.js',
+    from: '    const w = pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1];',
+    to: '    const w = 1;',
+    expect: 'THE CENTROID IS OF THE AREA, NOT OF THE VERTEX LIST',
+  },
+  {
+    why: 'point-in-polygon answers from the bounding box, so a notch reads as solid',
+    file: 'core/geom.js',
+    from: '      if (x < pts[i][0] + t * (pts[j][0] - pts[i][0])) hit = !hit;',
+    to: '      if (x < Infinity) hit = !hit;',
+    expect: 'pointInPoly answers inside and outside, including a concave notch',
+  },
+  {
+    why: 'resample drops the tail, so every mark is short by its own fraction of a step',
+    file: 'core/geom.js',
+    from: '  if (tail[0] !== last[0] || tail[1] !== last[1]) out.push([last[0], last[1]]);',
+    to: '  if (false) out.push([last[0], last[1]]);',
+    expect: 'THE LAST POINT SURVIVES A LENGTH THAT IS NOT A WHOLE NUMBER OF STEPS',
+  },
+  {
+    why: 'resample carries no remainder between segments, so spacing restarts at every vertex',
+    file: 'core/geom.js',
+    from: '    carry = seg - (d - spacing);',
+    to: '    carry = 0;',
+    expect: 'resample spaces points along the LENGTH, not along the index',
+  },
+  {
+    why: 'an open line loses its ends to the corner cutter, so nothing meets anything',
+    file: 'core/geom.js',
+    from: "    if (!close) out.push([cur[0][0], cur[0][1]]);",
+    to: '    if (false) out.push([cur[0][0], cur[0][1]]);',
+    expect: 'chaikin cuts corners, and an OPEN line keeps both of its ends exactly',
+  },
+  {
+    why: 'the chainer only walks forwards, so a line handed over backwards stays in pieces',
+    file: 'core/geom.js',
+    from: '      for (let more = step(head); more; more = step(head)) {',
+    to: '      for (let more = null; more; more = step(head)) {',
+    expect: 'a chain extends BACKWARDS as well as forwards',
+  },
+  {
+    why: 'the chainer matches on x alone, so two lines at different heights fuse',
+    file: 'core/geom.js',
+    from: '  const same = (a, b) => a[0] === b[0] && a[1] === b[1];',
+    to: '  const same = (a, b) => a[0] === b[0];',
+    expect: 'scrambled, mixed-direction segments chain into ONE closed ring',
+  },
+  {
+    why: 'the ribbon offsets both sides the same way, so a tapered mark is a line',
+    file: 'core/geom.js',
+    from: '    right.push([pts[i][0] - nx, pts[i][1] - ny]);',
+    to: '    right.push([pts[i][0] + nx, pts[i][1] + ny]);',
+    expect: 'ribbon turns a varying weight into a shape a single-width pen can draw',
+  },
+  {
+    why: 'ring ignores the radius it is handed, so every form is the same circle',
+    file: 'core/geom.js',
+    from: '    const r = radiusAt(a, i, n);',
+    to: '    const r = 1;',
+    expect: 'ring is a constructor, not a look: a constant radius is a circle',
   },
 
 ];

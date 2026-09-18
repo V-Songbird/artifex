@@ -29,6 +29,40 @@ test('the same seed and address always give the same value', () => {
   assert.notEqual(rng(7)('stroke', 'length', 12), rng(8)('stroke', 'length', 12));
 });
 
+test('ONE SOURCE, ASKED TWICE, ANSWERS THE SAME', () => {
+  // The test above builds a fresh source each time, so it cannot see a source
+  // that remembers an answer and then hands back a different one. A source
+  // carries a memo of the (entity, property) hash, and a memo is the classic
+  // place for an optimisation to quietly become a change -- so the property it
+  // must have is stated here rather than assumed from the fact that the numbers
+  // looked right once.
+  const R = rng(7);
+  assert.equal(R('stroke', 'length', 12), R('stroke', 'length', 12));
+
+  // And asking for OTHER things in between must not disturb it: a memo keyed on
+  // the index, or one that overwrites its own entry, survives the two lines
+  // above and dies here.
+  const first = R('a', 'b');
+  R('a', 'c');
+  R('z', 'b');
+  R('a', 'b', 5);
+  assert.equal(R('a', 'b'), first, 'an address changed value after other addresses were read');
+
+  // AND THE ORDER OF THE ASKING CANNOT MATTER, which is the deeper form of the
+  // same rule and the one a memo is most likely to break. Two sources on the
+  // same seed, asked for the same address after different histories, must agree
+  // -- otherwise editing a piece so that one mark is drawn before another
+  // changes the picture, which is the exact failure a sequential generator has
+  // and the whole reason this source is addressed.
+  const A = rng(7);
+  const B = rng(7);
+  const straight = A('form', 'twist', 0);
+  B('form', 'twist', 9);
+  B('form', 'other', 3);
+  assert.equal(B('form', 'twist', 0), straight,
+    'an address answered differently because something else was asked first');
+});
+
 test('zero is a seed', () => {
   const a = rng(0)('x', 'y');
   assert.ok(Number.isFinite(a) && a >= 0 && a < 1);
@@ -173,4 +207,16 @@ test('fbm octaves are separate fields, not one field read at two scales', () => 
   // dropped, every octave would be one field read at four scales.
   assert.equal(fbm(R, 1.3, 2.7, 1, 'a'), noise2(R, 1.3, 2.7, 'a/0'));
   assert.notEqual(fbm(R, 1.3, 2.7, 1, 'a'), noise2(R, 1.3, 2.7, 'a'));
+
+  // TWO octaves, because ONE CANNOT SEE THE SECOND NAME AT ALL. This test used
+  // to stop at the line above, and a mutation that names every octave `a/0`
+  // walked straight through it: octave zero was still right, and octave zero was
+  // all the test ever looked at. The fix is not a wider tolerance, it is the
+  // octave the fault lives in. Frequency doubles and amplitude halves, both
+  // pinned here, so the octave names and the octave scales stand or fall
+  // together.
+  const two = fbm(R, 1.3, 2.7, 2, 'a');
+  const byHand = (noise2(R, 1.3, 2.7, 'a/0') + 0.5 * noise2(R, 2.6, 5.4, 'a/1')) / 1.5;
+  assert.ok(Math.abs(two - byHand) < 1e-12,
+    `two octaves gave ${two}, and the two named fields give ${byHand}`);
 });
