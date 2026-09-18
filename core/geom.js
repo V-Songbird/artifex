@@ -22,6 +22,14 @@
 // any of the three populations. When one asks, it gets written properly rather
 // than approximated here.
 //
+// ONE HAS NOW ASKED. `Code as Creative Medium` (Levin & Brain, MIT Press 2021)
+// collects the assignments of hundreds of educators across thirty years, and its
+// Geometry exercises name a polyline offset by a fixed distance, the
+// intersection of two line segments, and the shortest distance from a point to a
+// line. That is a fourth population, and the third to name offsetting. See
+// docs/source-library-scan.md §2.1. The paragraph above stands as the standard
+// -- written properly, not approximated -- but it is no longer waiting.
+//
 // WHAT WAS CUT, AND WHY. A first pass also shipped `area`, `polyPts`,
 // `starPts`, `arcPts` and `rotPts`. Nothing outside the tests reached any of
 // them, and two of the five -- the n-gon and the star -- are `ring` with a
