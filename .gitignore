@@ -2,3 +2,7 @@ node_modules/
 out/
 *.log
 .DS_Store
+
+# Throwaway checkouts the agent tooling parks here. Each is a repo of its own,
+# so a `git add -A` at the root would stage them as embedded repositories.
+.claude/worktrees/
