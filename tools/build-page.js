@@ -159,6 +159,8 @@ function html(bundle) {
   input[type=range] { width: 100%; accent-color: var(--accent); }
   .facts { color: var(--dim); line-height: 1.7; font-size: 11px; }
   .facts b { color: var(--fg); font-weight: normal; }
+  .meaning { color: var(--dim); font-size: 10px; line-height: 1.5; opacity: .75;
+             margin: 0 0 3px 1px; }
   .note { color: var(--dim); font-size: 10px; line-height: 1.5; margin-top: 8px; }
   .err { color: #e8705a; white-space: pre-wrap; line-height: 1.5; font-size: 11px; }
 </style>
@@ -285,6 +287,12 @@ function buildParams() {
     var val = document.createElement('b');
     val.textContent = d.value;
     lab.appendChild(val);
+    // What the knob DOES, from the piece's own declaration. A slider labelled
+    // only with its name asks the reader to guess, and a reader that cannot
+    // read the source -- an agent, or anyone a page is handed to -- cannot.
+    var why = document.createElement('div');
+    why.className = 'meaning';
+    why.textContent = d.meaning;
     var r = document.createElement('input');
     r.type = 'range';
     r.min = d.min; r.max = d.max; r.value = d.value;
@@ -295,6 +303,7 @@ function buildParams() {
       resolve();
     };
     host.appendChild(lab);
+    host.appendChild(why);
     host.appendChild(r);
   });
 }

@@ -43,6 +43,20 @@ const MUTATIONS = [
     expect: 'solve reports every DECLARED stage, not only the ones that finished',
   },
   {
+    why: 'a parameter may be declared without saying what it does, so a knob goes back to being three numbers',
+    file: 'core/piece.js',
+    from: '        if (typeof p.meaning !== \'string\' || !p.meaning.trim()) {',
+    to: '        if (false) {',
+    expect: 'a declared parameter must SAY WHAT IT DOES, and the saying is not optional',
+  },
+  {
+    why: 'a misspelled key inside a params entry is accepted, which is how a wrong contract passed every check before',
+    file: 'core/piece.js',
+    from: '        if (extra.length) return `unknown key(s) in params.${k}: ${extra.join(\', \')}; known: ${KNOWN.join(\', \')}`;',
+    to: '        if (false) return null;',
+    expect: 'a params entry carries no keys beyond the four, and a misspelling is named',
+  },
+  {
     why: 'a timeline becomes mandatory, so a still is no longer a legal piece',
     file: 'core/piece.js',
     from: '      if (v === null) return null;',

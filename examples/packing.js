@@ -56,9 +56,12 @@ module.exports = {
   time: null,
   seed: 31,
   params: {
-    relax: { min: 0, max: 1, value: 0.34 },     // how much air is left between forms
-    lobes: { min: 0, max: 1, value: 0.55 },     // round forms at 0, deeply folded at 1
-    shells: { min: 1, max: 6, value: 3 },       // concentric rings inside each form
+    relax: { min: 0, max: 1, value: 0.34,
+      meaning: 'how much air is left between forms -- 0 packs them touching' },
+    lobes: { min: 0, max: 1, value: 0.55,
+      meaning: 'how folded each outline is -- round at 0, deeply lobed at 1' },
+    shells: { min: 1, max: 6, value: 3,
+      meaning: 'how many concentric rings are drawn inside each form' },
   },
 
   state: () => ({ forms: [], tried: 0, placed: 0 }),

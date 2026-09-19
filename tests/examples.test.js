@@ -453,6 +453,31 @@ test('EVERY DECLARED PARAMETER MOVES THE OUTPUT, at three pins and not two', () 
   assert.ok(checked >= 5, `only ${checked} parameters were checked`);
 });
 
+test('EVERY DECLARED PARAMETER SAYS WHAT IT DOES, in its own words', () => {
+  // validate() already refuses a missing `meaning`, so presence is not what is
+  // at risk here -- the risk is the field being filled to get past the
+  // validator. Two ways that happens, and both are checked: restating the
+  // parameter's own name, and pasting one knob's line onto the next. Either
+  // leaves a declaration that passes every check and tells a reader nothing,
+  // which is the exact disease this project catalogued 23 cases of.
+  let checked = 0;
+  for (const n of NAMES) {
+    const p = validate(EXAMPLES[n]);
+    const seen = new Map();
+    for (const [k, d] of Object.entries(p.params)) {
+      const m = d.meaning.trim();
+      assert.ok(m.split(/\s+/).length >= 4,
+        `${n}.${k}: "${m}" is not a sentence about the picture`);
+      assert.notEqual(m.toLowerCase(), k.toLowerCase(), `${n}.${k} restates its own name`);
+      const twin = seen.get(m);
+      assert.equal(twin, undefined, `${n}.${k} and ${n}.${twin} carry the same meaning`);
+      seen.set(m, k);
+      checked++;
+    }
+  }
+  assert.ok(checked >= 5, `only ${checked} parameters were checked`);
+});
+
 test('an undeclared parameter is refused by name', () => {
   const e = grab(() => solve(validate(EXAMPLES.contours), 1, { nope: 1 }));
   assert.match(e.message, /unknown param: nope/);

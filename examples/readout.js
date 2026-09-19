@@ -50,7 +50,8 @@ module.exports = {
   time: { duration: 6, hz: 24 },
   seed: 31,
   params: {
-    lead: { min: 0.5, max: 6, value: 2.2 },   // how many cells the scan is ahead of the fill
+    lead: { min: 0.5, max: 6, value: 2.2,
+      meaning: 'how many cells ahead of the fill the scan line runs' },
   },
 
   state: () => ({ cells: [], accent: ACCENTS[0] }),

@@ -33,8 +33,10 @@ module.exports = {
   time: null,
   seed: 11,
   params: {
-    focus: { min: 2, max: 9, value: 6.2 },   // how sharply detail falls away
-    depth: { min: 3, max: 8, value: 7 },
+    focus: { min: 2, max: 9, value: 6.2,
+      meaning: 'how sharply detail falls away from the focus point' },
+    depth: { min: 3, max: 8, value: 7,
+      meaning: 'how many times a cell may be subdivided before it is drawn' },
   },
 
   state: () => ({ cells: [], focus: [0.5, 0.5] }),

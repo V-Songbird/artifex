@@ -47,7 +47,8 @@ module.exports = {
     // pins rather than two. Declaring one and then never reading it is a
     // declaration that cannot fail, which is the whole disease this project
     // exists to avoid -- and it is what this block did on its first draft.
-    sample: { min: 0, max: SAMPLES.length - 1, value: 0 },
+    sample: { min: 0, max: SAMPLES.length - 1, value: 0,
+      meaning: 'which of the built-in text samples is set on the grid' },
   },
 
   state: () => ({ lines: [], accent: ACCENTS[0], sample: SAMPLES[0] }),

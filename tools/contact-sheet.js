@@ -46,6 +46,8 @@ function page(names, count, t) {
        border-top:1px solid var(--line); padding-top:14px; }
   h2:first-of-type { margin-top:0; border-top:0; padding-top:0; }
   .note { color:var(--dim); margin:0 0 14px; }
+  .knobs { color:var(--dim); margin:-10px 0 14px; padding-left:16px; line-height:1.7; }
+  .knobs b { color:var(--fg); font-weight:normal; }
   .sheet { display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:14px; }
   figure { margin:0; }
   canvas { width:100%; display:block; background:#fff; border:1px solid var(--line); }
@@ -78,7 +80,27 @@ ${bundle()}
       + ' \u00b7 ' + p.outputs.join(' + ');
     var sheet = document.createElement('div');
     sheet.className = 'sheet';
-    out.appendChild(h2); out.appendChild(note); out.appendChild(sheet);
+    out.appendChild(h2); out.appendChild(note);
+    // The knobs this piece declares, and what each one does. The sheet sweeps
+    // seeds; this is what is holding still while it does, and it is the list
+    // anyone deciding what to sweep NEXT has to read first.
+    var keys = Object.keys(p.params);
+    if (keys.length) {
+      var knobs = document.createElement('ul');
+      knobs.className = 'knobs';
+      keys.forEach(function (k) {
+        var d = p.params[k];
+        var li = document.createElement('li');
+        var nm = document.createElement('b');
+        nm.textContent = k + ' ' + d.value;
+        li.appendChild(nm);
+        li.appendChild(document.createTextNode(
+          ' \u00b7 ' + d.meaning + ' [' + d.min + '..' + d.max + ']'));
+        knobs.appendChild(li);
+      });
+      out.appendChild(knobs);
+    }
+    out.appendChild(sheet);
 
     for (var i = 0; i < COUNT; i++) {
       // The seeds are the first COUNT integers, not random ones: a contact

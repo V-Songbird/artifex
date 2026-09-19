@@ -38,8 +38,10 @@ module.exports = {
   time: null,
   seed: 2026,
   params: {
-    relief: { min: 0.2, max: 2.5, value: 1.15 },   // how hard the field folds
-    wells: { min: 1, max: 6, value: 4 },
+    relief: { min: 0.2, max: 2.5, value: 1.15,
+      meaning: 'how hard the field folds -- how far the noise lifts and drops the surface' },
+    wells: { min: 1, max: 6, value: 4,
+      meaning: 'how many wells push the surface up or down under the noise' },
   },
 
   state: () => ({ paths: [], segments: 0 }),

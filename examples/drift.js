@@ -39,9 +39,12 @@ module.exports = {
   time: { duration: 8, hz: 30 },
   seed: 77,
   params: {
-    strokes: { min: 20, max: 260, value: 130 },
-    reach: { min: 80, max: 560, value: 330 },     // how far a stroke travels
-    turn: { min: 0.02, max: 0.5, value: 0.11 },   // how fast it turns TOWARDS the field
+    strokes: { min: 20, max: 260, value: 130,
+      meaning: 'how many strokes the piece lays down' },
+    reach: { min: 80, max: 560, value: 330,
+      meaning: 'how far a stroke travels, in design units' },
+    turn: { min: 0.02, max: 0.5, value: 0.11,
+      meaning: 'how fast a stroke turns TOWARDS the field it crosses -- 0 is a straight line' },
   },
 
   state: () => ({ strokes: [], hue: 0 }),

@@ -85,10 +85,35 @@ test('outputs: vector is a claim that must be made, and raster is always true', 
   assert.throws(() => validate({ ...minimal(), outputs: [] }), /non-empty array/);
 });
 
+const knob = (over) => ({ min: 0, max: 1, value: 0.5, meaning: 'how wide the gap is', ...over });
+
 test('a declared parameter must have a value inside its own range', () => {
-  assert.doesNotThrow(() => validate({ ...minimal(), params: { k: { min: 0, max: 1, value: 0.5 } } }));
-  assert.throws(() => validate({ ...minimal(), params: { k: { min: 1, max: 0, value: 0.5 } } }), /min must be less than max/);
-  assert.throws(() => validate({ ...minimal(), params: { k: { min: 0, max: 1, value: 2 } } }), /value must lie in \[min, max\]/);
+  assert.doesNotThrow(() => validate({ ...minimal(), params: { k: knob() } }));
+  assert.throws(() => validate({ ...minimal(), params: { k: knob({ min: 1, max: 0 }) } }), /min must be less than max/);
+  assert.throws(() => validate({ ...minimal(), params: { k: knob({ value: 2 }) } }), /value must lie in \[min, max\]/);
+});
+
+test('a declared parameter must SAY WHAT IT DOES, and the saying is not optional', () => {
+  // Three numbers and a source comment is a knob only one kind of reader can
+  // use. The page shows this string under the slider and the contact sheet
+  // lists it, so a reader who cannot open the file still knows what moving it
+  // will do -- which is the difference between sweeping a parameter and
+  // guessing at one.
+  const e = grab(() => validate({ ...minimal(), params: { k: { min: 0, max: 1, value: 0.5 } } }));
+  assert.ok(e instanceof PieceError);
+  assert.match(e.message, /params\.k\.meaning must be a non-empty string/);
+  assert.throws(() => validate({ ...minimal(), params: { k: knob({ meaning: '   ' }) } }), /meaning must be a non-empty string/);
+  assert.throws(() => validate({ ...minimal(), params: { k: knob({ meaning: 42 }) } }), /meaning must be a non-empty string/);
+  assert.throws(() => validate({ ...minimal(), params: { k: knob({ meaning: 'x'.repeat(121) }) } }), /at most 120 characters/);
+});
+
+test('a params entry carries no keys beyond the four, and a misspelling is named', () => {
+  // The same guard `size` and `time` already have, and for the same reason: a
+  // key the contract ignores is a declaration that cannot fail. `step` and
+  // `label` are the two an author reaches for first.
+  assert.throws(() => validate({ ...minimal(), params: { k: knob({ step: 0.1 }) } }), /unknown key\(s\) in params\.k: step/);
+  assert.throws(() => validate({ ...minimal(), params: { k: knob({ label: 'gap' }) } }), /unknown key\(s\) in params\.k: label/);
+  assert.throws(() => validate({ ...minimal(), params: { k: knob({ meanning: 'typo' }) } }), /unknown key\(s\) in params\.k: meanning/);
 });
 
 test('build stages must be named, because a stage that throws is reported by name', () => {

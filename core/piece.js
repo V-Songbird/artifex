@@ -134,20 +134,37 @@ const FIELDS = {
     required: false,
     default: () => ({}),
     check: (v) => {
-      if (!v || typeof v !== 'object' || Array.isArray(v)) return 'must be an object of { name: {min, max, value} }';
+      if (!v || typeof v !== 'object' || Array.isArray(v)) {
+        return 'must be an object of { name: {min, max, value, meaning} }';
+      }
+      const KNOWN = ['min', 'max', 'value', 'meaning'];
       for (const [k, p] of Object.entries(v)) {
-        if (!p || typeof p !== 'object') return `params.${k} must be { min, max, value }`;
+        if (!p || typeof p !== 'object') return `params.${k} must be { min, max, value, meaning }`;
+        const extra = Object.keys(p).filter((f) => !KNOWN.includes(f));
+        if (extra.length) return `unknown key(s) in params.${k}: ${extra.join(', ')}; known: ${KNOWN.join(', ')}`;
         for (const f of ['min', 'max', 'value']) {
           if (!Number.isFinite(p[f])) return `params.${k}.${f} must be a finite number`;
         }
         if (!(p.min < p.max)) return `params.${k}: min must be less than max`;
         if (p.value < p.min || p.value > p.max) return `params.${k}.value must lie in [min, max]`;
+        // WHY `meaning` IS REQUIRED AND NOT OPTIONAL. Before this, a parameter
+        // was three numbers and a source comment, and a comment is readable by
+        // exactly one kind of reader. An agent handed a piece could sweep a knob
+        // but could not tell what the knob was for, so it could not tell a
+        // worthwhile sweep from a pointless one. Optional would have meant the
+        // six examples filled it in and nothing else ever did.
+        if (typeof p.meaning !== 'string' || !p.meaning.trim()) {
+          return `params.${k}.meaning must be a non-empty string saying what this knob does to the picture`;
+        }
+        if (p.meaning.length > 120) return `params.${k}.meaning must be at most 120 characters`;
       }
       return null;
     },
-    doc: 'Declared parameters an outside caller may sweep. Every one of them '
-       + 'must move the output, checked at three pins and not two -- a cyclic '
-       + 'parameter has the same value at both ends of [0,1].',
+    doc: 'Declared parameters an outside caller may sweep, as '
+       + '{ min, max, value, meaning }. Every one of them must move the output, '
+       + 'checked at three pins and not two -- a cyclic parameter has the same '
+       + 'value at both ends of [0,1]. `meaning` says what the knob does to the '
+       + 'PICTURE, in one line, for a reader that cannot see the source.',
   },
 };
 
