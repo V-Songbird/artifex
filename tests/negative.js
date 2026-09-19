@@ -466,6 +466,34 @@ const MUTATIONS = [
     to: '  for (let o = ns.length; o < octaves; o++) ns.push(`${name}/0`);',
     expect: 'fbm octaves are separate fields, not one field read at two scales',
   },
+  {
+    why: 'the octaves double exactly again, so every octave lattice line lands on the integers and the field goes flat on a grid',
+    file: 'core/rand.js',
+    from: 'const LACUNARITY = 2.17;',
+    to: 'const LACUNARITY = 2;',
+    expect: 'fbm has no dead lines: its gradient on the integer lattice is not near zero',
+  },
+  {
+    why: 'the gradient table is never indexed, so every cell leans the same way and the field is a ramp rather than a field',
+    file: 'core/rand.js',
+    from: "  const g = GRADS[Math.floor(R(name, 'grad', cell(i, j)) * GRADS.length)];",
+    to: '  const g = GRADS[0];',
+    expect: 'gradient2 stays in range, varies, and is a pure function of its arguments',
+  },
+  {
+    why: 'the gradient index forgets the field NAME, so two named fields of gradient2 are one field',
+    file: 'core/rand.js',
+    from: "  const g = GRADS[Math.floor(R(name, 'grad', cell(i, j)) * GRADS.length)];",
+    to: "  const g = GRADS[Math.floor(R('field', 'grad', cell(i, j)) * GRADS.length)];",
+    expect: 'two named fields of gradient2 are independent at the same point',
+  },
+  {
+    why: 'gradient noise gets a smoothstep fade instead of the quintic, so its second derivative steps across every cell boundary',
+    file: 'core/rand.js',
+    from: '  const u = fx * fx * fx * (fx * (fx * 6 - 15) + 10);',
+    to: '  const u = fx * fx * (3 - 2 * fx);',
+    expect: "gradient2's curvature is continuous across a cell boundary, not stepped",
+  },
 
   // --- geometry: the list three independent populations wrote ---------------
   {

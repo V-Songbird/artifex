@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { rng, noise2, fbm } = require('../core/rand.js');
+const { rng, noise2, gradient2, fbm } = require('../core/rand.js');
 
 function grab(fn) {
   try { fn(); } catch (e) { return e; }
@@ -212,11 +212,150 @@ test('fbm octaves are separate fields, not one field read at two scales', () => 
   // to stop at the line above, and a mutation that names every octave `a/0`
   // walked straight through it: octave zero was still right, and octave zero was
   // all the test ever looked at. The fix is not a wider tolerance, it is the
-  // octave the fault lives in. Frequency doubles and amplitude halves, both
-  // pinned here, so the octave names and the octave scales stand or fall
-  // together.
+  // octave the fault lives in. Amplitude halves and the frequency ratio is the
+  // module's LACUNARITY, written here as the literal 2.17 rather than imported
+  // from core/rand.js: a test that reads the constant it is checking cannot
+  // notice that constant moving. The octave names and the octave scales stand
+  // or fall together.
   const two = fbm(R, 1.3, 2.7, 2, 'a');
-  const byHand = (noise2(R, 1.3, 2.7, 'a/0') + 0.5 * noise2(R, 2.6, 5.4, 'a/1')) / 1.5;
+  const byHand = (noise2(R, 1.3, 2.7, 'a/0') + 0.5 * noise2(R, 1.3 * 2.17, 2.7 * 2.17, 'a/1')) / 1.5;
   assert.ok(Math.abs(two - byHand) < 1e-12,
     `two octaves gave ${two}, and the two named fields give ${byHand}`);
+});
+
+// The median |d/dx| of `f` measured ON integer x, and again a third of the way
+// between two of them. Shared by the two lattice tests below, which ask the
+// same question of fbm and of gradient2.
+//
+// The comparison point is x + 0.37 rather than x + 0.5 deliberately: while the
+// octaves doubled, every octave after the first put a lattice line on the
+// half-integers too, so x + 0.5 was a weaker version of the same special place
+// and would have hidden the fault it is here to find. No octave lands on 0.37
+// at either ratio.
+function latticeSlopes(f, seed) {
+  const R = rng(seed);
+  const h = 1e-5;
+  const d = (x, y) => (f(R, x + h, y) - f(R, x - h, y)) / (2 * h);
+  const med = (xs) => { const v = xs.slice().sort((a, b) => a - b); return v[v.length >> 1]; };
+  const on = [];
+  const off = [];
+  for (let i = 0; i < 2000; i++) {
+    const y = i * 0.0137 + 0.31;   // a generic row, so this is the x-derivative
+    const x = i % 100;
+    on.push(Math.abs(d(x, y)));
+    off.push(Math.abs(d(x + 0.37, y)));
+  }
+  return { on: med(on), off: med(off), ratio: med(on) / med(off) };
+}
+
+test('fbm has no dead lines: its gradient on the integer lattice is not near zero', () => {
+  // With an exact doubling, every octave's lattice lines land on the same
+  // integers -- and `noise2` is value noise, whose derivative across its own
+  // lattice lines is zero. Four octaves agreeing about where to be flat leave
+  // a grid of lines on which the whole field's gradient vanishes. A piece that
+  // reads the field's VALUE cannot see this at all; anything that
+  // differentiates it -- curl, gradient hatching, a field layer -- sits on it.
+  //
+  // This compares two measured medians rather than either against a constant.
+  // What has to be true is that an integer line is not a special place, and the
+  // only honest way to say that is against everywhere else. Measured on this
+  // machine: 7.9e-4 of elsewhere while the octaves doubled (1.8e-4 against
+  // 2.3e-1), 0.83 once they stopped (2.8e-1 against 3.3e-1). Three orders of
+  // magnitude apart, with nothing in between to tune the threshold against.
+  const m = latticeSlopes((R, x, y) => fbm(R, x, y, 4), 11);
+  assert.ok(m.ratio > 0.25,
+    `fbm's gradient on integer lines is ${m.ratio.toExponential(2)} of elsewhere `
+    + `(${m.on.toExponential(2)} against ${m.off.toExponential(2)})`);
+});
+
+test('gradient2 has no dead lattice lines, which is the whole reason it exists', () => {
+  // `noise2` puts the random VALUE at the lattice point, so both sides of a
+  // lattice line arrive flat and the derivative there is zero. No fade repairs
+  // that; the flatness is the construction. `gradient2` puts a DIRECTION at the
+  // lattice point instead and lets the offset act on it, so the field is moving
+  // as it crosses. Measured here: noise2 3.8e-5 against 3.6e-1 (ratio 1.1e-4),
+  // gradient2 3.3e-1 against 2.0e-1 (ratio 1.66 -- steeper on the line, which is
+  // what a gradient sitting at the lattice point should give).
+  //
+  // noise2 is measured too, and asserted to STILL be flat. That is not a defect
+  // being pinned: it is what value noise is, it is why this second function
+  // exists, and if it ever stopped being true the reason for gradient2 would
+  // have changed without anyone noticing.
+  const g = latticeSlopes((R, x, y) => gradient2(R, x, y), 13);
+  assert.ok(g.ratio > 0.25,
+    `gradient2's slope on lattice lines is ${g.ratio.toExponential(2)} of elsewhere `
+    + `(${g.on.toExponential(2)} against ${g.off.toExponential(2)})`);
+
+  const v = latticeSlopes((R, x, y) => noise2(R, x, y), 13);
+  assert.ok(v.ratio < 0.01,
+    `value noise was expected to stay flat on its lattice lines, and gave ${v.ratio.toExponential(2)}`);
+});
+
+test('gradient2 stays in range, varies, and is a pure function of its arguments', () => {
+  const R = rng(14);
+  let lo = 1;
+  let hi = 0;
+  for (let i = 0; i < 3000; i++) {
+    const v = gradient2(R, i * 0.017, i * 0.041);
+    assert.ok(v >= 0 && v < 1, `out of range: ${v}`);
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  assert.ok(hi - lo > 0.4, `range was only ${(hi - lo).toFixed(3)}`);
+  assert.equal(gradient2(R, 1.5, 2.5), gradient2(rng(14), 1.5, 2.5));
+
+  // And it is SMOOTH: a small step gives a small change. A gradient table read
+  // with the wrong index, or a fade applied to the wrong axis, breaks here.
+  for (let i = 0; i < 400; i++) {
+    const x = i * 0.31;
+    const y = i * 0.17;
+    assert.ok(Math.abs(gradient2(R, x + 0.002, y) - gradient2(R, x, y)) < 0.02,
+      `a small step changed the field by too much at (${x}, ${y})`);
+  }
+});
+
+test("gradient2's curvature is continuous across a cell boundary, not stepped", () => {
+  // The fade is Perlin's quintic rather than the smoothstep noise2 uses, and
+  // the reason is exactly this: smoothstep's value and FIRST derivative agree
+  // at both ends, but its second does not, so curvature jumps every time a
+  // sample crosses into the next cell. A piece reading the field's value never
+  // sees it; a curl, a ribbon width or anything else built on the second
+  // derivative gets a visible grid of creases.
+  //
+  // Stated as a jump across a lattice line measured against the jump across an
+  // ordinary point half a cell away, because the absolute size of a second
+  // derivative means nothing on its own. Measured on this machine: quintic 0.34
+  // against 0.22, a ratio of 1.5; smoothstep 1.62 against 0.09, a ratio of 19.
+  // An order of magnitude apart, so 5 is a threshold with nothing near it.
+  const R = rng(13);
+  const h = 1e-3;
+  const d2 = (x, y) => (gradient2(R, x + h, y) - 2 * gradient2(R, x, y) + gradient2(R, x - h, y)) / (h * h);
+  const med = (xs) => { const v = xs.slice().sort((a, b) => a - b); return v[v.length >> 1]; };
+  const across = [];
+  const within = [];
+  for (let i = 0; i < 600; i++) {
+    const y = i * 0.0137 + 0.31;
+    const x = (i % 50) + 3;
+    across.push(Math.abs(d2(x + 0.02, y) - d2(x - 0.02, y)));
+    within.push(Math.abs(d2(x + 0.52, y) - d2(x + 0.48, y)));
+  }
+  const ratio = med(across) / med(within);
+  assert.ok(ratio < 5,
+    `curvature jumps ${ratio.toFixed(1)}x harder across a cell boundary than inside one `
+    + `(${med(across).toFixed(3)} against ${med(within).toFixed(3)})`);
+});
+
+test('two named fields of gradient2 are independent at the same point', () => {
+  // The same property noise2 has, and for the same reason: every irregularity
+  // in a piece must not have one cause. Checked separately because this address
+  // carries more than noise2's -- a gradient index as well as a cell -- and a
+  // lookup that dropped the NAME would fuse two fields into one while the range,
+  // the smoothness and the lattice check all still passed.
+  const R = rng(6);
+  const r = corr(2000, (i) => gradient2(R, i * 0.53, i * 0.29, 'flow'),
+    (i) => gradient2(R, i * 0.53, i * 0.29, 'grain'));
+  assert.ok(Math.abs(r) < 0.1, `two named fields correlate at r = ${r.toFixed(4)}`);
+  assert.equal(corr(400, (i) => gradient2(R, i * 0.53, i * 0.29, 'flow'),
+    (i) => gradient2(R, i * 0.53, i * 0.29, 'flow')).toFixed(3), '1.000',
+  'and the same name is the same field');
 });

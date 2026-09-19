@@ -138,6 +138,68 @@ function noise2(R, x, y, name = 'field') {
   return (a0 + (b0 - a0) * u) * (1 - v) + (a1 + (b1 - a1) * u) * v;
 }
 
+// The gradient table for `gradient2`. Eight unit directions: the four axes and
+// the four diagonals. Fixed rather than generated, and the diagonal component is
+// written out as a literal instead of taken from `Math.SQRT1_2`, because this
+// file promises the same number in every engine and a literal already IS that
+// number. Eight is enough here: the directions only have to be spread, and a
+// larger table costs a wider index for no visible gain at this lattice size.
+const GRADS = [
+  [1, 0], [-1, 0], [0, 1], [0, -1],
+  [0.7071067811865476, 0.7071067811865476],
+  [0.7071067811865476, -0.7071067811865476],
+  [-0.7071067811865476, 0.7071067811865476],
+  [-0.7071067811865476, -0.7071067811865476],
+];
+
+/** One cell's gradient, dotted with the offset from that corner to the sample. */
+function gradDot(R, name, i, j, dx, dy) {
+  const g = GRADS[Math.floor(R(name, 'grad', cell(i, j)) * GRADS.length)];
+  return g[0] * dx + g[1] * dy;
+}
+
+/**
+ * GRADIENT noise on the unit lattice -- Perlin's -- addressed like everything
+ * else. In [0, 1), smooth, and a pure function of (R, x, y, name).
+ *
+ * WHY IT EXISTS BESIDE `noise2`. `noise2` is VALUE noise: the random number sits
+ * AT the lattice point, and any fade that is flat at both ends carries it in
+ * between. So across every one of its own lattice lines the field arrives flat
+ * from both sides and the derivative there is zero -- measured on this machine,
+ * median |d/dx| 3.8e-5 on x = integer against 3.6e-1 elsewhere, four orders
+ * down. No choice of fade repairs that, because the flatness is the
+ * construction. Here the random value IS a direction at the lattice point and
+ * the offset to the sample is what it acts on, so the field is moving as it
+ * crosses a lattice line and that line is an ordinary place to be: 3.3e-1
+ * against 2.0e-1, measured the same way -- if anything STEEPER there, which is
+ * what a gradient sitting at the lattice point should give. Anything that takes
+ * a gradient, a curl or a hatch angle out of a field wants this one.
+ *
+ * The fade is Perlin's quintic, whose value and first AND second derivatives all
+ * agree at both ends, so curvature is continuous across a cell boundary too and
+ * a curl read off the field is smooth rather than stepped.
+ *
+ * The range is narrower than `noise2`'s and is deliberately not stretched to
+ * fill [0, 1): with unit gradients a 2D Perlin value cannot leave +-sqrt(2)/2,
+ * so scaling it to the full range would be a claim about the amplitude that is
+ * not true. See ../Docs/Artifex/source-library-scan.md §8.1.
+ */
+function gradient2(R, x, y, name = 'field') {
+  const xi = Math.floor(x);
+  const yi = Math.floor(y);
+  const fx = x - xi;
+  const fy = y - yi;
+  const u = fx * fx * fx * (fx * (fx * 6 - 15) + 10);
+  const v = fy * fy * fy * (fy * (fy * 6 - 15) + 10);
+  const n00 = gradDot(R, name, xi, yi, fx, fy);
+  const n10 = gradDot(R, name, xi + 1, yi, fx - 1, fy);
+  const n01 = gradDot(R, name, xi, yi + 1, fx, fy - 1);
+  const n11 = gradDot(R, name, xi + 1, yi + 1, fx - 1, fy - 1);
+  const a = n00 + (n10 - n00) * u;
+  const b = n01 + (n11 - n01) * u;
+  return (a + (b - a) * v) * 0.5 + 0.5;
+}
+
 // The octave names, built once per field name and then reused.
 //
 // `${name}/${o}` is the same handful of strings on every call, and a field is
@@ -156,20 +218,31 @@ function octaveNames(name, octaves) {
   return ns;
 }
 
+// The frequency ratio from one octave to the next. NOT 2, and that is
+// load-bearing rather than taste.
+//
+// With an exact doubling every octave's lattice lines land on the same
+// integers, and `noise2` is value noise, whose derivative across its own
+// lattice lines is zero. Four such octaves therefore agree with each other
+// about where to be flat, and leave a grid of lines on which the whole field's
+// gradient vanishes: measured on this machine, median |d/dx| 1.8e-4 on
+// x = integer against 2.3e-1 elsewhere, a ratio of 7.9e-4. At 2.17 the octaves
+// no longer share a lattice and the same measurement gives 2.8e-1 against
+// 3.3e-1, a ratio of 0.83 -- an integer line stops being a special place.
+// Texturing & Modeling (3rd ed., p. 88) multiplies by 2.17 for exactly this
+// reason.
+//
+// This changes every picture that used fbm, which is why it is a decision and
+// not a tidy-up. tests/rand.test.js holds the ratio open and tests/negative.js
+// breaks it back to 2 on purpose. See ../Docs/Artifex/source-library-scan.md §8.1.
+const LACUNARITY = 2.17;
+
 /**
  * Summed octaves, normalised to [0, 1). Each octave is its OWN named field, so
  * the octaves are independent rather than one field read at two scales.
  *
- * KNOWN DEFECT, MEASURED, NOT YET FIXED. The frequency doubles exactly, so the
- * lattice lines of every octave pass through every integer coordinate -- and
- * `noise2` is value noise with a smoothstep fade, whose derivative is exactly
- * zero across each of its own lattice lines. Together they leave a grid of lines
- * where the field's gradient vanishes: at four octaves the median |d/dx| on
- * x = integer is 1.8e-6, against 0.35 elsewhere. Texturing & Modeling (3rd ed.,
- * p. 88) multiplies by 2.17 instead for exactly this reason, and measured here
- * that restores 0.28. Changing it changes every picture that uses fbm, so it
- * waits for a decision. Nothing that differentiates a field should be built on
- * this until it is fixed. See ../Docs/Artifex/source-library-scan.md §8.1.
+ * Built on `noise2`. A piece that differentiates the result wants `gradient2`
+ * under it instead -- see the note there.
  */
 function fbm(R, x, y, octaves = 4, name = 'field') {
   const ns = octaveNames(name, octaves);
@@ -181,9 +254,9 @@ function fbm(R, x, y, octaves = 4, name = 'field') {
     sum += amp * noise2(R, x * f, y * f, ns[o]);
     norm += amp;
     amp *= 0.5;
-    f *= 2;
+    f *= LACUNARITY;
   }
   return sum / norm;
 }
 
-module.exports = { rng, noise2, fbm };
+module.exports = { rng, noise2, gradient2, fbm };
