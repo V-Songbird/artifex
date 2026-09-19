@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { validate, frameT, frameCount, solve, PieceError } = require('../core/piece.js');
+const { validate, frameT, frameCount, solve, summarise, PieceError } = require('../core/piece.js');
 
 /** assert.throws() returns undefined, so catch the error to read its text. */
 function grab(fn) {
@@ -139,6 +139,88 @@ test('solve reports every DECLARED stage, not only the ones that finished', () =
   assert.equal(r.stages.error.stage, 'two');
   assert.equal(r.stages.error.at, 1);
   assert.match(r.stages.error.message, /boom/);
+});
+
+test('a build can be stopped at a named stage, and an unknown name is refused', () => {
+  const p = validate({
+    ...minimal(),
+    state: () => ({ log: [] }),
+    build: [
+      ['one', (s) => s.log.push(1)],
+      ['two', (s) => s.log.push(2)],
+      ['three', (s) => s.log.push(3)],
+    ],
+  });
+
+  const half = solve(p, 7, {}, { until: 'two' });
+  assert.deepEqual(half.state.log, [1, 2], 'the named stage RUNS, and nothing after it does');
+  assert.equal(half.stages.ms.length, 2);
+  assert.equal(half.stages.of, 3, 'and the declared count still says how many there were');
+  assert.equal(half.stages.error, null);
+
+  // The first stage and the last one both, because a `break` in the wrong place
+  // is right in the middle and wrong at the ends.
+  assert.deepEqual(solve(p, 7, {}, { until: 'one' }).state.log, [1]);
+  assert.deepEqual(solve(p, 7, {}, { until: 'three' }).state.log, [1, 2, 3]);
+  assert.deepEqual(solve(p, 7).state.log, [1, 2, 3], 'and no `until` runs everything');
+
+  // AN UNKNOWN NAME IS REFUSED, NOT IGNORED. If it meant "run everything", the
+  // finished state would come back looking exactly like a stage that produced
+  // all of it -- so a typo in a stage name would answer a question about step 2
+  // with the contents of step 7, and read as a correct answer.
+  const e = grab(() => solve(p, 7, {}, { until: 'tow' }));
+  assert.ok(e instanceof PieceError);
+  assert.match(e.message, /no build stage called "tow"/);
+  assert.match(e.message, /Declared: one, two, three/);
+});
+
+test('summarise describes a build state instead of copying it', () => {
+  // Raw state is typed arrays and nested polylines: JSON.stringify of it is
+  // either wrong (a Float64Array becomes an object of indices) or megabytes.
+  // What a reader outside the build wants is the SHAPE, one level down.
+  const got = summarise({
+    seed: 7,
+    name: 'thing',
+    done: true,
+    nothing: null,
+    field: Float64Array.from([2, -1, 4]),
+    counts: [3, 1, 2],
+    empty: [],
+    forms: [{ x: 1, y: 2 }, { x: 3, y: 4 }],
+    params: { relief: 1.15, wells: 4 },
+  });
+
+  assert.deepEqual(got.seed, 7, 'a number is itself');
+  assert.deepEqual(got.name, 'thing');
+  assert.deepEqual(got.done, true);
+  assert.deepEqual(got.nothing, null);
+  assert.deepEqual(got.field, { length: 3, kind: 'Float64Array', min: -1, max: 4 },
+    'a typed array reports its kind and the range it spans, not its contents');
+  assert.deepEqual(got.counts, { length: 3, kind: 'array', min: 1, max: 3 });
+  assert.deepEqual(got.empty, { length: 0, kind: 'array' }, 'and an empty list claims no range');
+  assert.deepEqual(got.forms, { length: 2, kind: 'array', of: { keys: ['x', 'y'] } },
+    'a list of objects says what is IN it -- "2 things" answers nothing');
+  assert.deepEqual(got.params, { keys: ['relief', 'wells'] },
+    'and an object is named rather than descended into');
+
+  // The whole point is that it survives the trip to a caller outside the page.
+  assert.deepEqual(JSON.parse(JSON.stringify(got)), got);
+});
+
+test('summarise reaches the shape of a real piece part-way through its build', () => {
+  // The unit test above builds a state by hand, so it cannot notice summarise
+  // being wired to nothing. This drives a shipped piece through the stage seam
+  // and asserts the two stages report DIFFERENT shapes -- which is the entire
+  // reason to look at an intermediate step.
+  const p = validate(require('../examples/contours.js'));
+  const names = p.build.map(([n]) => n);
+  assert.ok(names.length >= 2, `contours has ${names.length} build stages`);
+  const first = summarise(solve(p, 2026, {}, { until: names[0] }).state);
+  const last = summarise(solve(p, 2026).state);
+  assert.equal(first.paths.length, 0, 'nothing is traced before the tracing stage');
+  assert.ok(last.paths.length > 0, 'and something is traced after it');
+  assert.ok(Number.isFinite(first.field.min) && first.field.kind === 'Float64Array',
+    `the sampled field came back as ${JSON.stringify(first.field)}`);
 });
 
 test('seed zero is a seed', () => {

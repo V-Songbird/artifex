@@ -426,6 +426,29 @@ window.__artifex = {
       error: err.textContent || null,
     };
   },
+  // Stop the build after a named stage and describe what it had made. read()
+  // above answers what is on screen; this answers what the piece was holding
+  // part-way through, which is the look the build graph is a graph FOR. The
+  // state comes back summarised, never raw: raw state is typed arrays and
+  // nested polylines, and a caller that JSON.stringify'd it would get either
+  // the wrong answer or megabytes of one.
+  //
+  // NO BACKTICKS ANYWHERE IN HERE. This whole page body is one template
+  // literal, so a backtick in a comment ends it early -- which is exactly how
+  // this function was written the first time.
+  stages: function () { return current ? current.build.map(function (s) { return s[0]; }) : []; },
+  inspect: function (stage) {
+    if (!current) return null;
+    var s = piece.solve(current, Number(document.getElementById('seed').value), overrides, { until: stage });
+    return {
+      stage: stage,
+      ran: s.stages.ms.length,
+      of: s.stages.of,
+      ms: s.stages.ms,
+      error: s.stages.error,
+      state: piece.summarise(s.state),
+    };
+  },
 };
 
 select(names[0]);

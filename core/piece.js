@@ -279,7 +279,19 @@ function clockAt(piece, t) {
  * ones that finished. A build that reports `ms.length > 0` can hide a stage it
  * skipped; the count has to match.
  */
-function solve(piece, seed, params) {
+function solve(piece, seed, params, opt) {
+  // `until` stops the build AFTER a named stage, so a caller outside the piece
+  // can look at what it had made by then. An unknown name is refused rather
+  // than quietly meaning "run everything": the finished state would come back
+  // looking exactly like a stage that had produced all of it, which is the one
+  // answer a reader inspecting an intermediate step must never be given.
+  const until = (opt && opt.until) || null;
+  if (until !== null && !piece.build.some(([n]) => n === until)) {
+    throw new PieceError(
+      `solve: no build stage called ${JSON.stringify(until)}. `
+      + `Declared: ${piece.build.map(([n]) => n).join(', ') || '(none)'}`,
+    );
+  }
   const sd = seed === undefined ? piece.seed : seed >>> 0;
   const state = piece.state();
   state.seed = sd;
@@ -305,6 +317,7 @@ function solve(piece, seed, params) {
     try {
       fn(state);
       ms.push([name, Date.now() - t0]);
+      if (name === until) break;
     } catch (e) {
       error = { stage: name, at: ms.length, of: piece.build.length, message: String(e && e.message || e) };
       break;
@@ -313,4 +326,50 @@ function solve(piece, seed, params) {
   return { state, seed: sd, stages: { ms, of: piece.build.length, error } };
 }
 
-module.exports = { FIELDS, OUTPUTS, PieceError, validate, frameT, frameCount, frameDen, frameIndex, clockAt, solve };
+/**
+ * One value, described rather than copied.
+ *
+ * Numbers, strings and booleans come back as themselves. A list -- an array or
+ * a typed array -- comes back as its length, its kind, and, when every element
+ * is a finite number, the range it spans; when the elements are objects, the
+ * shape of the FIRST one, because "4,812 things" does not answer what is in the
+ * list. Anything else object-shaped reports its keys and is not descended into.
+ */
+function shape(v) {
+  if (v === null || ['number', 'string', 'boolean'].includes(typeof v)) return v;
+  if (typeof v !== 'object') return String(v);
+  if (Array.isArray(v) || ArrayBuffer.isView(v)) {
+    const d = { length: v.length, kind: ArrayBuffer.isView(v) ? v.constructor.name : 'array' };
+    let lo = Infinity;
+    let hi = -Infinity;
+    let numeric = true;
+    for (let i = 0; i < v.length; i++) {
+      if (typeof v[i] !== 'number' || !Number.isFinite(v[i])) { numeric = false; break; }
+      if (v[i] < lo) lo = v[i];
+      if (v[i] > hi) hi = v[i];
+    }
+    if (numeric && v.length) { d.min = lo; d.max = hi; }
+    if (!numeric && v.length) d.of = shape(v[0]);
+    return d;
+  }
+  return { keys: Object.keys(v) };
+}
+
+/**
+ * A JSON-safe look at a build state: which keys, how long, over what range.
+ *
+ * Raw state is what a BUILD needs -- typed arrays, nested polylines, closures --
+ * and JSON.stringify of that is either wrong (a typed array becomes an object
+ * of indices) or enormous. A reader outside the build wants the SHAPE of what a
+ * stage produced, so this describes one level and names the rest.
+ */
+function summarise(state) {
+  const out = {};
+  for (const [k, v] of Object.entries(state)) out[k] = shape(v);
+  return out;
+}
+
+module.exports = {
+  FIELDS, OUTPUTS, PieceError, validate,
+  frameT, frameCount, frameDen, frameIndex, clockAt, solve, summarise,
+};
