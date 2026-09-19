@@ -2,7 +2,7 @@
 
 // The geometry every author writes and nobody ships. Licensed by three
 // independent populations rather than by our own examples -- see the note at
-// the head of core/geom.js and docs/peer-implementation-scan.md.
+// the head of core/geom.js and ../Docs/Artifex/peer-implementation-scan.md.
 //
 // Each check here is chosen by a fault's own structure, not by a tolerance: the
 // centroid test uses a polygon whose vertices are deliberately bunched on one

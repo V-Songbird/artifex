@@ -14,7 +14,7 @@
 // is a ring whose radius is a field, the ring is smoothed, the outline is a
 // ribbon so a single-width pen can still taper, and whether a candidate is
 // already inside something is a point-in-polygon test. See
-// docs/peer-implementation-scan.md for where that list came from.
+// ../Docs/Artifex/peer-implementation-scan.md for where that list came from.
 //
 // THE ONE PIECE OF ART DIRECTION, STATED. Each form is printed twice, in two
 // inks, a fraction of a millimetre apart. That is misregistration -- the thing

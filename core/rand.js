@@ -13,7 +13,7 @@
 // after a scrub.
 //
 // Nothing here knows what kind of art a piece makes. `entity` and `property` are
-// whatever the caller calls things. See docs/subject-neutrality.md.
+// whatever the caller calls things. See ../Docs/Artifex/subject-neutrality.md.
 
 'use strict';
 
@@ -169,7 +169,7 @@ function octaveNames(name, octaves) {
  * p. 88) multiplies by 2.17 instead for exactly this reason, and measured here
  * that restores 0.28. Changing it changes every picture that uses fbm, so it
  * waits for a decision. Nothing that differentiates a field should be built on
- * this until it is fixed. See docs/source-library-scan.md §8.1.
+ * this until it is fixed. See ../Docs/Artifex/source-library-scan.md §8.1.
  */
 function fbm(R, x, y, octaves = 4, name = 'field') {
   const ns = octaveNames(name, octaves);

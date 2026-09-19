@@ -2,7 +2,7 @@
 
 // The example set is infrastructure, not decoration.
 //
-// Section 3 of docs/subject-neutrality.md says the examples ARE the real
+// Section 3 of ../Docs/Artifex/subject-neutrality.md says the examples ARE the real
 // specification: a library that has only ever drawn the art it was built for has
 // no evidence it generalises, and the gaps show up as missing primitives rather
 // than as failing tests. So the set itself is checked -- that it spans idioms

@@ -18,7 +18,7 @@ const { svg, marks } = renderVector({
 ```
 
 Or start from a real one: `require('./examples/contours.js')`. Five of them
-ship, and [none is the starter](docs/example-set.md).
+ship, and [none is the starter](../Docs/Artifex/example-set.md).
 
 ## The one property everything rests on
 
@@ -42,7 +42,7 @@ hard-edged piece anyone tried broke in seven places. Its own conclusion:
 > "They are the shape of a library built by making one kind of picture seven
 > times, **and they would not have appeared from reading the code**."
 
-See [docs/subject-neutrality.md](docs/subject-neutrality.md).
+See [subject-neutrality.md](../Docs/Artifex/subject-neutrality.md).
 
 ## State
 
@@ -57,7 +57,7 @@ Early. What exists and is tested:
 | `core/path.js` | polylines, and the first operation the design box ever had: clip to it |
 | `core/surface-vector.js` | a Canvas2D-shaped surface that emits SVG, and refuses every raster operation **by name** |
 | `core/render.js` | one frame to any surface, at any scale, with the playhead quantised to the drawn-frame grid |
-| `examples/` | five pieces spanning idioms that break each other — see [docs/example-set.md](docs/example-set.md) |
+| `examples/` | five pieces spanning idioms that break each other — see [example-set.md](../Docs/Artifex/example-set.md) |
 | `tools/build-page.js` | one self-contained HTML file: the live backend, the raster backend at any scale, a transport |
 | `tools/lint-unread.js` | every declared name must have a reader, every contract key a consumer. No build, no browser, no art |
 | `tools/contact-sheet.js` | nine seeds on one page — the instrument the docs name as the only one for compositional faults |
@@ -82,14 +82,15 @@ npm run seeds       # nine seeds of every example on one page, and LOOK
 | `contours` | plotter-native: one pen, one weight, no fills | a still | raster + vector |
 
 Not yet built: the video walk, the check suite as a shipped tool, and the
-mathematics import. The [findings index](docs/README.md) is where the design for
+mathematics import. The [findings index](../Docs/Artifex/README.md) is where the design for
 all of it comes from.
 
 ## Documentation
 
-Everything imported from four months of prior work and four independent audits is
-in [docs/](docs/README.md). Start with
-[subject-neutrality.md](docs/subject-neutrality.md).
+Everything imported from four months of prior work and four independent audits
+is kept outside the repository, in
+[D:\Projects\Songbird\Docs\Artifex](../Docs/Artifex/README.md). Start with
+[subject-neutrality.md](../Docs/Artifex/subject-neutrality.md).
 
 ## Licence
 

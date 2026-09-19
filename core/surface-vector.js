@@ -236,7 +236,7 @@ class VectorSurface {
   roundRect(x, y, w, h, radii = 0) {
     // Present because hard-edged graphic work has no other way to make one, and
     // dropping to a raw rectangle costs it every stroke and fill treatment the
-    // rest of the surface offers. See docs/subject-neutrality.md §2, gap 2.
+    // rest of the surface offers. See ../Docs/Artifex/subject-neutrality.md §2, gap 2.
     let r = Array.isArray(radii) ? radii.slice() : [radii, radii, radii, radii];
     if (r.length === 1) r = [r[0], r[0], r[0], r[0]];
     if (r.length === 2) r = [r[0], r[1], r[0], r[1]];

@@ -3,6 +3,7 @@ out/
 *.log
 .DS_Store
 
-# Throwaway checkouts the agent tooling parks here. Each is a repo of its own,
-# so a `git add -A` at the root would stage them as embedded repositories.
-.claude/worktrees/
+# Agent state: the throwaway worktrees (each a repo of its own, so a `git add -A`
+# at the root would stage them as embedded repositories), the local settings and
+# the session memory store. None of it is part of the library.
+.claude/
