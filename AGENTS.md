@@ -41,15 +41,17 @@ a contract key or an invariant — not after every edit.
 
 | path | what lives there |
 |---|---|
-| `core/` | the library: `piece` (the contract), `rand` (addressed, never sequential), `num`, `colour` (linear light), `path`, `render`, `surface-vector` |
+| `core/` | the library: `piece` (the contract), `rand` (addressed, never sequential), `num`, `colour` (linear light), `path`, `geom` (polyline geometry, `chain`), `render`, `surface-vector` |
 | `examples/` | eleven pieces chosen to break each other's assumptions; `index.js` exports them all. **None is the starter** |
 | `tools/` | `build-page`, `contact-sheet`, `render-examples`, `lint-unread`, `bench`. No art lives here |
-| `tests/` | one `*.test.js` per core module, plus `examples.test.js`; `negative.js` is the mutation suite |
+| `tests/` | `*.test.js` per concern (`toolkit` covers `num`, `colour` and `path`), plus `examples.test.js`; `negative.js` is the mutation suite |
 | `docs/` | imported knowledge from the prior engine and four audits — start at [docs/README.md](docs/README.md) |
 | `docs/tasks/` | dated task summaries; they record what was true that day and are not rewritten |
 | `skills/artifex/SKILL.md` | what an agent using the library reads. Changing `core/` usually means changing this too |
 | `ROADMAP.jsonl` | Foreman's ledger of planned work. Edit it through the `foreman` skill, not by hand |
-| `out/`, `node_modules/`, `.claude/`, `.idea/` | generated or local; all git-ignored |
+| `.claude-plugin/`, `.codex-plugin/` | the two host manifests. They are byte-identical copies with no build step: edit both or they drift |
+| `out/`, `node_modules/`, `.idea/` | generated or local; all git-ignored |
+| `.claude/` | mostly git-ignored (worktrees, memory, logs, `settings.local.json`); `settings.json` is the one tracked file |
 
 Tests sit in `tests/` rather than beside the code: `npm test` globs
 `tests/*.test.js`, and `tools/lint-unread.js` scans `core`, `examples` and
@@ -68,8 +70,9 @@ you touched and update them in the same commit.
 
 ## Pitfalls
 
-- **`.claude/` is git-ignored in full** — worktrees, local settings and the
-  memory store. Nothing you put there is committed or reaches another worktree.
+- **`.claude/` is git-ignored except `settings.json`** — worktrees, local
+  settings and the memory store stay local. Nothing you put there is committed
+  or reaches another worktree.
 - **Several worktrees may be open at once.** Stage by path. Never `git stash`,
   `git reset --hard` or `git clean` the whole tree.
 - **`surface-vector` refuses raster operations by name.** A piece that declares

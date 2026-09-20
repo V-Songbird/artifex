@@ -69,9 +69,10 @@ require('fs').writeFileSync('out.svg', r.svg);
 "
 ```
 
-Then `npm test` and `npm run negative`. The second one breaks the library on
-purpose and checks that the **right** test notices; a suite that has never been
-red is not evidence.
+Then `npm run check` (lint, then the tests) and, when a check or a contract
+key changed, `npm run negative` — about 17 minutes. That one breaks the library
+on purpose and checks that the **right** test notices; a suite that has never
+been red is not evidence.
 
 `npm run page` builds `out/index.html` — every example, a seed field, a
 transport, PNG at 1x/4x/8x and SVG export, in one self-contained file.
@@ -81,12 +82,18 @@ transport, PNG at 1x/4x/8x and SVG export, in one self-contained file.
 Small on purpose — nothing here assumes a subject. Everything else you write.
 
 ```js
-require('./core/rand.js')    // rng(seed) -> R(entity, property, index), noise2, fbm
+require('./core/rand.js')    // rng(seed) -> R(entity, property, index), noise2, gradient2, fbm
 require('./core/num.js')     // clamp, clamp01, lerp, unlerp, remap, smoothstep,
                              // turn, pick, chance, centred
 require('./core/colour.js')  // rgb, hex, mix, luma, contrast, readableOn
 require('./core/path.js')    // poly, stroke, fill, clipPolyline, clipSegment, boxOf
+require('./core/geom.js')    // lengthOf, bbox, centroid, pointInPoly, resample,
+                             // chaikin, chain, ring, ribbon
 ```
+
+**`noise2` is value noise and `gradient2` is gradient noise.** Value noise is
+flat across its own lattice lines by construction, so anything that takes a
+gradient, a curl or a hatch angle out of a field must use `gradient2`.
 
 Three of those modules exist because five people were handed this library and
 asked to make five unrelated pieces, and **all five wrote `clamp` and a polyline
@@ -142,10 +149,11 @@ the notes at the top of each say what it is in the set to prove.
 | `cover.js` | a front cover — the type is set first, the picture grows around it | a still | raster + vector |
 | `settle.js` | forces finding their own arrangement — state that evolves, still scrubbable | 144 frames | raster + vector |
 
-Two of them keep general mathematics *out* of the core on purpose — a stroke
-font and marching squares — because only one example reaches each, and a core
-module reached by one kind of art is a preset in disguise. Move them when a
-second piece needs them, not before.
+General mathematics reached by one example stays *out* of the core on purpose:
+a core module reached by one kind of art is a preset in disguise. Marching
+squares lives in `contours.js` for that reason. The stroke font in
+`examples/stroke-font.js` is now reached by three pieces and has earned its
+move; where it and `chain` belong is ROADMAP 037, undecided.
 
 ## The contract
 
@@ -216,16 +224,14 @@ outputs.
 | a plotter / print SVG | `renderVector(piece)` — declare `outputs: ['raster','vector']` first |
 
 **Chain your segments before you draw them.** A plotter lifts the pen between
-paths and lifting is the slow, ugly part. There is **no chaining primitive in
-this library yet** — `examples/contours.js` has a private `chain()` that turns
-6021 segments into 47 pen-down paths, and it is worth reading and copying. It
-matches endpoints exactly rather than within a tolerance, because points computed
-by the same expression from the same inputs are bit-identical.
-
-Copy the key function with its guard. `String(-0)` is `"0"`, but
-`(-0).toFixed(6)` is `"-0.000000"` — so two identical points computed different
-ways can key differently and stop matching. On a tessellation that cut sixteen
-strands dead in the middle of the sheet, with nothing thrown.
+paths and lifting is the slow, ugly part. `chain(segs)` in `core/geom.js` turns
+loose segments into as few pen-down paths as possible — 6021 segments into 47
+in `contours`. It matches endpoints exactly rather than within a tolerance,
+because points computed by the same expression from the same inputs are
+bit-identical, and it keys on the coordinates themselves, never on a formatted
+string: `String(-0)` is `"0"` but `(-0).toFixed(6)` is `"-0.000000"`, and a
+key built that way once cut sixteen strands dead in the middle of a sheet with
+nothing thrown.
 
 **A raster check must render into its own canvas** created with
 `willReadFrequently: true`. A displayed canvas is GPU-rasterised until the

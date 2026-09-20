@@ -55,6 +55,7 @@ Early. What exists and is tested:
 | `core/num.js` | the arithmetic every piece was writing for itself — five outside authors all wrote `clamp` |
 | `core/colour.js` | mixing **in linear light**, luminance, contrast, and a readable ink measured rather than guessed |
 | `core/path.js` | polylines, and the first operation the design box ever had: clip to it |
+| `core/geom.js` | polyline geometry: length, bbox, centroid, point-in-polygon, resample, chaikin, `chain` (segments to as few pen-downs as possible), ring, ribbon |
 | `core/surface-vector.js` | a Canvas2D-shaped surface that emits SVG, and refuses every raster operation **by name** |
 | `core/render.js` | one frame to any surface, at any scale, with the playhead quantised to the drawn-frame grid |
 | `examples/` | eleven pieces spanning idioms that break each other — see [docs/example-set.md](docs/example-set.md) |

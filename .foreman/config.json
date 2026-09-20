@@ -1,1 +1,11 @@
-{}
+{
+  "ledger": {
+    "enabled": true
+  },
+  "requireVerification": true,
+  "omitSections": ["tone", "output_format"],
+  "usePersona": false,
+  "checkpoints": {
+    "onFinish": "keep"
+  }
+}
