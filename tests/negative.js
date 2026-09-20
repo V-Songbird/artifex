@@ -625,13 +625,34 @@ const MUTATIONS = [
 
 ];
 
+// What a copy of the project does NOT need in order to run its own tests.
+//
+// This skipped `node_modules` and `.git` and took everything else, which was
+// fine until the tree grew things. Measured on 2026-09-19: 40.4 MB per copy,
+// of which 33.2 MB was `.claude` -- the agent worktrees, each a checkout of
+// this same repository -- and 6.75 MB was `out`, the built pages. The source
+// the suite actually reads is 0.38 MB. One run copies once per mutation plus a
+// control, so at 87 mutations that was 3.5 GB of file copying to test 0.38 MB
+// of code, and a run stopped finishing inside ten minutes.
+//
+// A RULE RATHER THAN A LIST, because a list cannot see what arrives next. Every
+// dot-directory is tooling state -- .git, .claude, .foreman, the two plugin
+// manifests -- and none of it is read by a test. `out` is generated. Everything
+// else is the project.
+function skip(name) {
+  return name === 'node_modules' || name === 'out' || name.startsWith('.');
+}
+
 function copyDir(src, dst) {
   fs.mkdirSync(dst, { recursive: true });
+  let bytes = 0;
   for (const e of fs.readdirSync(src, { withFileTypes: true })) {
-    if (e.name === 'node_modules' || e.name === '.git') continue;
+    if (skip(e.name)) continue;
     const s = path.join(src, e.name), d = path.join(dst, e.name);
-    if (e.isDirectory()) copyDir(s, d); else fs.copyFileSync(s, d);
+    if (e.isDirectory()) bytes += copyDir(s, d);
+    else { fs.copyFileSync(s, d); bytes += fs.statSync(s).size; }
   }
+  return bytes;
 }
 
 /** Run the suite in `dir`, returning the names of the tests that failed. */
@@ -655,7 +676,12 @@ function main() {
     // The control. If the suite is not green to begin with, nothing below means
     // anything -- a mutation cannot be blamed for a failure that was already there.
     const control = path.join(tmp, 'control');
-    copyDir(ROOT, control);
+    const bytes = copyDir(ROOT, control);
+    const per = (bytes / 1048576).toFixed(2);
+    // Printed, because this is paid once per mutation and nothing else would
+    // ever say so. It was 40.4 MB and nobody noticed until a run stopped
+    // finishing.
+    console.log(`copy     ${per} MB per mutation, ${((bytes * (MUTATIONS.length + 1)) / 1048576).toFixed(0)} MB in all`);
     const already = runSuite(control);
     if (already.length) {
       console.error('CONTROL IS NOT GREEN. Fix the suite before running this.');

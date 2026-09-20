@@ -481,6 +481,102 @@ test('EVERY DECLARED PARAMETER SAYS WHAT IT DOES, in its own words', () => {
   assert.ok(checked >= 5, `only ${checked} parameters were checked`);
 });
 
+test('ALL SEVENTEEN WALLPAPER SIGNATURES ARE ACTUALLY GROUPS', () => {
+  // examples/pattern.js keeps its own symmetry table, because nothing in core
+  // knows what a lattice is and N4 says a capability waits for a second reader.
+  // A table like that is exactly where a wrong entry hides: a missing coset
+  // still tiles, still looks deliberate, and is simply not the group it claims.
+  // So every one of the seventeen is checked against the group axioms rather
+  // than spot-checked -- the piece publishes its cosets on the state, so this
+  // needs no extra export.
+  const p = validate(EXAMPLES.pattern);
+  const g = p.params.group;
+  const n = Math.round(g.max - g.min) + 1;
+  assert.equal(n, 17, `the group knob spans ${n} values, and there are 17 wallpaper groups`);
+
+  // Compose two lattice transforms, then wrap the translation back into one
+  // cell: a wallpaper group is a group MODULO its lattice.
+  const comp = (a, b) => [
+    a[0] * b[0] + a[2] * b[1], a[1] * b[0] + a[3] * b[1],
+    a[0] * b[2] + a[2] * b[3], a[1] * b[2] + a[3] * b[3],
+    a[0] * b[4] + a[2] * b[5] + a[4], a[1] * b[4] + a[3] * b[5] + a[5],
+  ];
+  const key = (m) => [m[0], m[1], m[2], m[3], ((m[4] % 1) + 1) % 1, ((m[5] % 1) + 1) % 1]
+    .map((v) => Math.round(v * 1e6) / 1e6).join(',');
+  const IDENTITY = key([1, 0, 0, 1, 0, 0]);
+
+  const seen = new Set();
+  for (let i = 0; i < n; i++) {
+    const s = solve(p, 7, { group: i }).state;
+    const set = new Set(s.cosets.map(key));
+
+    assert.equal(set.size, s.cosets.length, `${s.sig} lists the same coset twice`);
+    assert.equal(s.cosets.length, s.order, `${s.sig} claims order ${s.order} and carries ${s.cosets.length}`);
+    assert.ok(set.has(IDENTITY), `${s.sig} has no identity, so it is not a group`);
+    for (const a of s.cosets) {
+      for (const b of s.cosets) {
+        assert.ok(set.has(key(comp(a, b))),
+          `${s.sig} is not closed: composing two of its cosets leaves the group`);
+      }
+    }
+    assert.equal(seen.has(s.sig), false, `${s.sig} appears twice in the table`);
+    seen.add(s.sig);
+  }
+  assert.equal(seen.size, 17, `the table names ${seen.size} distinct signatures`);
+});
+
+test("the attractor's orbit is arithmetic, because a chaotic orbit amplifies a last bit", () => {
+  // ECMAScript does not pin the last bit of sin, cos, exp, pow or hypot, so two
+  // engines may disagree by one ulp. On an orbit separating at 0.2 nats a step
+  // that is not a rounding difference, it is a different picture -- and the
+  // determinism contract is the thing this whole library rests on.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'examples', 'attractor.js'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')      // block comments
+    .replace(/\/\/[^\n]*/g, '');            // line comments
+  const banned = src.match(/Math\.(sin|cos|tan|asin|acos|atan2?|exp|expm1|pow|hypot|cbrt)\b/g);
+  assert.deepEqual(banned, null,
+    `the attractor calls ${banned && [...new Set(banned)].join(', ')} outside a comment`);
+  assert.equal(/[\w)\]]\s*\*\*\s*[\w(]/.test(src), false, 'and it uses no ** operator either');
+
+  // And the orbit is bit-identical when run twice, which is the property all of
+  // that is FOR.
+  const p = validate(EXAMPLES.attractor);
+  const a = solve(p, 7).state;
+  const b = solve(p, 7).state;
+  assert.deepEqual(a.coef, b.coef, 'the same seed picked a different map the second time');
+  assert.equal(a.lyapunov, b.lyapunov);
+  assert.equal(a.peak, b.peak, 'and the density landed differently');
+});
+
+test('the attractor refuses an orbit that is not strange, and says which verdict it got', () => {
+  // About 1.7% of coefficient sets in this family are strange, so a piece that
+  // assumed instead of measuring would draw a dot, a loop or nothing at all
+  // almost every time. The search is the evidence that the refusal path runs.
+  const p = validate(EXAMPLES.attractor);
+  for (const seed of [1, 7, 99]) {
+    const s = solve(p, seed).state;
+    assert.equal(s.verdict, 'STRANGE', `seed ${seed} drew a ${s.verdict}`);
+    const refused = Object.values(s.refused).reduce((x, y) => x + y, 0);
+    assert.ok(refused > 0,
+      `seed ${seed} accepted its first candidate, so nothing exercised the refusal`);
+    assert.ok(s.refused.UNBOUNDED > 0 && s.refused['FIXED POINT'] > 0,
+      `seed ${seed} never saw the two commonest verdicts: ${JSON.stringify(s.refused)}`);
+    assert.ok(s.lyapunov > 0, `a strange orbit separates, and this one gave ${s.lyapunov}`);
+  }
+
+  // EVERY VALUE THE KNOB CAN TAKE must still be strange, not only its three
+  // pins. The knob is notched for exactly this reason: a finite set can be
+  // checked exhaustively and an interval cannot.
+  const d = p.params.twist;
+  for (let i = 0; i <= 10; i++) {
+    const v = d.min + (d.max - d.min) * (i / 10);
+    const r = solve(p, 7, { twist: v });
+    assert.equal(r.stages.error, null,
+      `twist ${v.toFixed(3)} threw: ${r.stages.error && r.stages.error.message}`);
+    assert.equal(r.state.verdict, 'STRANGE');
+  }
+});
+
 test('an undeclared parameter is refused by name', () => {
   const e = grab(() => solve(validate(EXAMPLES.contours), 1, { nope: 1 }));
   assert.match(e.message, /unknown param: nope/);
