@@ -18,8 +18,8 @@ produces the same frame — forwards, backwards, or after a scrub. Nothing in
 **2. Artifex assumes nothing about what art gets made with it.** A default, a
 primitive or an example that only makes sense for one kind of picture is a
 defect, not a convenience. It has eight testable forms in
-[docs/subject-neutrality.md](docs/subject-neutrality.md) — **read that before
-adding anything to `core/`.**
+[docs/knowledge/subject-neutrality.md](docs/knowledge/subject-neutrality.md) —
+**read that before adding anything to `core/`.**
 
 ## Commands
 
@@ -45,8 +45,11 @@ a contract key or an invariant — not after every edit.
 | `examples/` | eleven pieces chosen to break each other's assumptions; `index.js` exports them all. **None is the starter** |
 | `tools/` | `build-page`, `contact-sheet`, `render-examples`, `lint-unread`, `bench`. No art lives here |
 | `tests/` | `*.test.js` per concern (`toolkit` covers `num`, `colour` and `path`), plus `examples.test.js`; `negative.js` is the mutation suite |
-| `docs/` | imported knowledge from the prior engine and four audits — start at [docs/README.md](docs/README.md) |
-| `docs/tasks/` | dated task summaries; they record what was true that day and are not rewritten |
+| `docs/` | imported knowledge from the prior engine and four audits, one document per topic — start at [docs/README.md](docs/README.md) |
+| `docs/knowledge/` | `type: knowledge` — the charter and the living references. Must always be true |
+| `docs/decisions/` | `type: adr` — every closed question, with its cost and what would overturn it |
+| `docs/tasks/` | `type: task_summary` — dated reports, never rewritten, plus one tracking note per **live** task |
+| `docs/rescued-examples/` | the three declined field-test pieces, kept as source so dropping their branches loses nothing |
 | `skills/artifex/SKILL.md` | what an agent using the library reads. Changing `core/` usually means changing this too |
 | `ROADMAP.jsonl` | Foreman's ledger of planned work. Edit it through the `foreman` skill, not by hand |
 | `.claude-plugin/`, `.codex-plugin/` | the two host manifests. They are byte-identical copies with no build step: edit both or they drift |
@@ -59,11 +62,18 @@ Tests sit in `tests/` rather than beside the code: `npm test` globs
 
 ## Documentation conventions
 
-Every file in `docs/` opens with YAML frontmatter — `type`, `summary`,
-`related_files`, plus `status` on a `task_summary`. Find the right document by
-searching that metadata instead of opening all of them. `type: knowledge` must
-always be true; `task_summary` was true on its date; `adr` is a decision with
-its reasoning.
+**The folder is the `type`.** `knowledge/` must always be true, `decisions/` is
+an `adr`, `tasks/` was true on its date. Every file also opens with YAML
+frontmatter — `type`, `summary`, `related_files`, plus `status` on a
+`task_summary` — so the right document is found by searching that metadata
+rather than by opening all of them.
+
+**One document per topic**, with a stable kebab-case name and no date in it, so
+a citation stays good. Add to the topic's document rather than starting a
+sibling. A number inside a dated section keeps its date instead of being
+refreshed: `docs/tasks/field-test-findings.md` saying "96 tests" is evidence,
+not a stale count. Citations are by section, as in
+`docs/knowledge/imported-sources.md §18.1`.
 
 When you change `core/`, check the documents whose `related_files` cover what
 you touched and update them in the same commit.
