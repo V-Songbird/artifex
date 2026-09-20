@@ -65,6 +65,7 @@ Early. What exists and is tested:
 | `tests/negative.js` | 81 mutations, each naming the test it must trip. A suite that has never been red is not evidence. |
 
 ```bash
+npm run check       # lint, then the tests -- the one command to run after a change
 npm test            # 162 tests
 npm run negative    # break it on purpose; 81 caught, 0 escaped, 0 misnamed
 npm run lint        # every declared name must have a reader, every contract key a consumer

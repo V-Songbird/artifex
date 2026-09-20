@@ -5,6 +5,7 @@
   "license": "MIT",
   "private": true,
   "scripts": {
+    "check": "npm run lint && npm test",
     "test": "node --test \"tests/*.test.js\"",
     "negative": "node tests/negative.js",
     "lint": "node tools/lint-unread.js",
