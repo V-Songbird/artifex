@@ -155,6 +155,62 @@ test('a piece that draws nothing produces a document with no marks', () => {
 
 // ---- the frame lattice, after the walk was found to drop its middle -------
 
+/** Pull the manifest back out of a document, the way any reader would. */
+function manifestOf(svg) {
+  const m = svg.match(/<metadata id="artifex-manifest">([\s\S]*?)<\/metadata>/);
+  if (!m) return null;
+  const text = m[1]
+    .replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  return JSON.parse(text);
+}
+
+test('a render carries a manifest of how to make it again', () => {
+  const knob = { min: 0, max: 4, value: 1, meaning: 'how far the bars lean over' };
+  const p = bars({ params: { lean: knob, tilt: { ...knob, meaning: 'how much the ground tips' } } });
+  const r = renderVector(p, { seed: 4242, params: { lean: 3 }, t: 1 });
+
+  assert.equal(r.manifest.piece, 'bars');
+  assert.equal(r.manifest.seed, 4242);
+  assert.deepEqual(r.manifest.size, { w: 120, h: 60 });
+  assert.deepEqual(r.manifest.outputs, ['raster', 'vector']);
+
+  // EVERY DECLARED PARAMETER, resolved to what was used -- not only the one
+  // that was overridden. A recipe listing the overrides and trusting the
+  // defaults stops reproducing the picture the moment a default moves, which
+  // is exactly the day a recipe has to work.
+  assert.deepEqual(r.manifest.params, { lean: 3, tilt: 1 });
+
+  // And it is IN THE FILE, because a plotter file or a print master outlives
+  // the session that made it.
+  assert.deepEqual(manifestOf(r.svg), r.manifest);
+});
+
+test('the manifest records the frame that was DRAWN, not the one that was asked for', () => {
+  // The playhead is quantised to the drawn-frame grid. A recipe that wrote down
+  // the requested t would replay to a different frame than the one in the file,
+  // and the two would look identical while disagreeing.
+  const p = bars({ time: { duration: 2, hz: 10 } });        // 20 frames at i/19
+  const asked = 0.47;
+  const r = renderVector(p, { seed: 1, t: asked });
+  assert.notEqual(r.manifest.t, asked, 'the asked-for playhead does not land on a frame');
+  assert.equal(r.manifest.t, frameT(p, asked));
+  assert.equal(r.manifest.t, r.t);
+  assert.equal(manifestOf(r.svg).t, frameT(p, asked));
+
+  // A still has one frame, and it is frame zero whatever the slider said.
+  assert.equal(renderVector(bars(), { seed: 1, t: 0.9 }).manifest.t, 0);
+});
+
+test('a solve already knows the recipe, minus the playhead it cannot know', () => {
+  const p = bars();
+  const m = solve(p, 9).manifest;
+  assert.equal(m.seed, 9);
+  assert.equal('t' in m, false, 'solve has no playhead, and must not invent one');
+  assert.equal(m.artifex, require('../package.json').version,
+    'core/piece.js carries the version as a literal because the page bundler takes .js only; '
+    + 'this is the check that stops the literal drifting');
+});
+
 test('playheads visits EVERY drawn frame exactly once, and none of them twice', () => {
   // The bug this replaces: frameCount said n, frameT quantised onto n+1 lattice
   // positions, and playheads sampled i/(n-1) -- so Math.round silently dropped

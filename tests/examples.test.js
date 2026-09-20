@@ -262,11 +262,14 @@ test('THE RECORDER IMPLEMENTS THE WHOLE SURFACE, so the suite cannot narrow the 
   // became the real drawing API by accident -- five independent authors each
   // discovered it by crashing into it, and each quietly made smaller work.
   //
-  // `toSVG` is the one exclusion: it is how you read a vector surface's RESULT,
-  // not something a draw function calls.
-  const OUTPUT_ONLY = new Set(['toSVG']);
+  // The exclusions are the members no draw() ever calls -- the ones a CALLER
+  // uses to configure the surface or to read its result. `toSVG` reads the
+  // document out; `setManifest` writes the recipe into it. Neither is part of
+  // the drawing vocabulary a piece is entitled to, so neither belongs in the
+  // harness. Everything else does, and this list stays this short on purpose.
+  const NOT_DRAWN_WITH = new Set(['toSVG', 'setManifest']);
   const surface = Object.getOwnPropertyNames(VectorSurface.prototype)
-    .filter((k) => k !== 'constructor' && !k.startsWith('_') && !OUTPUT_ONLY.has(k));
+    .filter((k) => k !== 'constructor' && !k.startsWith('_') && !NOT_DRAWN_WITH.has(k));
   const rec = new Recorder();
 
   const missing = surface.filter((k) => !(k in rec));
@@ -749,4 +752,26 @@ test('the page builder refuses to write a bundle with a hole in it', () => {
   const e = grab(() => checkResolvable(real.filter((m) => m !== 'core/rand.js')));
   assert.match(e.message, /would throw on load and render nothing/);
   assert.match(e.message, /core\/rand\.js, which is not bundled/);
+});
+
+test('the page builder refuses to write a page that does not parse', () => {
+  // checkResolvable proves the MODULES can find each other and looks at nothing
+  // else. The page body around them is one template literal in build-page.js,
+  // and a fault in THAT wrote a 146 kB file, printed a success line and exited 0
+  // over a page that died on load. The one that bought this check was a regex
+  // written /^\?/ inside the literal: the backslash is eaten before the browser
+  // sees it, so the page got /^?/ -- "Nothing to repeat" -- and rendered blank.
+  const { checkParses, modules, bundle, html } = require('../tools/build-page.js');
+
+  assert.equal(checkParses(html(bundle())), true, 'the page this build would ship parses');
+  assert.ok(modules().length > 0);
+
+  const broken = grab(() => checkParses('<script>var q = String(x).replace(/^?/, "");</script>'));
+  assert.match(broken.message, /does not parse/);
+  assert.match(broken.message, /Nothing to repeat/, "and it carries the engine's own words");
+
+  // A truncated page is the other shape this catches: a stray backtick ends the
+  // literal early and what gets written is half a script.
+  assert.match(grab(() => checkParses('<script>function f() { var a = 1;</script>')).message, /does not parse/);
+  assert.match(grab(() => checkParses('<p>no script here</p>')).message, /has no script block/);
 });

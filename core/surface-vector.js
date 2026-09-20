@@ -126,6 +126,7 @@ class VectorSurface {
     this.width = size.w;
     this.height = size.h;
     this._bg = opt.background || null;
+    this._manifest = opt.manifest || null;
 
     this._body = [];
     this._defs = [];
@@ -435,15 +436,28 @@ class VectorSurface {
   // ---- output ------------------------------------------------------------
 
   /** The finished document. Safe to call more than once. */
+  /**
+   * Record the recipe this document was drawn from. It is written into the
+   * file's own <metadata>, so a plotter file or a print master that outlives
+   * the session it came from still says how to make it again.
+   */
+  setManifest(m) { this._manifest = m; }
+
   toSVG() {
     const close = '</g>'.repeat(this._open + this._stack.reduce((s, f) => s + f.open, 0));
     const defs = this._defs.length ? `<defs>${this._defs.join('')}</defs>` : '';
     const bg = this._bg
       ? `<rect width="${n(this.width)}" height="${n(this.height)}" fill="${esc(this._bg)}"/>`
       : '';
+    // JSON inside <metadata>, escaped like every other string that reaches this
+    // document. A file someone kept and a file someone re-rendered have to be
+    // the same file, and a picture with no recipe is the one that cannot be.
+    const meta = this._manifest
+      ? `<metadata id="artifex-manifest">${esc(JSON.stringify(this._manifest))}</metadata>`
+      : '';
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${n(this.width)}" height="${n(this.height)}" `
       + `viewBox="0 0 ${n(this.width)} ${n(this.height)}">`
-      + defs + bg + this._body.join('') + close
+      + meta + defs + bg + this._body.join('') + close
       + '</svg>';
   }
 

@@ -281,11 +281,15 @@ function buildParams() {
   host.innerHTML = '';
   keys.forEach(function (k) {
     var d = current.params[k];
+    // An override already in hand wins over the declared default -- otherwise a
+    // link that names a parameter opens with the right picture and the wrong
+    // slider, and the panel is lying about the thing it is there to show.
+    var at = k in overrides ? overrides[k] : d.value;
     var lab = document.createElement('div');
     lab.className = 'facts';
     lab.textContent = k + ' ';
     var val = document.createElement('b');
-    val.textContent = d.value;
+    val.textContent = at;
     lab.appendChild(val);
     // What the knob DOES, from the piece's own declaration. A slider labelled
     // only with its name asks the reader to guess, and a reader that cannot
@@ -295,7 +299,7 @@ function buildParams() {
     why.textContent = d.meaning;
     var r = document.createElement('input');
     r.type = 'range';
-    r.min = d.min; r.max = d.max; r.value = d.value;
+    r.min = d.min; r.max = d.max; r.value = at;
     r.step = (d.max - d.min) / 200;
     r.oninput = function () {
       overrides[k] = Number(r.value);
@@ -341,6 +345,7 @@ function frame() {
     'draw <b>' + ms.toFixed(1) + ' ms</b>',
     current.time ? 'frames <b>' + render.playheads(current).length + '</b>' : 'no timeline',
   ].join('<br>');
+  if (!playing) toUrl();
 }
 
 function stop() {
@@ -349,6 +354,57 @@ function stop() {
   var b = document.getElementById('play');
   b.classList.remove('on');
   b.textContent = 'play';
+  toUrl();
+}
+
+// THE ADDRESS BAR IS THE RECIPE. solve() knows the piece, the seed and every
+// parameter at the moment it runs, and until now the page threw all of it away
+// -- so a picture someone liked was gone on the next click, and there was no
+// way to send one to anybody.
+//
+// replaceState rather than pushState: scrubbing a playhead would otherwise put
+// a hundred entries in the back button, and the picture is a VIEW of this page,
+// not a place you navigated to.
+//
+// Not called from frame() while playing. That runs once per animation frame,
+// and a browser is entitled to throttle a page that rewrites its own URL sixty
+// times a second. stop() calls it, so the address bar is right the moment
+// anyone could act on it.
+function toUrl() {
+  if (!current) return;
+  var q = ['piece=' + encodeURIComponent(currentName),
+    'seed=' + encodeURIComponent(document.getElementById('seed').value)];
+  if (current.time) q.push('t=' + t.toFixed(4));
+  Object.keys(overrides).forEach(function (k) {
+    q.push('p.' + encodeURIComponent(k) + '=' + encodeURIComponent(overrides[k]));
+  });
+  history.replaceState(null, '', '?' + q.join('&'));
+}
+
+// Read it back. Every value is checked against the piece that is actually here
+// rather than trusted: a URL is the one input to this page that arrives from
+// outside it, and a stale link naming a parameter this build no longer declares
+// would otherwise throw on load and leave a blank page.
+function fromUrl() {
+  // Escaped twice on purpose: this whole page body is a template literal, so a
+  // single backslash is eaten before it ever reaches the browser. The first
+  // draft of this line shipped /^?/ and the page died on load with "Nothing to
+  // repeat" -- and the builder's module check cannot see that, because the
+  // bundle resolved perfectly.
+  var q = String(location.search || '').replace(/^\\?/, '');
+  if (!q) return null;
+  var out = { piece: null, seed: null, t: null, params: {} };
+  q.split('&').forEach(function (kv) {
+    var i = kv.indexOf('=');
+    if (i < 0) return;
+    var k = decodeURIComponent(kv.slice(0, i));
+    var v = decodeURIComponent(kv.slice(i + 1));
+    if (k === 'piece') out.piece = v;
+    else if (k === 'seed' && /^[0-9]+$/.test(v)) out.seed = Number(v);
+    else if (k === 't' && isFinite(Number(v))) out.t = Math.min(1, Math.max(0, Number(v)));
+    else if (k.indexOf('p.') === 0 && isFinite(Number(v))) out.params[k.slice(2)] = Number(v);
+  });
+  return out.piece ? out : null;
 }
 
 document.getElementById('play').onclick = function () {
@@ -449,9 +505,33 @@ window.__artifex = {
       state: piece.summarise(s.state),
     };
   },
+  // The recipe for what is on screen right now, with the QUANTISED playhead --
+  // the frame that was actually drawn, not the one the slider was left at.
+  manifest: function () {
+    return solved ? Object.assign({}, solved.manifest, { t: piece.frameT(current, t) }) : null;
+  },
 };
 
-select(names[0]);
+// Open what the address bar asks for, when this build actually has it. The
+// order matters: select() clears the overrides and resets the seed, so the
+// URL's values go on AFTER it, not before.
+var from = fromUrl();
+if (from && EXAMPLES[from.piece]) {
+  select(from.piece);
+  if (from.seed !== null) document.getElementById('seed').value = from.seed;
+  if (from.t !== null && current.time) {
+    t = from.t;
+    document.getElementById('t').value = t * 1000;
+  }
+  Object.keys(from.params).forEach(function (k) {
+    var d = current.params[k];
+    if (d && from.params[k] >= d.min && from.params[k] <= d.max) overrides[k] = from.params[k];
+  });
+  buildParams();
+  resolve();
+} else {
+  select(names[0]);
+}
 })();
 </script>
 </body>
@@ -459,10 +539,42 @@ select(names[0]);
 `;
 }
 
+/**
+ * Parse the script this page is about to ship.
+ *
+ * checkResolvable only proves the MODULES can find each other. Nothing looked
+ * at the page body around them, which is a single template literal written in
+ * this file -- so an error in THAT wrote a 146 kB file, printed a success line,
+ * exited 0 and rendered a blank page.
+ *
+ * The fault that bought this check: a regex written /^\?/ inside the literal,
+ * where the backslash is eaten before the browser ever sees it, so the page got
+ * /^?/ and died on load with "Nothing to repeat". Nothing in the build, the
+ * suite, the mutation run or the lint could see it.
+ *
+ * Its sibling -- a backtick inside a comment in the literal, which ends the
+ * literal early -- is NOT caught here: it breaks this file instead, and fails
+ * when anything requires it. Two different faults, two different guards.
+ *
+ * `new Function` compiles without running, so this costs nothing and fails at
+ * build time with the browser's own message.
+ */
+function checkParses(page) {
+  const m = page.match(/<script>([\s\S]*)<\/script>/);
+  if (!m) throw new Error('build-page: the emitted page has no script block');
+  try {
+    new Function(m[1]);     // eslint-disable-line no-new-func
+  } catch (e) {
+    throw new Error(`build-page: the emitted page does not parse -- ${e.message}`);
+  }
+  return true;
+}
+
 function main() {
   checkResolvable(MODULES);
   const bundle = MODULES.map(wrap).join('\n');
   const page = html(bundle);
+  checkParses(page);
   const out = path.join(ROOT, 'out');
   fs.mkdirSync(out, { recursive: true });
   const file = path.join(out, 'index.html');
@@ -480,4 +592,4 @@ function bundle() {
   return [RUNTIME].concat(MODULES.map(wrap)).join(String.fromCharCode(10));
 }
 
-module.exports = { modules, checkResolvable, bundle, MODULES };
+module.exports = { modules, checkResolvable, checkParses, bundle, html, MODULES };

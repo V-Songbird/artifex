@@ -323,7 +323,39 @@ function solve(piece, seed, params, opt) {
       break;
     }
   }
-  return { state, seed: sd, stages: { ms, of: piece.build.length, error } };
+  const out = { state, seed: sd, stages: { ms, of: piece.build.length, error } };
+  out.manifest = manifest(piece, out);
+  return out;
+}
+
+// The library version a manifest records. A literal rather than a require of
+// package.json, because core/ is bundled into a single page file by
+// tools/build-page.js and that bundler carries .js modules only. A test holds
+// the two equal, so the literal cannot drift without failing.
+const VERSION = '0.1.0';
+
+/**
+ * The recipe for a render: everything needed to make this exact picture again.
+ *
+ * solve() already knows the piece, the seed and every resolved parameter at the
+ * moment it runs, and it used to throw all of it away -- so a picture someone
+ * liked was gone on the next click. `t` is not here because a solve has no
+ * playhead; the caller that draws a frame fills it in.
+ *
+ * EVERY DECLARED PARAMETER APPEARS, resolved to the value actually used, not
+ * only the ones an outside caller overrode. A recipe that lists the overrides
+ * and trusts the defaults stops reproducing the picture the moment a default
+ * changes, which is exactly when a recipe has to work.
+ */
+function manifest(piece, solved) {
+  return {
+    artifex: VERSION,
+    piece: piece.name,
+    seed: solved.seed,
+    size: { w: piece.size.w, h: piece.size.h },
+    outputs: piece.outputs.slice(),
+    params: { ...solved.state.params },
+  };
 }
 
 /**
@@ -370,6 +402,6 @@ function summarise(state) {
 }
 
 module.exports = {
-  FIELDS, OUTPUTS, PieceError, validate,
-  frameT, frameCount, frameDen, frameIndex, clockAt, solve, summarise,
+  FIELDS, OUTPUTS, VERSION, PieceError, validate,
+  frameT, frameCount, frameDen, frameIndex, clockAt, solve, summarise, manifest,
 };

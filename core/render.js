@@ -63,9 +63,15 @@ function renderVector(piece, opt = {}) {
     const e = solved.stages.error;
     throw new Error(`render: build stage "${e.stage}" (${e.at + 1} of ${e.of}) threw: ${e.message}`);
   }
+  // The playhead is only known here, so the recipe is completed here: solve()
+  // has no idea which frame anyone is going to draw. `t` is the QUANTISED one
+  // drawFrame returns, not the one that was asked for -- the recipe has to name
+  // the frame that was actually drawn, or replaying it lands somewhere else.
   const g = new VectorSurface(p.size, { background: opt.background });
   const t = drawFrame(g, p, solved, opt.t === undefined ? 1 : opt.t);
-  return { svg: g.toSVG(), marks: g.markCount, t, seed: solved.seed, stages: solved.stages };
+  const manifest = { ...solved.manifest, t };
+  g.setManifest(manifest);
+  return { svg: g.toSVG(), marks: g.markCount, t, seed: solved.seed, stages: solved.stages, manifest };
 }
 
 /**

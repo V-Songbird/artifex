@@ -38,8 +38,8 @@ const MUTATIONS = [
   {
     why: 'the build reports the stages it FINISHED instead of the ones it declared',
     file: 'core/piece.js',
-    from: 'return { state, seed: sd, stages: { ms, of: piece.build.length, error } };',
-    to: 'return { state, seed: sd, stages: { ms, of: ms.length, error } };',
+    from: 'const out = { state, seed: sd, stages: { ms, of: piece.build.length, error } };',
+    to: 'const out = { state, seed: sd, stages: { ms, of: ms.length, error } };',
     expect: 'solve reports every DECLARED stage, not only the ones that finished',
   },
   {
@@ -83,6 +83,27 @@ const MUTATIONS = [
     from: '  return { keys: Object.keys(v) };',
     to: '  return v;',
     expect: 'summarise describes a build state instead of copying it',
+  },
+  {
+    why: 'the document drops the manifest it was drawn from, so a saved picture carries no recipe',
+    file: 'core/surface-vector.js',
+    from: '    const meta = this._manifest',
+    to: '    const meta = (false)',
+    expect: 'a render carries a manifest of how to make it again',
+  },
+  {
+    why: 'the manifest lists only the parameters that were overridden, so the recipe stops working the day a default moves',
+    file: 'core/piece.js',
+    from: '    params: { ...solved.state.params },',
+    to: '    params: {},',
+    expect: 'a render carries a manifest of how to make it again',
+  },
+  {
+    why: 'the manifest records the playhead that was ASKED for instead of the frame that was drawn',
+    file: 'core/render.js',
+    from: '  const manifest = { ...solved.manifest, t };',
+    to: '  const manifest = { ...solved.manifest, t: opt.t === undefined ? 1 : opt.t };',
+    expect: 'the manifest records the frame that was DRAWN, not the one that was asked for',
   },
   {
     why: 'a timeline becomes mandatory, so a still is no longer a legal piece',
