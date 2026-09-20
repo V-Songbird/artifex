@@ -16,4 +16,6 @@ module.exports = {
   pattern: require('./pattern.js'),
   lsystem: require('./lsystem.js'),
   attractor: require('./attractor.js'),
+  cover: require('./cover.js'),
+  settle: require('./settle.js'),
 };
