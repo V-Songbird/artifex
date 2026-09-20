@@ -13,7 +13,7 @@
 // after a scrub.
 //
 // Nothing here knows what kind of art a piece makes. `entity` and `property` are
-// whatever the caller calls things. See ../Docs/Artifex/subject-neutrality.md.
+// whatever the caller calls things. See docs/subject-neutrality.md.
 
 'use strict';
 
@@ -182,7 +182,7 @@ function gradDot(R, name, i, j, dx, dy) {
  * The range is narrower than `noise2`'s and is deliberately not stretched to
  * fill [0, 1): with unit gradients a 2D Perlin value cannot leave +-sqrt(2)/2,
  * so scaling it to the full range would be a claim about the amplitude that is
- * not true. See ../Docs/Artifex/source-library-scan.md §8.1.
+ * not true. See docs/source-library-scan.md §8.1.
  */
 function gradient2(R, x, y, name = 'field') {
   const xi = Math.floor(x);
@@ -234,7 +234,7 @@ function octaveNames(name, octaves) {
 //
 // This changes every picture that used fbm, which is why it is a decision and
 // not a tidy-up. tests/rand.test.js holds the ratio open and tests/negative.js
-// breaks it back to 2 on purpose. See ../Docs/Artifex/source-library-scan.md §8.1.
+// breaks it back to 2 on purpose. See docs/source-library-scan.md §8.1.
 const LACUNARITY = 2.17;
 
 /**

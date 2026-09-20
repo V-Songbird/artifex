@@ -25,7 +25,7 @@ Everything else here is negotiable. This is not.
 otherwise.** A city, a poster, a data field, a letterform, a creature, a
 pattern, something abstract nobody has named. If you find a default, a
 primitive or an example that only makes sense for one kind of art, that is a
-defect — report it. The full charter is `../Docs/Artifex/subject-neutrality.md`, and it
+defect — report it. The full charter is `docs/subject-neutrality.md`, and it
 outranks convenience, elegance and performance.
 
 **2. Randomness is addressed, never sequential.** `core/rand.js`:

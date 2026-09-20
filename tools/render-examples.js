@@ -2,7 +2,7 @@
 'use strict';
 
 // Render every example that declares vector, and report what each one reached.
-// The numbers are printed rather than assumed: §5 of ../Docs/Artifex/subject-neutrality.md
+// The numbers are printed rather than assumed: §5 of docs/subject-neutrality.md
 // says every example publishes what it DECLARED and what it REACHED.
 
 const fs = require('node:fs');

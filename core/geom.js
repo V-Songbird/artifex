@@ -7,12 +7,12 @@
 // far as we had already imagined. That population is too narrow to license a
 // module and too narrow to refuse one.
 //
-// The population that licensed this file is in ../Docs/Artifex/peer-implementation-scan.md:
+// The population that licensed this file is in docs/peer-implementation-scan.md:
 // a 1.1 MB body of finished work by someone who has never seen this project
 // defines, before it draws anything at all, `resample chaikin bbox pip centroid
 // blob rotPts arcPts polyPts starPts ribbon`. Five field-test authors handed
 // this library cold each wrote a subset of the same list. And
-// ../Docs/Artifex/field-test-findings.md §10 has carried "offsetting, intersections,
+// docs/field-test-findings.md §10 has carried "offsetting, intersections,
 // point-in-polygon, area" as an open gap since the field test.
 //
 // Three independent populations, one list. That is the evidence.
@@ -27,7 +27,7 @@
 // Geometry exercises name a polyline offset by a fixed distance, the
 // intersection of two line segments, and the shortest distance from a point to a
 // line. That is a fourth population, and the third to name offsetting. See
-// ../Docs/Artifex/source-library-scan.md §2.1. The paragraph above stands as the standard
+// docs/source-library-scan.md §2.1. The paragraph above stands as the standard
 // -- written properly, not approximated -- but it is no longer waiting.
 //
 // WHAT WAS CUT, AND WHY. A first pass also shipped `area`, `polyPts`,
@@ -36,7 +36,7 @@
 // constant radius and `ring` with an alternating one, which is one capability
 // wearing three names. They were deleted rather than kept for later. This
 // project has already paid for shipping code nothing reads; see commit 0d8ec26
-// and ../Docs/Artifex/verification-culture.md §11. When a piece needs an arc, it arrives
+// and docs/verification-culture.md §11. When a piece needs an arc, it arrives
 // with the piece that needs it.
 //
 // Nothing here knows what kind of art a piece makes.

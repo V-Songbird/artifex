@@ -2,7 +2,7 @@
 //
 // There is never exactly one, because one example is a template and a template
 // is a scope. None of these is the starter: a scaffolder emits something that
-// draws nothing in particular and says so. See ../Docs/Artifex/subject-neutrality.md.
+// draws nothing in particular and says so. See docs/subject-neutrality.md.
 
 'use strict';
 

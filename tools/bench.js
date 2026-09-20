@@ -3,7 +3,7 @@
 
 // The benchmark. A speed claim is a number or it is nothing.
 //
-// ../Docs/Artifex/README.md, "The objective": generation speed and render cost are two of
+// docs/README.md, "The objective": generation speed and render cost are two of
 // the four axes this project is judged on, and neither can be inferred from a
 // file size, a module count or a build that succeeded. So they are measured
 // here, the same way every time, and a change that claims to be faster runs it.

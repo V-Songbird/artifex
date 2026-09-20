@@ -13,7 +13,7 @@
 // drew one kind of picture seven times. The grammar here is a quadratic Koch
 // family over right angles: a closed boundary that crenellates out of itself
 // and into itself, and reads as a coastline, a fortification plan or a pad on a
-// board -- anything except foliage. See ../Docs/Artifex/subject-neutrality.md.
+// board -- anything except foliage. See docs/subject-neutrality.md.
 //
 // The grammar and the turtle live here, not in core/, for the same reason the
 // stroke font does: one example reaches them. N4.
