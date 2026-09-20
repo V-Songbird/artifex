@@ -7,3 +7,6 @@ out/
 # at the root would stage them as embedded repositories), the local settings and
 # the session memory store. None of it is part of the library.
 .claude/
+
+# JetBrains project state.
+.idea/

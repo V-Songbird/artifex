@@ -17,7 +17,7 @@ const { svg, marks } = renderVector({
 }, { seed: 20260917 });
 ```
 
-Or start from a real one: `require('./examples/contours.js')`. Five of them
+Or start from a real one: `require('./examples/contours.js')`. Eleven of them
 ship, and [none is the starter](docs/example-set.md).
 
 ## The one property everything rests on
@@ -57,16 +57,16 @@ Early. What exists and is tested:
 | `core/path.js` | polylines, and the first operation the design box ever had: clip to it |
 | `core/surface-vector.js` | a Canvas2D-shaped surface that emits SVG, and refuses every raster operation **by name** |
 | `core/render.js` | one frame to any surface, at any scale, with the playhead quantised to the drawn-frame grid |
-| `examples/` | five pieces spanning idioms that break each other — see [docs/example-set.md](docs/example-set.md) |
+| `examples/` | eleven pieces spanning idioms that break each other — see [docs/example-set.md](docs/example-set.md) |
 | `tools/build-page.js` | one self-contained HTML file: the live backend, the raster backend at any scale, a transport |
 | `tools/lint-unread.js` | every declared name must have a reader, every contract key a consumer. No build, no browser, no art |
 | `tools/contact-sheet.js` | nine seeds on one page — the instrument the docs name as the only one for compositional faults |
-| `tests/` | 128 tests |
-| `tests/negative.js` | 56 mutations, each naming the test it must trip. A suite that has never been red is not evidence. |
+| `tests/` | 162 tests |
+| `tests/negative.js` | 81 mutations, each naming the test it must trip. A suite that has never been red is not evidence. |
 
 ```bash
-npm test            # 128 tests
-npm run negative    # break it on purpose; 56 caught, 0 escaped, 0 misnamed
+npm test            # 162 tests
+npm run negative    # break it on purpose; 81 caught, 0 escaped, 0 misnamed
 npm run lint        # every declared name must have a reader, every contract key a consumer
 npm run examples    # render every example that declares vector, and report what it reached
 npm run page        # build out/index.html, then open it
@@ -80,6 +80,12 @@ npm run seeds       # nine seeds of every example on one page, and LOOK
 | `readout` | data-driven — **the seed does not decide what it says** | 144 frames | raster + vector |
 | `partition` | recursive subdivision, made of area | a still | raster + vector |
 | `contours` | plotter-native: one pen, one weight, no fills | a still | raster + vector |
+| `packing` | closed forms grown until they touch — composition decided by **refusal** | a still | raster + vector |
+| `pattern` | one motif, repeated by a wallpaper group — the structure is a **group** | a still | raster + vector |
+| `lsystem` | a grammar and a turtle — it computes a **word**, not coordinates | a still | raster + vector |
+| `attractor` | a chaotic orbit printed as a density — **arithmetic only** | a still | **raster only** |
+| `cover` | a magazine front cover — the type is set, and the picture grows around it | a still | raster + vector |
+| `settle` | forces finding their own arrangement — **state that evolves**, still scrubbable | 144 frames | raster + vector |
 
 Not yet built: the video walk, the check suite as a shipped tool, and the
 mathematics import. The [findings index](docs/README.md) is where the design for

@@ -135,6 +135,12 @@ the notes at the top of each say what it is in the set to prove.
 | `readout.js` | data-driven — a fixed dataset the seed may not touch | 144 frames | raster + vector |
 | `partition.js` | recursive subdivision — area, not marks | a still | raster + vector |
 | `contours.js` | plotter-native — one pen, one weight, no fills | a still | raster + vector |
+| `packing.js` | closed forms grown until they touch — composition decided by refusal | a still | raster + vector |
+| `pattern.js` | one motif repeated by a wallpaper group — the structure is a group | a still | raster + vector |
+| `lsystem.js` | a grammar and a turtle — it computes a word, not coordinates | a still | raster + vector |
+| `attractor.js` | a chaotic orbit printed as a density — arithmetic only | a still | **raster only** |
+| `cover.js` | a front cover — the type is set first, the picture grows around it | a still | raster + vector |
+| `settle.js` | forces finding their own arrangement — state that evolves, still scrubbable | 144 frames | raster + vector |
 
 Two of them keep general mathematics *out* of the core on purpose — a stroke
 font and marching squares — because only one example reaches each, and a core

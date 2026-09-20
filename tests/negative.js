@@ -635,19 +635,30 @@ const MUTATIONS = [
 // control, so at 87 mutations that was 3.5 GB of file copying to test 0.38 MB
 // of code, and a run stopped finishing inside ten minutes.
 //
-// A RULE RATHER THAN A LIST, because a list cannot see what arrives next. Every
-// dot-directory is tooling state -- .git, .claude, .foreman, the two plugin
-// manifests -- and none of it is read by a test. `out` is generated. Everything
-// else is the project.
-function skip(name) {
-  return name === 'node_modules' || name === 'out' || name.startsWith('.');
-}
+// A RULE, and the rule is what the suite can actually read. The first version
+// of this skipped `node_modules` and `.git` and took the rest; the second
+// skipped every dot-directory and `out`. Both were deny lists, and a deny list
+// cannot see what arrives next -- `docs/` arrived, grew to 1.9 MB of prose and
+// renders, and got copied 82 times to test code that never reads it.
+//
+// So: name what a mutation run needs instead. `runSuite` executes
+// `node --test tests/*.test.js`, which reaches `tests/`, the modules those
+// tests require under `core/`, `examples/` and `tools/`, and `package.json`.
+// Nothing else is read, so nothing else is copied.
+//
+// If a test ever reads something new, the control run goes red before any
+// mutation is applied and says so by name. That is the failure announcing
+// itself, which is the point.
+//
+// The names are the tree root's own, so the filter applies there and nowhere
+// else: once inside `core/`, every file is taken.
+const COPIED = new Set(['core', 'examples', 'tests', 'tools', 'package.json']);
 
-function copyDir(src, dst) {
+function copyDir(src, dst, root = false) {
   fs.mkdirSync(dst, { recursive: true });
   let bytes = 0;
   for (const e of fs.readdirSync(src, { withFileTypes: true })) {
-    if (skip(e.name)) continue;
+    if (root && !COPIED.has(e.name)) continue;
     const s = path.join(src, e.name), d = path.join(dst, e.name);
     if (e.isDirectory()) bytes += copyDir(s, d);
     else { fs.copyFileSync(s, d); bytes += fs.statSync(s).size; }
@@ -676,7 +687,7 @@ function main() {
     // The control. If the suite is not green to begin with, nothing below means
     // anything -- a mutation cannot be blamed for a failure that was already there.
     const control = path.join(tmp, 'control');
-    const bytes = copyDir(ROOT, control);
+    const bytes = copyDir(ROOT, control, true);
     const per = (bytes / 1048576).toFixed(2);
     // Printed, because this is paid once per mutation and nothing else would
     // ever say so. It was 40.4 MB and nobody noticed until a run stopped
@@ -692,7 +703,7 @@ function main() {
 
     for (const [i, m] of MUTATIONS.entries()) {
       const dir = path.join(tmp, `m${i}`);
-      copyDir(ROOT, dir);
+      copyDir(ROOT, dir, true);
       const file = path.join(dir, m.file);
       const src = fs.readFileSync(file, 'utf8');
 
