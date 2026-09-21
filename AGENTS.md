@@ -53,6 +53,7 @@ a contract key or an invariant — not after every edit.
 | `skills/artifex/SKILL.md` | what an agent using the library reads. Changing `core/` usually means changing this too |
 | `ROADMAP.jsonl` | Foreman's ledger of planned work. Edit it through the `foreman` skill, not by hand |
 | `plugin.json`, `.claude-plugin/`, `.codex-plugin/` | the three host manifests: the root one is Agent Plugins 1.0, which Antigravity and Codex read; `.codex-plugin/` is the fallback older Codex reads. Same fields and no build step: edit all three or they drift |
+| `.claude-plugin/marketplace.json`, `.agents/plugins/marketplace.json` | the two install catalogs, for Claude Code and for Codex. Each lists this repository as the one plugin, at `./`. Antigravity installs from the folder and needs none |
 | `CLAUDE.md` | one line, `@AGENTS.md`, because Claude Code cannot always read this file on its own. Codex and Antigravity read this file directly. Never put content there |
 | `out/`, `node_modules/`, `.idea/`, `.agents/skills/artifex/` | generated or local; all git-ignored. The last is the copy of the skill Codex and Antigravity discover, never the source |
 | `.claude/` | mostly git-ignored (worktrees, memory, logs, `settings.local.json`); `settings.json` is the one tracked file |

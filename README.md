@@ -105,8 +105,46 @@ Then read a real piece: `examples/contours.js`. Eleven ship, and
 ## Use it as a skill
 
 Each host loads the skill on its own when a request matches it, for example
-"make me a seeded poster I can send to a pen plotter". The skill reads the
-library by relative path, so use it from this repository's root.
+"make me a seeded poster I can send to a pen plotter". The skill finds the
+library from its own location, so it works from a clone and from an installed
+copy.
+
+### Install the plugin
+
+An install copies the whole library next to the skill, so it works from any
+project. All three routes were run on 2026-09-20 against throwaway config homes.
+
+**Claude Code.** The catalog is `.claude-plugin/marketplace.json`:
+
+```bash
+claude plugin marketplace add V-Songbird/artifex
+```
+
+```bash
+claude plugin install artifex@artifex
+```
+
+**Codex.** The catalog is `.agents/plugins/marketplace.json`:
+
+```bash
+codex plugin marketplace add V-Songbird/artifex
+```
+
+```bash
+codex plugin add artifex@artifex
+```
+
+**Antigravity.** It installs from a folder, so clone first:
+
+```bash
+agy plugin install .
+```
+
+Until the GitHub repository exists, give the first two a path to a clone instead
+of `V-Songbird/artifex`. Install from a clean clone: a local path copies
+git-ignored files too.
+
+### Use it from a clone
 
 **Claude Code.** Load the plugin for one session:
 
@@ -129,11 +167,12 @@ That copy is git-ignored here. The source stays `skills/artifex/`.
 In Codex, call it directly with `$artifex`. Antigravity has no direct call and
 picks the skill by its description.
 
-Check the three plugin manifests with `claude plugin validate .` and
-`agy plugin validate .`. Both pass. Claude Code adds one warning: the root
-`CLAUDE.md` is not shipped as plugin context. That is intended, because that
-file serves work on this repository. Installing the plugin through a Codex or
-Antigravity marketplace has not been tried.
+Check the manifests with `claude plugin validate .`, which reads the catalog,
+`claude plugin validate .claude-plugin/plugin.json` and `agy plugin validate .`.
+All pass. The second adds one warning: the root `CLAUDE.md` is not shipped as
+plugin context. That is intended, because that file serves work on this
+repository. Antigravity's `plugin@marketplace` route is undocumented and has no
+catalog here.
 
 What changes: the agent writes pieces against the contract in `core/piece.js`,
 keeps randomness addressed rather than sequential, and runs `npm run check`

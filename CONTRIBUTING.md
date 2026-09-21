@@ -80,8 +80,12 @@ hand.
 The three host manifests are `plugin.json`, `.claude-plugin/plugin.json` and
 `.codex-plugin/plugin.json`. The last two are byte-identical, and the root one
 adds only `$schema`. There is no build step: edit all three or they drift.
-`agy plugin validate .` and `claude plugin validate .` check them. The second
-warns about the root `CLAUDE.md`, which is expected.
+Two catalogs make the repository installable: `.claude-plugin/marketplace.json`
+for Claude Code and `.agents/plugins/marketplace.json` for Codex. Both name the
+plugin `artifex` and point at `./`. `agy plugin validate .` and
+`claude plugin validate .claude-plugin/plugin.json` check the manifests; the
+second warns about the root `CLAUDE.md`, which is expected.
+`claude plugin validate .` checks the catalog.
 
 ## Rejected alternatives
 

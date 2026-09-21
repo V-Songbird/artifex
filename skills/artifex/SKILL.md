@@ -53,6 +53,13 @@ sequential draw or a GPU path that decides a branch all cost more than they buy.
 
 ## Start here
 
+Every path here — `./core/…`, `examples/…`, `docs/…` and the npm scripts — is
+relative to the **library root**: the nearest folder above this file that holds
+`core/piece.js`. In a clone that is the repository root. In an installed plugin
+it is the plugin's own folder, a full copy of the library: `require` it by
+absolute path, and run a script from anywhere with
+`npm --prefix <library root> run check`.
+
 ```bash
 node -e "
 const { renderVector } = require('./core/render.js');
