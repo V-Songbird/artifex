@@ -920,6 +920,9 @@ test('a film with every frame and uneven spacing is refused, and so is one missi
   const frozen = even.map((ms, i) => (i > 150 ? ms + 1000 : ms));
   assert.match(grab(() => filmVerdict(300, 30, frozen)).message, /spacing is uneven.*max 10\d\d\.0 ms/);
 
-  assert.match(grab(() => filmVerdict(300, 30, even.slice(1))).message, /holds 299 of 300 frames/);
-  assert.match(grab(() => filmVerdict(300, 30, [])).message, /holds 0 of 300 frames/);
+  // A missing frame says WHERE it went, because the gaps already know: the first
+  // export that lost one lost it at the end, and nothing in the message said so.
+  assert.match(grab(() => filmVerdict(300, 30, even.slice(1))).message, /holds 299 of 300 frames, and the gaps are even, so they went missing at an end/);
+  assert.match(grab(() => filmVerdict(300, 30, even.filter((_, i) => i !== 150))).message, /holds 299 of 300 frames, and the widest gap is 6\d\.0 ms.*mid-film/);
+  assert.match(grab(() => filmVerdict(300, 30, [])).message, /holds 0 of 300 frames, and that is too few to say/);
 });

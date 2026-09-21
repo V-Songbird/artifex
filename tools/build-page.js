@@ -179,7 +179,13 @@ function filmVerdict(expected, hz, times) {
     budgetMs: budget, medianGapMs: at(0.5), p95GapMs: at(0.95), maxGapMs: at(1),
   };
   if (v.frames !== expected) {
-    throw new Error(`the file holds ${v.frames} of ${expected} frames, so this film is missing pictures rather than slow. Nothing was saved.`);
+    // WHERE it went is the first thing anyone needs, and the gaps already say:
+    // a picture lost mid-film leaves a hole twice the budget wide, and one lost
+    // at either end leaves none.
+    const where = !gaps.length ? 'that is too few to say where the rest went' : v.maxGapMs > budget * 1.5
+      ? `the widest gap is ${v.maxGapMs.toFixed(1)} ms against a budget of ${budget.toFixed(1)} ms, so pictures went missing mid-film`
+      : 'the gaps are even, so they went missing at an end';
+    throw new Error(`the file holds ${v.frames} of ${expected} frames, and ${where}. This film is missing pictures rather than slow. Nothing was saved.`);
   }
   if (Math.abs(v.medianGapMs - budget) > budget * 0.1 || v.p95GapMs > budget * 1.5 || v.maxGapMs > budget * 3) {
     throw new Error(`the frame spacing is uneven: median ${v.medianGapMs.toFixed(1)} ms, p95 ${v.p95GapMs.toFixed(1)} ms, `
@@ -565,8 +571,11 @@ async function exportVideo() {
   var track = new MediaStreamTrackGenerator({ kind: 'video' });
   var writer = track.writable.getWriter();
   var rec = new MediaRecorder(new MediaStream([track]), { mimeType: 'video/webm;codecs=vp8', videoBitsPerSecond: 8000000 });
-  var chunks = [];
-  rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+  var chunks = [], onData = null;
+  rec.ondataavailable = function (e) {
+    if (e.data && e.data.size) chunks.push(e.data);
+    if (onData) onData();
+  };
   var finished = new Promise(function (r) { rec.onstop = r; });
   rec.start();
 
@@ -582,6 +591,12 @@ async function exportVideo() {
     octx.clearRect(0, 0, off.width, off.height);
     render.drawFrame(octx, p, s, heads[i]);
   }
+  // How many frames the file holds SO FAR, from the recorder's own bytes.
+  async function held() {
+    await new Promise(function (r) { onData = r; rec.requestData(); });
+    onData = null;
+    return webmBlockTimes(new Uint8Array(await new Blob(chunks).arrayBuffer())).length;
+  }
   async function encodeFrame(i) {
     var f = new VideoFrame(off, { timestamp: Math.round((i * 1000000) / hz) });
     await writer.write(f);
@@ -590,18 +605,12 @@ async function exportVideo() {
 
   var t0 = performance.now(), renderMs = 0, encodeMs = 0;
   try {
-    for (var i = 0; i <= heads.length; i++) {
+    for (var i = 0; i < heads.length; i++) {
       // Paced to the piece's own rate: MediaRecorder stamps blocks by the wall
       // clock, not by the timestamp on the frame handed to it, so a loop that
       // is not paced writes a film that plays in a fraction of its length.
       var due = t0 + (i * 1000) / hz;
       while (performance.now() < due) await macro();
-      // One lap past the end, so the LAST frame is held for its own interval
-      // like every other. Stopped straight after the last write, the recorder
-      // drops the frame still in its encoder: 19 of 20, three runs of three,
-      // and 20 of 20 from a 17 ms wait up. A count of writes cannot see that;
-      // the count read back from the file did, on the first export.
-      if (i === heads.length) break;
       var a = performance.now();
       renderFrame(i);
       var b = performance.now();
@@ -609,6 +618,15 @@ async function exportVideo() {
       renderMs += b - a;
       encodeMs += performance.now() - b;
     }
+    // THE END IS ASKED FOR, NOT WAITED FOR. Stopped straight after the last
+    // write, the recorder drops the frame still in its encoder: 19 of 20, every
+    // run. A fixed wait fixed that in a hidden page, where the frame lands
+    // 17 ms later, and lost it again in a visible one, where it lands later
+    // than a frame interval. So the recorder is asked for what it has until the
+    // file holds every frame, and the two seconds are there only so that a
+    // frame lost for good ends the export instead of hanging it.
+    var give = performance.now() + 2000;
+    while ((await held()) < heads.length && performance.now() < give) await macro();
   } finally {
     try { await writer.close(); } catch (e) { /* the track may already be closed */ }
     rec.stop();
