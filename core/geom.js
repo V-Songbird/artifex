@@ -35,7 +35,7 @@
 // them, and two of the five -- the n-gon and the star -- are `ring` with a
 // constant radius and `ring` with an alternating one, which is one capability
 // wearing three names. They were deleted rather than kept for later. This
-// project has already paid for shipping code nothing reads; see commit 0d8ec26
+// project has already paid for shipping code nothing reads; see commit d92a703
 // and docs/knowledge/verification-culture.md §11. When a piece needs an arc, it arrives
 // with the piece that needs it.
 //
