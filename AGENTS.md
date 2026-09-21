@@ -45,11 +45,11 @@ a contract key or an invariant — not after every edit.
 | `examples/` | eleven pieces chosen to break each other's assumptions; `index.js` exports them all. **None is the starter** |
 | `tools/` | `build-page`, `contact-sheet`, `render-examples`, `lint-unread`, `bench`. No art lives here |
 | `tests/` | `*.test.js` per concern (`toolkit` covers `num`, `colour` and `path`), plus `examples.test.js`; `negative.js` is the mutation suite |
-| `docs/` | imported knowledge from the prior engine and four audits, one document per topic — start at [docs/README.md](docs/README.md) |
+| `docs/` | imported knowledge from the prior engine and four audits, one document per topic — each one's frontmatter `summary` says what it answers |
 | `docs/knowledge/` | `type: knowledge` — the charter and the living references. Must always be true |
 | `docs/decisions/` | `type: adr` — every closed question, with its cost and what would overturn it |
 | `docs/tasks/` | `type: task_summary` — dated reports, never rewritten, plus one tracking note per **live** task |
-| `docs/rescued-examples/` | the three declined field-test pieces, kept as source so dropping their branches loses nothing |
+| `docs/rescued-examples/` | `figure`, `girih` and `pulse`, the three declined field-test pieces, kept as source so dropping their branches loses nothing. Why, in [example-set.md](docs/knowledge/example-set.md) §7 |
 | `skills/artifex/SKILL.md` | what an agent using the library reads. Changing `core/` usually means changing this too |
 | `ROADMAP.jsonl` | Foreman's ledger of planned work. Edit it through the `foreman` skill, not by hand |
 | `.claude-plugin/`, `.codex-plugin/` | the two host manifests. They are byte-identical copies with no build step: edit both or they drift |
@@ -63,20 +63,13 @@ Tests sit in `tests/` rather than beside the code: `npm test` globs
 ## Documentation conventions
 
 **The folder is the `type`.** `knowledge/` must always be true, `decisions/` is
-an `adr`, `tasks/` was true on its date. Every file also opens with YAML
-frontmatter — `type`, `summary`, `related_files`, plus `status` on a
-`task_summary` — so the right document is found by searching that metadata
-rather than by opening all of them.
-
-**One document per topic**, with a stable kebab-case name and no date in it, so
-a citation stays good. Add to the topic's document rather than starting a
-sibling. A number inside a dated section keeps its date instead of being
-refreshed: `docs/tasks/field-test-findings.md` saying "96 tests" is evidence,
-not a stale count. Citations are by section, as in
+an `adr`, `tasks/` was true on its date. Citations are by section, as in
 `docs/knowledge/imported-sources.md §18.1`.
 
-When you change `core/`, check the documents whose `related_files` cover what
-you touched and update them in the same commit.
+The rest — the frontmatter fields, one document per topic, filenames, dated
+numbers, what to update when `core/` changes — is written once in
+[CONTRIBUTING.md](CONTRIBUTING.md). Read it before adding or renaming a
+document.
 
 ## Pitfalls
 
@@ -97,4 +90,9 @@ you touched and update them in the same commit.
 ## Start here
 
 [README.md](README.md) for what the library does and the example table.
-[docs/README.md](docs/README.md) for the design behind everything unbuilt.
+[docs/knowledge/subject-neutrality.md](docs/knowledge/subject-neutrality.md) for
+the rule everything else answers to, then
+[objective.md](docs/knowledge/objective.md) for how work is ranked. After those,
+search the document summaries.
+[CONTRIBUTING.md](CONTRIBUTING.md) for how to work in this repository: the
+checks to run, the documentation conventions and what to update alongside code.

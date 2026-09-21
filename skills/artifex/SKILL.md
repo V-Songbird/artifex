@@ -1,6 +1,11 @@
 ---
 name: artifex
 description: Make art out of code — a piece whose every mark is solved rather than placed, rendered from one source to an interactive page, a video, a print-resolution still or a plotter-ready SVG, with checks that can actually fail. Use when asked to create generative, algorithmic or procedural art; a poster, plate, pattern, diagram-as-art, type specimen, data piece, abstract composition, illustration, creature, scene or object built out of code; an animated or growing piece; a seeded artwork that can be re-rolled; an SVG for a pen plotter; or to debug, optimise or art-direct an existing piece. Not for chart libraries, dashboards, UI mockups, or image generation from a prompt.
+argument-hint: "<what to make — optional seed, size or output>"
+license: MIT
+compatibility: Requires Node 20 or later and the artifex library on disk — the piece contract, the core modules and the npm scripts named here ship with the repository or the plugin. Nothing here needs network access or a dependency install.
+metadata:
+  version: "0.1.0"
 ---
 
 # Artifex

@@ -168,8 +168,8 @@ npm run seeds       # nine seeds of every example on one page, and LOOK
 | `settle` | forces finding their own arrangement. **State that evolves**, still scrubbable | 144 frames | raster + vector |
 
 Not yet built: the video walk, the check suite as a shipped tool, and the
-mathematics import. The [findings index](docs/README.md) is where the design for
-all of it comes from.
+mathematics import. The design for all of it comes from [docs/](docs/), indexed
+in [AGENTS.md](AGENTS.md).
 
 ## Configuration
 
@@ -179,9 +179,12 @@ declares its own `params`, and the render call takes `seed` and `scale`.
 ## Documentation
 
 Everything imported from four months of prior work and four independent audits is
-in [docs/](docs/README.md). Start with
+in [docs/](docs/). Start with
 [subject-neutrality.md](docs/knowledge/subject-neutrality.md). Agents working on the
-repository itself start at [AGENTS.md](AGENTS.md).
+repository itself start at [AGENTS.md](AGENTS.md), which says what each document
+answers, and
+[CONTRIBUTING.md](CONTRIBUTING.md) has the checks to run and the documentation
+conventions.
 
 ## Support
 
