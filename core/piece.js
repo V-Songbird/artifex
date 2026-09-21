@@ -13,7 +13,7 @@
 // misspelled key is the exact fault that got through last time.
 //
 // Nothing here knows what kind of art a piece makes. That is deliberate and it
-// is the project's governing rule -- see docs/knowledge/subject-neutrality.md.
+// is the project's governing rule.
 
 'use strict';
 
@@ -96,7 +96,7 @@ const FIELDS = {
       // A STILL IS A LEGAL PIECE. A poster, a plotter drawing and a data plate
       // have no timeline, and the engine this imports from made one mandatory --
       // its suite failed any piece whose last frame did not carry more marks
-      // than its first. See docs/knowledge/subject-neutrality.md, N6.
+      // than its first.
       if (v === null) return null;
       if (!v || typeof v !== 'object') return 'must be null (a still) or { duration, hz, loop? }';
       if (!Number.isFinite(v.duration) || v.duration <= 0) return 'time.duration must be a positive finite number of seconds';

@@ -7,12 +7,12 @@
 // far as we had already imagined. That population is too narrow to license a
 // module and too narrow to refuse one.
 //
-// The population that licensed this file is in docs/knowledge/imported-sources.md §7:
+// The population that licensed this file:
 // a 1.1 MB body of finished work by someone who has never seen this project
 // defines, before it draws anything at all, `resample chaikin bbox pip centroid
 // blob rotPts arcPts polyPts starPts ribbon`. Five field-test authors handed
 // this library cold each wrote a subset of the same list. And
-// docs/tasks/field-test-findings.md §10 has carried "offsetting, intersections,
+// the field-test findings have carried "offsetting, intersections,
 // point-in-polygon, area" as an open gap since the field test.
 //
 // Three independent populations, one list. That is the evidence.
@@ -26,18 +26,17 @@
 // collects the assignments of hundreds of educators across thirty years, and its
 // Geometry exercises name a polyline offset by a fixed distance, the
 // intersection of two line segments, and the shortest distance from a point to a
-// line. That is a fourth population, and the third to name offsetting. See
-// docs/knowledge/imported-sources.md §12.1. The paragraph above stands as the standard
-// -- written properly, not approximated -- but it is no longer waiting.
+// line. That is a fourth population, and the third to name offsetting. The
+// paragraph above stands as the standard -- written properly, not approximated
+// -- but it is no longer waiting.
 //
 // WHAT WAS CUT, AND WHY. A first pass also shipped `area`, `polyPts`,
 // `starPts`, `arcPts` and `rotPts`. Nothing outside the tests reached any of
 // them, and two of the five -- the n-gon and the star -- are `ring` with a
 // constant radius and `ring` with an alternating one, which is one capability
 // wearing three names. They were deleted rather than kept for later. This
-// project has already paid for shipping code nothing reads; see commit d92a703
-// and docs/knowledge/verification-culture.md §11. When a piece needs an arc, it arrives
-// with the piece that needs it.
+// project has already paid for shipping code nothing reads; see commit d92a703.
+// When a piece needs an arc, it arrives with the piece that needs it.
 //
 // Nothing here knows what kind of art a piece makes.
 

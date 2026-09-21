@@ -13,8 +13,8 @@
 // It is also where the shape vocabulary in core/geom.js earns its place: a form
 // is a ring whose radius is a field, the ring is smoothed, the outline is a
 // ribbon so a single-width pen can still taper, and whether a candidate is
-// already inside something is a point-in-polygon test. See
-// docs/knowledge/imported-sources.md §7 for where that list came from.
+// already inside something is a point-in-polygon test. The head of
+// core/geom.js says where that list came from.
 //
 // THE ONE PIECE OF ART DIRECTION, STATED. Each form is printed twice, in two
 // inks, a fraction of a millimetre apart. That is misregistration -- the thing

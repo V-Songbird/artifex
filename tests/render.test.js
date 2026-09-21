@@ -14,7 +14,6 @@ function grab(fn) {
 // A deliberately NON-ORGANIC fixture. The example a library ships becomes the
 // shape of what gets made with it, and that applies to test fixtures an author
 // reads too -- so this one is a hard-edged graphic mark on a grid, not a plant.
-// See docs/knowledge/subject-neutrality.md.
 function bars(extra = {}) {
   return validate({
     name: 'bars',

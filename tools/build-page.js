@@ -119,8 +119,8 @@ function __require(from) {
  * When every frame in a WebM file plays, in milliseconds, read from the FILE.
  *
  * MediaRecorder cannot be asked how many frames it received, and it stamps each
- * one by the wall clock rather than by the timestamp on the frame it was handed
- * (docs/knowledge/output-targets.md 2.4). So what the write loop believes it
+ * one by the wall clock rather than by the timestamp on the frame it was handed.
+ * So what the write loop believes it
  * wrote is the wrong half to measure: the file is the film, and this reads it.
  *
  * A flat walk, not a tree: a recorder writes its Segment and its Clusters with
@@ -163,7 +163,7 @@ function webmBlockTimes(bytes) {
  *
  * A film once passed frames written, frames received AND duration, and still
  * played in bursts -- thirty frames in forty milliseconds, then a one-second
- * freeze, ten times over (output-targets.md 2.5). Spacing is the only thing
+ * freeze, ten times over. Spacing is the only thing
  * "fluid" means, so it is asserted here and not merely reported.
  *
  * The three bounds sit outside everything a good film measured: median 33.3 to
@@ -537,8 +537,8 @@ ${filmVerdict.toString()}
 // -- and hands each drawn frame to the encoder itself, so the file holds the
 // frames the piece declares rather than the ones the machine managed to paint.
 //
-// Two measurements decide the shape, both in docs/knowledge/output-targets.md
-// 2.3-2.6. A canvas MediaStream is paced by the COMPOSITOR: four routes gave
+// Two measurements decide the shape.
+// A canvas MediaStream is paced by the COMPOSITOR: four routes gave
 // 159, 112, 96 and 92 frames of 300, and every one of those files still played
 // ten seconds. And a timer is clamped to one second in a page that is not in
 // front, which wrote thirty frames at once and then froze. So: no canvas stream
@@ -577,7 +577,7 @@ async function exportVideo() {
 
   // RENDER AND ENCODE ARE TWO CALLS, timed apart. On four of five subjects in
   // the engine this imports from, most of what every instrument had measured
-  // was the encoder (output-targets.md 2.2), and one number for both hides it.
+  // was the encoder, and one number for both hides it.
   function renderFrame(i) {
     octx.clearRect(0, 0, off.width, off.height);
     render.drawFrame(octx, p, s, heads[i]);

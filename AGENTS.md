@@ -17,9 +17,7 @@ produces the same frame — forwards, backwards, or after a scrub. Nothing in
 
 **2. Artifex assumes nothing about what art gets made with it.** A default, a
 primitive or an example that only makes sense for one kind of picture is a
-defect, not a convenience. It has eight testable forms in
-[docs/knowledge/subject-neutrality.md](docs/knowledge/subject-neutrality.md) —
-**read that before adding anything to `core/`.**
+defect, not a convenience. **Ask that of anything before adding it to `core/`.**
 
 ## Commands
 
@@ -45,17 +43,13 @@ a contract key or an invariant — not after every edit.
 | `examples/` | eleven pieces chosen to break each other's assumptions; `index.js` exports them all. **None is the starter** |
 | `tools/` | `build-page`, `contact-sheet`, `render-examples`, `lint-unread`, `bench`. No art lives here |
 | `tests/` | `*.test.js` per concern (`toolkit` covers `num`, `colour` and `path`), plus `examples.test.js`; `negative.js` is the mutation suite |
-| `docs/` | imported knowledge from the prior engine and four audits, one document per topic — each one's frontmatter `summary` says what it answers |
-| `docs/knowledge/` | `type: knowledge` — the charter and the living references. Must always be true |
-| `docs/decisions/` | `type: adr` — every closed question, with its cost and what would overturn it |
-| `docs/tasks/` | `type: task_summary` — dated reports, never rewritten, plus one tracking note per **live** task |
-| `docs/rescued-examples/` | `figure`, `girih` and `pulse`, the three declined field-test pieces, kept as source so dropping their branches loses nothing. Why, in [example-set.md](docs/knowledge/example-set.md) §7 |
 | `skills/artifex/SKILL.md` | what an agent using the library reads. Changing `core/` usually means changing this too |
 | `ROADMAP.jsonl` | Foreman's ledger of planned work. Edit it through the `foreman` skill, not by hand |
 | `plugin.json`, `.claude-plugin/`, `.codex-plugin/` | the three host manifests: the root one is Agent Plugins 1.0, which Antigravity and Codex read; `.codex-plugin/` is the fallback older Codex reads. Same fields and no build step: edit all three or they drift |
 | `.claude-plugin/marketplace.json`, `.agents/plugins/marketplace.json` | the two install catalogs, for Claude Code and for Codex. Each lists this repository as the one plugin, at `./`. Antigravity installs from the folder and needs none |
 | `CLAUDE.md` | one line, `@AGENTS.md`, because Claude Code cannot always read this file on its own. Codex and Antigravity read this file directly. Never put content there |
 | `out/`, `node_modules/`, `.idea/`, `.agents/skills/artifex/` | generated or local; all git-ignored. The last is the copy of the skill Codex and Antigravity discover, never the source |
+| `docs/` | the owner's working notes — knowledge, decisions and task reports. Local and git-ignored, so a clone has none and no tracked file links into it |
 | `.claude/` | mostly git-ignored (worktrees, memory, logs, `settings.local.json`); `settings.json` is the one tracked file |
 
 Tests sit in `tests/` rather than beside the code: `npm test` globs
@@ -64,14 +58,11 @@ Tests sit in `tests/` rather than beside the code: `npm test` globs
 
 ## Documentation conventions
 
-**The folder is the `type`.** `knowledge/` must always be true, `decisions/` is
-an `adr`, `tasks/` was true on its date. Citations are by section, as in
-`docs/knowledge/imported-sources.md §18.1`.
-
-The rest — the frontmatter fields, one document per topic, filenames, dated
-numbers, what to update when `core/` changes — is written once in
-[CONTRIBUTING.md](CONTRIBUTING.md). Read it before adding or renaming a
-document.
+The tracked documentation is [README.md](README.md), this file,
+[CONTRIBUTING.md](CONTRIBUTING.md) and `skills/artifex/SKILL.md`. What a reader
+of the public repository needs goes in one of those, never behind a link into
+`docs/`. What to update when `core/` changes is written once in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Pitfalls
 
@@ -92,9 +83,5 @@ document.
 ## Start here
 
 [README.md](README.md) for what the library does and the example table.
-[docs/knowledge/subject-neutrality.md](docs/knowledge/subject-neutrality.md) for
-the rule everything else answers to, then
-[objective.md](docs/knowledge/objective.md) for how work is ranked. After those,
-search the document summaries.
 [CONTRIBUTING.md](CONTRIBUTING.md) for how to work in this repository: the
 checks to run, the documentation conventions and what to update alongside code.

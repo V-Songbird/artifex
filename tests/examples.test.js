@@ -2,7 +2,7 @@
 
 // The example set is infrastructure, not decoration.
 //
-// Section 3 of docs/knowledge/subject-neutrality.md says the examples ARE the real
+// The project's governing rule says the examples ARE the real
 // specification: a library that has only ever drawn the art it was built for has
 // no evidence it generalises, and the gaps show up as missing primitives rather
 // than as failing tests. So the set itself is checked -- that it spans idioms

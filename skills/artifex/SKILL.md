@@ -30,8 +30,7 @@ Everything else here is negotiable. This is not.
 otherwise.** A city, a poster, a data field, a letterform, a creature, a
 pattern, something abstract nobody has named. If you find a default, a
 primitive or an example that only makes sense for one kind of art, that is a
-defect — report it. The full charter is `docs/knowledge/subject-neutrality.md`, and it
-outranks convenience, elegance and performance.
+defect — report it. This rule outranks convenience, elegance and performance.
 
 **2. Randomness is addressed, never sequential.** `core/rand.js`:
 `const R = rng(seed)`, then `R(entity, property, index)` hashes its arguments.
@@ -53,7 +52,7 @@ sequential draw or a GPU path that decides a branch all cost more than they buy.
 
 ## Start here
 
-Every path here — `./core/…`, `examples/…`, `docs/…` and the npm scripts — is
+Every path here — `./core/…`, `examples/…` and the npm scripts — is
 relative to the **library root**: the nearest folder above this file that holds
 `core/piece.js`. In a clone that is the repository root. In an installed plugin
 it is the plugin's own folder, a full copy of the library: `require` it by

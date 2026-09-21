@@ -22,16 +22,14 @@ recorded, a print re-renderable at any size, and a plotter file trustworthy.
 
 **Artifex assumes nothing about what art gets made with it.**
 
-This is not a style guideline. It is a structural constraint with eight testable
-forms, and it outranks convenience, elegance and performance. A previous engine
+This is not a style guideline. It is a structural constraint, and it outranks
+convenience, elegance and performance. A previous engine
 drew one kind of picture seven times. Its default line family ended up named
 `botanic`, its inking term assumed a contour bounded a volume, and the first
 hard-edged piece anyone tried broke in seven places. Its own conclusion:
 
 > "They are the shape of a library built by making one kind of picture seven
 > times, **and they would not have appeared from reading the code**."
-
-See [docs/knowledge/subject-neutrality.md](docs/knowledge/subject-neutrality.md).
 
 ## Requirements
 
@@ -99,8 +97,8 @@ It also writes `out.svg`, 24 arcs, next to `first.js`. If `draw` calls a raster
 operation such as `fillText`, the vector surface throws and names the operation.
 That is the design.
 
-Then read a real piece: `examples/contours.js`. Eleven ship, and
-[none is the starter](docs/knowledge/example-set.md).
+Then read a real piece: `examples/contours.js`. Eleven ship, and none is the
+starter.
 
 ## Use it as a skill
 
@@ -204,7 +202,7 @@ npm run bench       # generation-speed measurements
 | `core/geom.js` | polyline geometry: length, bbox, centroid, point-in-polygon, resample, chaikin, `chain` (segments to as few pen-downs as possible), ring, ribbon |
 | `core/surface-vector.js` | a Canvas2D-shaped surface that emits SVG, and refuses every raster operation **by name** |
 | `core/render.js` | one frame to any surface, at any scale, with the playhead quantised to the drawn-frame grid |
-| `examples/` | eleven pieces spanning idioms that break each other. See [docs/knowledge/example-set.md](docs/knowledge/example-set.md) |
+| `examples/` | eleven pieces spanning idioms that break each other |
 | `tools/build-page.js` | one self-contained HTML file: the live backend, the raster backend at any scale, a transport, and a frame-exact WebM export judged by what its file holds |
 | `tools/lint-unread.js` | every declared name must have a reader, every contract key a consumer. No build, no browser, no art |
 | `tools/contact-sheet.js` | nine seeds on one page. The only instrument for compositional faults |
@@ -226,8 +224,7 @@ npm run bench       # generation-speed measurements
 | `settle` | forces finding their own arrangement. **State that evolves**, still scrubbable | 144 frames | raster + vector |
 
 Not yet built: the check suite as a shipped tool, and the
-mathematics import. The design for all of it comes from [docs/](docs/). Each
-document's frontmatter `summary` says what it answers.
+mathematics import.
 
 ## Configuration
 
@@ -236,10 +233,9 @@ declares its own `params`, and the render call takes `seed` and `scale`.
 
 ## Documentation
 
-Everything imported from four months of prior work and four independent audits is
-in [docs/](docs/). Start with
-[subject-neutrality.md](docs/knowledge/subject-neutrality.md). Agents working on the
-repository itself start at [AGENTS.md](AGENTS.md), the repository map.
+This file is the documentation for using the library, and
+[skills/artifex/SKILL.md](skills/artifex/SKILL.md) is what an agent reads. Agents
+working on the repository itself start at [AGENTS.md](AGENTS.md), the repository map.
 [CONTRIBUTING.md](CONTRIBUTING.md) has the checks to run and the documentation
 conventions.
 

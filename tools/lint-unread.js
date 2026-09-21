@@ -19,7 +19,6 @@
 // screen, a print and a plotter unchanged, and a method that exists on a canvas
 // and is missing here throws a bare TypeError on export from a piece that
 // worked live. All five were correct. What they lacked was proof.
-// See docs/knowledge/verification-culture.md §11.
 //
 // No dependencies, no build, no browser, no art. It runs before anything else.
 
