@@ -30,6 +30,15 @@ credentials.json
 # Corrupted configuration dumps
 .claude.json.corrupted.*
 
+# Personal instructions; they also stop Claude Code reading AGENTS.md directly
+CLAUDE.local.md
+
+# ==============================================================================
+# 2b. Codex & Antigravity
+# ==============================================================================
+# A local copy of skills/artifex/ so both hosts discover it; the source is skills/
+.agents/skills/artifex/
+
 # ==============================================================================
 # 3. Agent Workspace & Execution Artifacts
 # ==============================================================================

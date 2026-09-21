@@ -3,7 +3,7 @@
 Programmatic art for AI agents. One piece renders to an interactive page, a
 video, a print-resolution still and a plotter-ready SVG, with tests that can
 fail. This repository is both the library and the plugin that ships it
-(`.claude-plugin/`, `.codex-plugin/`, `skills/artifex/SKILL.md`).
+(`plugin.json`, `.claude-plugin/`, `.codex-plugin/`, `skills/artifex/SKILL.md`).
 
 Node 20 or later; `.nvmrc` pins the version this is developed on. No build step
 and no dependencies — `package.json` has no `dependencies` block, and `require`
@@ -52,8 +52,9 @@ a contract key or an invariant — not after every edit.
 | `docs/rescued-examples/` | `figure`, `girih` and `pulse`, the three declined field-test pieces, kept as source so dropping their branches loses nothing. Why, in [example-set.md](docs/knowledge/example-set.md) §7 |
 | `skills/artifex/SKILL.md` | what an agent using the library reads. Changing `core/` usually means changing this too |
 | `ROADMAP.jsonl` | Foreman's ledger of planned work. Edit it through the `foreman` skill, not by hand |
-| `.claude-plugin/`, `.codex-plugin/` | the two host manifests. They are byte-identical copies with no build step: edit both or they drift |
-| `out/`, `node_modules/`, `.idea/` | generated or local; all git-ignored |
+| `plugin.json`, `.claude-plugin/`, `.codex-plugin/` | the three host manifests: the root one is Agent Plugins 1.0, which Antigravity and Codex read; `.codex-plugin/` is the fallback older Codex reads. Same fields and no build step: edit all three or they drift |
+| `CLAUDE.md` | one line, `@AGENTS.md`, because Claude Code cannot always read this file on its own. Codex and Antigravity read this file directly. Never put content there |
+| `out/`, `node_modules/`, `.idea/`, `.agents/skills/artifex/` | generated or local; all git-ignored. The last is the copy of the skill Codex and Antigravity discover, never the source |
 | `.claude/` | mostly git-ignored (worktrees, memory, logs, `settings.local.json`); `settings.json` is the one tracked file |
 
 Tests sit in `tests/` rather than beside the code: `npm test` globs

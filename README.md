@@ -37,8 +37,7 @@ See [docs/knowledge/subject-neutrality.md](docs/knowledge/subject-neutrality.md)
 
 - Node 20 or later. `.nvmrc` pins 22.
 - Nothing else: no dependencies, no build step. Modules are CommonJS.
-- To use the skill: Claude Code. A Codex manifest ships in `.codex-plugin/`,
-  but that route is untested.
+- To use the skill: Claude Code, Codex or Antigravity.
 
 ## Install
 
@@ -105,19 +104,38 @@ Then read a real piece: `examples/contours.js`. Eleven ship, and
 
 ## Use it as a skill
 
-Claude Code loads the skill on its own when a request matches it, for example
-"make me a seeded poster I can send to a pen plotter". To load it for one
-session, run from the repository root:
+Each host loads the skill on its own when a request matches it, for example
+"make me a seeded poster I can send to a pen plotter". The skill reads the
+library by relative path, so use it from this repository's root.
+
+**Claude Code.** Load the plugin for one session:
 
 ```bash
 claude --plugin-dir .
 ```
 
-Then call it directly with `/artifex:artifex`. To install it in one project
-instead, copy `skills/artifex/` into that project's `.claude/skills/` and call
-it with `/artifex`.
+Then call it directly with `/artifex:artifex`.
 
-What changes: Claude writes pieces against the contract in `core/piece.js`,
+**Codex and Antigravity.** Both read project skills from `.agents/skills/`.
+Copy the skill there:
+
+```bash
+mkdir -p .agents/skills
+cp -r skills/artifex .agents/skills/
+```
+
+That copy is git-ignored here. The source stays `skills/artifex/`.
+
+In Codex, call it directly with `$artifex`. Antigravity has no direct call and
+picks the skill by its description.
+
+Check the three plugin manifests with `claude plugin validate .` and
+`agy plugin validate .`. Both pass. Claude Code adds one warning: the root
+`CLAUDE.md` is not shipped as plugin context. That is intended, because that
+file serves work on this repository. Installing the plugin through a Codex or
+Antigravity marketplace has not been tried.
+
+What changes: the agent writes pieces against the contract in `core/piece.js`,
 keeps randomness addressed rather than sequential, and runs `npm run check`
 before it reports. The skill text is
 [skills/artifex/SKILL.md](skills/artifex/SKILL.md).
@@ -130,8 +148,9 @@ npm test            # 162 tests
 npm run negative    # break it on purpose; 81 caught, 0 escaped, 0 misnamed. About 17 minutes
 npm run lint        # every declared name must have a reader, every contract key a consumer
 npm run examples    # render every example that declares vector, and report what it reached
-npm run page        # build out/index.html, then open it
+npm run page        # build out/index.html, one self-contained file. Open it yourself
 npm run seeds       # nine seeds of every example on one page, and LOOK
+npm run bench       # generation-speed measurements
 ```
 
 ## What exists
@@ -168,8 +187,8 @@ npm run seeds       # nine seeds of every example on one page, and LOOK
 | `settle` | forces finding their own arrangement. **State that evolves**, still scrubbable | 144 frames | raster + vector |
 
 Not yet built: the video walk, the check suite as a shipped tool, and the
-mathematics import. The design for all of it comes from [docs/](docs/), indexed
-in [AGENTS.md](AGENTS.md).
+mathematics import. The design for all of it comes from [docs/](docs/). Each
+document's frontmatter `summary` says what it answers.
 
 ## Configuration
 
@@ -181,16 +200,16 @@ declares its own `params`, and the render call takes `seed` and `scale`.
 Everything imported from four months of prior work and four independent audits is
 in [docs/](docs/). Start with
 [subject-neutrality.md](docs/knowledge/subject-neutrality.md). Agents working on the
-repository itself start at [AGENTS.md](AGENTS.md), which says what each document
-answers, and
+repository itself start at [AGENTS.md](AGENTS.md), the repository map.
 [CONTRIBUTING.md](CONTRIBUTING.md) has the checks to run and the documentation
 conventions.
 
 ## Support
 
 There is no public issue tracker yet. Report bugs and questions to the author,
-Victor Villegas, at the address in [package manifest](.claude-plugin/plugin.json).
-Include the seed, the piece name and the output of `npm run check`.
+Victor Villegas, at the address in the [plugin manifest](plugin.json).
+Include the seed, the piece name and the output of `npm run check`. Report a
+vulnerability to the same address, not in public.
 
 ## License
 
