@@ -871,3 +871,55 @@ test('the page builder refuses to write a page that does not parse', () => {
   assert.match(grab(() => checkParses('<script>function f() { var a = 1;</script>')).message, /does not parse/);
   assert.match(grab(() => checkParses('<p>no script here</p>')).message, /has no script block/);
 });
+
+test('a film is read from the blocks its FILE holds, by walking it rather than scanning it', () => {
+  // MediaRecorder cannot be asked what it received and stamps frames by the wall
+  // clock, so the written file is the only honest witness. This is the smallest
+  // file with every shape a recorder writes: a header to step over, a Segment and
+  // Clusters of UNKNOWN size to step into, a Block inside a BlockGroup, and a
+  // payload byte that looks exactly like a block id.
+  const { webmBlockTimes } = require('../tools/build-page.js');
+  const webm = (scale) => Uint8Array.from([
+    0x1A, 0x45, 0xDF, 0xA3, 0x83, 0xA3, 0xA3, 0xA3,
+    0x18, 0x53, 0x80, 0x67, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0x15, 0x49, 0xA9, 0x66, 0x87, 0x2A, 0xD7, 0xB1, 0x83, ...scale,
+    0x1F, 0x43, 0xB6, 0x75, 0xFF, 0xE7, 0x81, 0x00,
+    0xA3, 0x85, 0x81, 0x00, 0x00, 0x80, 0xA3,
+    0xA3, 0x85, 0x81, 0x00, 0x21, 0x00, 0xA3,
+    0xA3, 0x85, 0x81, 0x00, 0x43, 0x00, 0xA3,
+    0x1F, 0x43, 0xB6, 0x75, 0xFF, 0xE7, 0x81, 0x64,
+    0xA3, 0x85, 0x81, 0x00, 0x00, 0x80, 0xA3,
+    0xA0, 0x87, 0xA1, 0x85, 0x81, 0x00, 0x21, 0x00, 0xA3,
+  ]);
+
+  assert.deepEqual(webmBlockTimes(webm([0x0F, 0x42, 0x40])), [0, 33, 67, 100, 133],
+    'five blocks at the cluster time plus their own, and no sixth from a payload byte');
+  assert.deepEqual(webmBlockTimes(webm([0x1E, 0x84, 0x80])), [0, 66, 134, 200, 266],
+    'in the units the file declares, not the ones a recorder usually picks');
+  assert.deepEqual(webmBlockTimes(new Uint8Array(0)), []);
+});
+
+test('a film with every frame and uneven spacing is refused, and so is one missing a frame', () => {
+  // Frames written, frames received and duration ALL passed on a film that
+  // played in bursts. Spacing was the one thing nobody measured.
+  const { filmVerdict } = require('../tools/build-page.js');
+  const even = Array.from({ length: 300 }, (_, i) => Math.round((i * 1000) / 30));
+
+  const v = filmVerdict(300, 30, even);
+  assert.equal(v.frames, 300);
+  assert.ok(Math.abs(v.seconds - 10) < 0.01, 'ten seconds, read from the file');
+  assert.ok(v.medianGapMs >= 33 && v.maxGapMs <= 34);
+
+  // The film that bought this check: thirty frames at once, then a freeze.
+  const bursts = even.map((_, i) => Math.floor(i / 30) * 1000 + (i % 30) * 1.3);
+  assert.equal(bursts.length, 300, 'every frame is there');
+  assert.ok(Math.abs((bursts[299] - bursts[0]) / 1000 - 10) < 1, 'and so is the duration, near enough');
+  assert.match(grab(() => filmVerdict(300, 30, bursts)).message, /spacing is uneven: median 1\.3 ms/);
+
+  // One freeze in an otherwise even film leaves the median and the p95 alone.
+  const frozen = even.map((ms, i) => (i > 150 ? ms + 1000 : ms));
+  assert.match(grab(() => filmVerdict(300, 30, frozen)).message, /spacing is uneven.*max 10\d\d\.0 ms/);
+
+  assert.match(grab(() => filmVerdict(300, 30, even.slice(1))).message, /holds 299 of 300 frames/);
+  assert.match(grab(() => filmVerdict(300, 30, [])).message, /holds 0 of 300 frames/);
+});

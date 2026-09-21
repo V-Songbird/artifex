@@ -183,8 +183,8 @@ before it reports. The skill text is
 
 ```bash
 npm run check       # lint, then the tests. The one command to run after a change
-npm test            # 162 tests
-npm run negative    # break it on purpose; 81 caught, 0 escaped, 0 misnamed. About 17 minutes
+npm test            # 164 tests
+npm run negative    # break it on purpose; 85 caught, 0 escaped, 0 misnamed. About 17 minutes
 npm run lint        # every declared name must have a reader, every contract key a consumer
 npm run examples    # render every example that declares vector, and report what it reached
 npm run page        # build out/index.html, one self-contained file. Open it yourself
@@ -205,11 +205,11 @@ npm run bench       # generation-speed measurements
 | `core/surface-vector.js` | a Canvas2D-shaped surface that emits SVG, and refuses every raster operation **by name** |
 | `core/render.js` | one frame to any surface, at any scale, with the playhead quantised to the drawn-frame grid |
 | `examples/` | eleven pieces spanning idioms that break each other. See [docs/knowledge/example-set.md](docs/knowledge/example-set.md) |
-| `tools/build-page.js` | one self-contained HTML file: the live backend, the raster backend at any scale, a transport |
+| `tools/build-page.js` | one self-contained HTML file: the live backend, the raster backend at any scale, a transport, and a frame-exact WebM export judged by what its file holds |
 | `tools/lint-unread.js` | every declared name must have a reader, every contract key a consumer. No build, no browser, no art |
 | `tools/contact-sheet.js` | nine seeds on one page. The only instrument for compositional faults |
-| `tests/` | 162 tests |
-| `tests/negative.js` | 81 mutations, each naming the test it must trip. A suite that has never been red is not evidence |
+| `tests/` | 164 tests |
+| `tests/negative.js` | 85 mutations, each naming the test it must trip. A suite that has never been red is not evidence |
 
 | example | idiom | time | declares |
 |---|---|---|---|
@@ -225,7 +225,7 @@ npm run bench       # generation-speed measurements
 | `cover` | a magazine front cover. The type is set, and the picture grows around it | a still | raster + vector |
 | `settle` | forces finding their own arrangement. **State that evolves**, still scrubbable | 144 frames | raster + vector |
 
-Not yet built: the video walk, the check suite as a shipped tool, and the
+Not yet built: the check suite as a shipped tool, and the
 mathematics import. The design for all of it comes from [docs/](docs/). Each
 document's frontmatter `summary` says what it answers.
 

@@ -398,6 +398,34 @@ const MUTATIONS = [
     to: "    'examples/drift.js',",
     expect: 'the page builder refuses to write a bundle with a hole in it',
   },
+  {
+    why: 'a film that plays in bursts is saved, because every frame is there and the duration is right',
+    file: 'tools/build-page.js',
+    from: '  if (Math.abs(v.medianGapMs - budget) > budget * 0.1 || v.p95GapMs > budget * 1.5 || v.maxGapMs > budget * 3) {',
+    to: '  if (false) {',
+    expect: 'a film with every frame and uneven spacing is refused, and so is one missing a frame',
+  },
+  {
+    why: 'one long freeze is let through, because it moves neither the median nor the p95',
+    file: 'tools/build-page.js',
+    from: ' || v.maxGapMs > budget * 3) {',
+    to: ') {',
+    expect: 'a film with every frame and uneven spacing is refused, and so is one missing a frame',
+  },
+  {
+    why: 'a film missing pictures is saved as long as the ones it has are evenly spaced',
+    file: 'tools/build-page.js',
+    from: '  if (v.frames !== expected) {',
+    to: '  if (false) {',
+    expect: 'a film with every frame and uneven spacing is refused, and so is one missing a frame',
+  },
+  {
+    why: 'a block forgets which cluster it is in, so every cluster restarts the film at zero',
+    file: 'tools/build-page.js',
+    from: '      out.push((cluster + ((uint(at, 2) << 16) >> 16)) * scale / 1000000);',
+    to: '      out.push(((uint(at, 2) << 16) >> 16) * scale / 1000000);',
+    expect: 'a film is read from the blocks its FILE holds, by walking it rather than scanning it',
+  },
 
 
   // --- the arithmetic five authors wrote for themselves ---------------------

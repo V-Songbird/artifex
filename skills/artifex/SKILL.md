@@ -232,7 +232,7 @@ outputs.
 |---|---|
 | an interactive page | pass a real `CanvasRenderingContext2D` to `drawFrame` |
 | a print-resolution still | same, at `scale: 8` or higher. **Not capped.** |
-| a video | walk `playheads(piece)`; the frames are a property of the piece, never of how fast the machine is |
+| a video | walk `playheads(piece)`; the frames are a property of the piece, never of how fast the machine is. The built page does it: **WebM video**, or `__artifex.video()`, which saves nothing and returns the report |
 | a plotter / print SVG | `renderVector(piece)` — declare `outputs: ['raster','vector']` first |
 
 **Chain your segments before you draw them.** A plotter lifts the pen between

@@ -115,6 +115,79 @@ function __require(from) {
 }
 `;
 
+/**
+ * When every frame in a WebM file plays, in milliseconds, read from the FILE.
+ *
+ * MediaRecorder cannot be asked how many frames it received, and it stamps each
+ * one by the wall clock rather than by the timestamp on the frame it was handed
+ * (docs/knowledge/output-targets.md 2.4). So what the write loop believes it
+ * wrote is the wrong half to measure: the file is the film, and this reads it.
+ *
+ * A flat walk, not a tree: a recorder writes its Segment and its Clusters with
+ * unknown sizes, and stepping INTO a master instead of over it needs no size.
+ * The recorder here has one track, so every block is one picture.
+ *
+ * It lives out here, and the page gets its source, so that `node --test` can
+ * reach it. Nothing inside the page body can be reached that way.
+ */
+function webmBlockTimes(bytes) {
+  const SEGMENT = 0x18538067, INFO = 0x1549A966, CLUSTER = 0x1F43B675, GROUP = 0xA0;
+  const SCALE = 0x2AD7B1, TIMECODE = 0xE7, SIMPLE = 0xA3, BLOCK = 0xA1;
+  let p = 0, scale = 1000000, cluster = 0;
+  const out = [];
+  const width = (b) => { let n = 1; while (n <= 8 && !(b & (0x80 >> (n - 1)))) n++; return n; };
+  const uint = (at, n) => { let v = 0; for (let i = 0; i < n; i++) v = v * 256 + bytes[at + i]; return v; };
+  while (p < bytes.length) {
+    const idLen = width(bytes[p]);
+    const sizeLen = width(bytes[p + idLen]);
+    if (idLen > 4 || sizeLen > 8) break;
+    const id = uint(p, idLen);
+    // A size of all ones means "unknown", which only a master may carry.
+    const size = uint(p + idLen, sizeLen) - 2 ** (7 * sizeLen);
+    p += idLen + sizeLen;
+    if (id === SEGMENT || id === INFO || id === CLUSTER || id === GROUP) continue;
+    if (size === 2 ** (7 * sizeLen) - 1) break;
+    if (id === SCALE) scale = uint(p, size);
+    else if (id === TIMECODE) cluster = uint(p, size);
+    else if (id === SIMPLE || id === BLOCK) {
+      const at = p + width(bytes[p]);
+      out.push((cluster + ((uint(at, 2) << 16) >> 16)) * scale / 1000000);
+    }
+    p += size;
+  }
+  return out;
+}
+
+/**
+ * Judge a film by what its file holds: every declared frame, evenly spaced.
+ *
+ * A film once passed frames written, frames received AND duration, and still
+ * played in bursts -- thirty frames in forty milliseconds, then a one-second
+ * freeze, ten times over (output-targets.md 2.5). Spacing is the only thing
+ * "fluid" means, so it is asserted here and not merely reported.
+ *
+ * The three bounds sit outside everything a good film measured: median 33.3 to
+ * 33.6 ms against a 33.33 ms budget, p95 37.6, and one max of 65.3.
+ */
+function filmVerdict(expected, hz, times) {
+  const budget = 1000 / hz;
+  const gaps = times.slice(1).map((ms, i) => ms - times[i]).sort((a, b) => a - b);
+  const at = (q) => (gaps.length ? gaps[Math.min(gaps.length - 1, Math.floor(q * gaps.length))] : 0);
+  const v = {
+    frames: times.length, expected, hz,
+    seconds: times.length ? (times[times.length - 1] - times[0] + budget) / 1000 : 0,
+    budgetMs: budget, medianGapMs: at(0.5), p95GapMs: at(0.95), maxGapMs: at(1),
+  };
+  if (v.frames !== expected) {
+    throw new Error(`the file holds ${v.frames} of ${expected} frames, so this film is missing pictures rather than slow. Nothing was saved.`);
+  }
+  if (Math.abs(v.medianGapMs - budget) > budget * 0.1 || v.p95GapMs > budget * 1.5 || v.maxGapMs > budget * 3) {
+    throw new Error(`the frame spacing is uneven: median ${v.medianGapMs.toFixed(1)} ms, p95 ${v.p95GapMs.toFixed(1)} ms, `
+      + `max ${v.maxGapMs.toFixed(1)} ms against a budget of ${budget.toFixed(1)} ms. Every frame is there and the film would still judder. Nothing was saved.`);
+  }
+  return v;
+}
+
 function html(bundle) {
   // Counted, never written out: the word "Five" shipped in the delivered page
   // for as long as there were five examples, and stayed there when there were six.
@@ -202,6 +275,8 @@ function html(bundle) {
       </div>
       <div class="row"><button id="svg">SVG</button></div>
       <div class="note" id="svgnote"></div>
+      <div class="row" style="margin-top:10px"><button id="video">WebM video</button></div>
+      <div class="note" id="videonote"></div>
     </div>
 
     <div class="group">
@@ -269,6 +344,10 @@ function select(name) {
   document.getElementById('svgnote').textContent = can
     ? 'Declared vector: any raster call would throw by name rather than vanish.'
     : 'This piece declares raster only, and means it. Asking for SVG is refused rather than answered with half a picture.';
+  document.getElementById('video').disabled = !current.time;
+  document.getElementById('videonote').textContent = current.time
+    ? render.playheads(current).length + ' frames, encoded one at a time.'
+    : 'A still has no frame list to walk, so there is no film to write.';
   Array.prototype.forEach.call(box.children, function (b) { b.classList.toggle('on', b.dataset.name === name); });
   buildParams();
   resolve();
@@ -451,6 +530,119 @@ document.getElementById('svg').onclick = function () {
   save(new Blob([g.toSVG()], { type: 'image/svg+xml' }), currentName + '-' + solved.seed + '.svg');
 };
 
+${webmBlockTimes.toString()}
+${filmVerdict.toString()}
+
+// THE FRAME-EXACT FILM. It walks playheads(piece) -- the piece's OWN frame list
+// -- and hands each drawn frame to the encoder itself, so the file holds the
+// frames the piece declares rather than the ones the machine managed to paint.
+//
+// Two measurements decide the shape, both in docs/knowledge/output-targets.md
+// 2.3-2.6. A canvas MediaStream is paced by the COMPOSITOR: four routes gave
+// 159, 112, 96 and 92 frames of 300, and every one of those files still played
+// ten seconds. And a timer is clamped to one second in a page that is not in
+// front, which wrote thirty frames at once and then froze. So: no canvas stream
+// and no timer of any kind -- frames the code builds, paced by a MessageChannel
+// round trip, which is a macrotask and is not clamped.
+//
+// It saves nothing itself and judges the FILE, not the loop: filmVerdict reads
+// the blocks the recorder actually wrote, and throws on a missing frame or on
+// uneven spacing. The button saves; a headless check calls this and reads the
+// report.
+async function exportVideo() {
+  // Held here, because the export runs for the length of the film and nothing
+  // stops anyone choosing another piece while it does.
+  var p = current, s = solved, name = currentName;
+  if (!p || !p.time) throw new Error('this piece is a still: there is no frame list to walk');
+  if (typeof MediaStreamTrackGenerator !== 'function') {
+    throw new Error('this browser has no MediaStreamTrackGenerator, and the frame-exact export needs it: a canvas captureStream is paced by the compositor and silently drops most of the film');
+  }
+  var heads = render.playheads(p), hz = p.time.hz;
+  var off = document.createElement('canvas');
+  off.width = p.size.w;
+  off.height = p.size.h;
+  var octx = off.getContext('2d');
+  var track = new MediaStreamTrackGenerator({ kind: 'video' });
+  var writer = track.writable.getWriter();
+  var rec = new MediaRecorder(new MediaStream([track]), { mimeType: 'video/webm;codecs=vp8', videoBitsPerSecond: 8000000 });
+  var chunks = [];
+  rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+  var finished = new Promise(function (r) { rec.onstop = r; });
+  rec.start();
+
+  var mc = new MessageChannel();
+  var macro = function () {
+    return new Promise(function (r) { mc.port1.onmessage = function () { r(); }; mc.port2.postMessage(0); });
+  };
+
+  // RENDER AND ENCODE ARE TWO CALLS, timed apart. On four of five subjects in
+  // the engine this imports from, most of what every instrument had measured
+  // was the encoder (output-targets.md 2.2), and one number for both hides it.
+  function renderFrame(i) {
+    octx.clearRect(0, 0, off.width, off.height);
+    render.drawFrame(octx, p, s, heads[i]);
+  }
+  async function encodeFrame(i) {
+    var f = new VideoFrame(off, { timestamp: Math.round((i * 1000000) / hz) });
+    await writer.write(f);
+    f.close();
+  }
+
+  var t0 = performance.now(), renderMs = 0, encodeMs = 0;
+  try {
+    for (var i = 0; i <= heads.length; i++) {
+      // Paced to the piece's own rate: MediaRecorder stamps blocks by the wall
+      // clock, not by the timestamp on the frame handed to it, so a loop that
+      // is not paced writes a film that plays in a fraction of its length.
+      var due = t0 + (i * 1000) / hz;
+      while (performance.now() < due) await macro();
+      // One lap past the end, so the LAST frame is held for its own interval
+      // like every other. Stopped straight after the last write, the recorder
+      // drops the frame still in its encoder: 19 of 20, three runs of three,
+      // and 20 of 20 from a 17 ms wait up. A count of writes cannot see that;
+      // the count read back from the file did, on the first export.
+      if (i === heads.length) break;
+      var a = performance.now();
+      renderFrame(i);
+      var b = performance.now();
+      await encodeFrame(i);
+      renderMs += b - a;
+      encodeMs += performance.now() - b;
+    }
+  } finally {
+    try { await writer.close(); } catch (e) { /* the track may already be closed */ }
+    rec.stop();
+    await finished;
+  }
+
+  var blob = new Blob(chunks, { type: 'video/webm' });
+  var report = filmVerdict(heads.length, hz, webmBlockTimes(new Uint8Array(await blob.arrayBuffer())));
+  report.bytes = blob.size;
+  report.renderMs = renderMs;
+  report.encodeMs = encodeMs;
+  report.name = name + '-' + s.seed + '.webm';
+  report.blob = blob;
+  return report;
+}
+
+document.getElementById('video').onclick = function () {
+  var b = this;
+  var note = document.getElementById('videonote');
+  b.disabled = true;
+  err.textContent = '';
+  note.textContent = 'encoding ' + render.playheads(current).length + ' frames...';
+  exportVideo().then(function (r) {
+    save(r.blob, r.name);
+    note.textContent = r.frames + ' of ' + r.expected + ' frames, ' + r.seconds.toFixed(2) + ' s, '
+      + Math.round(r.bytes / 1024) + ' kB. Gap between frames: median ' + r.medianGapMs.toFixed(1)
+      + ' ms, p95 ' + r.p95GapMs.toFixed(1) + ' ms, max ' + r.maxGapMs.toFixed(1) + ' ms. Render '
+      + r.renderMs.toFixed(0) + ' ms, encode ' + r.encodeMs.toFixed(0) + ' ms.';
+  }).catch(function (e) {
+    note.textContent = '';
+    err.textContent = String(e.message || e);
+  }).finally(function () { b.disabled = !current.time; });
+};
+
 function save(blob, name) {
   var a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -471,6 +663,7 @@ window.__artifex = {
   piece: piece,
   render: render,
   vector: vector,
+  video: exportVideo,
   examples: EXAMPLES,
   setSeed: function (s) { document.getElementById('seed').value = s; resolve(); },
   setT: function (v) { stop(); t = v; frame(); },
@@ -592,4 +785,4 @@ function bundle() {
   return [RUNTIME].concat(MODULES.map(wrap)).join(String.fromCharCode(10));
 }
 
-module.exports = { modules, checkResolvable, checkParses, bundle, html, MODULES };
+module.exports = { modules, checkResolvable, checkParses, bundle, html, webmBlockTimes, filmVerdict, MODULES };

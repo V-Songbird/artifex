@@ -13,8 +13,8 @@ Node 20 or later. No build step and no dependencies, so a clone runs as it is.
 npm run check
 ```
 
-That is lint and the 162 tests, about ten seconds, and it is the one command to
-run after a change. `npm run negative` is the 81-mutation suite and takes about
+That is lint and the 164 tests, about ten seconds, and it is the one command to
+run after a change. `npm run negative` is the 85-mutation suite and takes about
 seventeen minutes — run it when the change touches a check, a contract key or an
 invariant, not after every edit. [AGENTS.md](AGENTS.md) has the full command
 table.

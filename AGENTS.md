@@ -26,9 +26,9 @@ defect, not a convenience. It has eight testable forms in
 | command | what it does | cost |
 |---|---|---|
 | `npm run check` | lint, then the tests — the one command to run after a change | ~10 s |
-| `npm test` | 162 tests, `node --test` over `tests/*.test.js` | ~10 s |
+| `npm test` | 164 tests, `node --test` over `tests/*.test.js` | ~10 s |
 | `npm run lint` | every declared name must have a reader, every contract key a consumer | instant |
-| `npm run negative` | 81 mutations, each naming the test it must trip | **~17 min** |
+| `npm run negative` | 85 mutations, each naming the test it must trip | **~17 min** |
 | `npm run page` | builds `out/index.html`, one self-contained file | seconds |
 | `npm run seeds` | nine seeds of every example on one page — the only instrument for compositional faults | seconds |
 | `npm run examples` | renders every example that declares `vector` and reports what it reached | seconds |
