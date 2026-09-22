@@ -1,17 +1,13 @@
 // A stroke font: letters that are POLYLINES, so a letter composes with
 // everything else that takes a path.
 //
-// WHY THIS IS NOT IN core/. It is reached by exactly one example. N4 says a
-// module reached by one kind of art is a preset wearing a core module's clothes,
-// so it lives next to the piece that needs it until a second one does.
+// Shared by the specimen, attractor and cover examples and the page bundle.
 //
 // WHY A STROKE FONT AT ALL. `fillText` cannot become geometry, so a vector
 // surface refuses it by name. A piece that wants letters on a plotter, in a
-// print or in an SVG has to have coordinates. It also puts the library's worst
-// documented failure back within reach on purpose: a two-point straight run --
-// the crossbar of a T, the bars of an E -- is what a curvature-based resampler
-// drops, and when it was dropped the page read as a broken font rather than as
-// an error. Every run here is emitted, and the test counts them.
+// print or in an SVG has to have coordinates. Two-point straight runs such as
+// the crossbar of a T are valid strokes. Every run is emitted and tests count
+// them so a resampler cannot silently remove parts of a letter.
 //
 // Units: x in [0, 4], y in [0, 7] with the cap line at 0 and the baseline at 7.
 // Monospaced, because a specimen sheet does not need a metrics table to show

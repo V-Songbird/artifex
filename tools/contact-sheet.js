@@ -3,19 +3,8 @@
 
 // Nine seeds, on one page, at once.
 //
-// WHY THIS EXISTS. SKILL.md names this practice twice as the only instrument
-// that catches the half of the defects no check can see --
-//
-//   "Seed robustness is the real test. ... Render nine and look at all of them."
-//   "the checks catch roughly half the defects. The other half are
-//    compositional, and the only instrument for those is looking at nine seeds
-//    at once."
-//
-// -- and the library shipped no way to do it. `npm run page` shows one seed
-// behind a re-roll button. FOUR of the five authors handed this library built
-// the same throwaway harness to see nine, each of them outside the repository,
-// each of them throwing it away afterwards. The practice the documentation
-// recommends most was the one it supported least.
+// Compare multiple seeds to inspect compositional variation and robustness.
+// Automated checks do not establish whether each composition reads clearly.
 //
 // It renders live on canvases rather than writing SVG, so it works for a piece
 // that declares raster only -- which is exactly the piece you cannot otherwise

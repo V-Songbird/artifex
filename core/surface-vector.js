@@ -1,12 +1,5 @@
 // A vector surface: a Canvas2D-shaped drawing target that emits SVG.
 //
-// WHY THIS EXISTS. The engine this project imports from can reach a screen and
-// nothing else -- every output path in it terminates at canvas.toDataURL. A
-// repo-wide search for svg/plotter/hpgl/vpype in four months of work returns UI
-// glyphs, one MIME entry, and three places documenting the absence. The data was
-// always there (paths, contours and the stroke font all hand back polylines);
-// the emitter was not.
-//
 // WHY IT IS SHAPED LIKE CANVAS2D. Because the platform already has a drawing
 // vocabulary and a piece written against it runs unchanged on a screen, in a
 // frame sequence, at print scale and on a plotter. Inventing a second vocabulary
@@ -14,10 +7,8 @@
 //
 // WHAT IT REFUSES, AND WHY BY NAME. Raster operations cannot become paths. A
 // vector surface that quietly skipped them would hand back a file missing half
-// the picture -- which is the failure this project has already paid for once,
-// when a straight run fell below a station minimum and a letter lost its
-// crossbar with no error anywhere. So every raster operation throws, naming
-// itself and saying what to do instead.
+// the picture. Every raster operation therefore throws, naming itself and
+// saying what to do instead.
 //
 // THE ONE LIMIT WORTH STATING. Coordinates are baked into the current transform,
 // which is exact for lines and Béziers (affine-invariant) and for arcs (they are

@@ -1,17 +1,5 @@
 // Colour, in the light it is actually mixed in.
 //
-// WHY THIS EXISTS. The library documented the bug and then shipped nothing that
-// avoids it. SKILL.md's trap list says
-//
-//   "Display values are not linear light. round(v*255) with no sRGB encode
-//    renders a table fitted in linear light a stop dark."
-//
-// and there was no encoder, no mix, no parse, no luminance anywhere in `core/`.
-// Four of five authors handed the library needed to blend two colours; three of
-// them wrote the naive version -- the one the trap list warns about -- because
-// it is what you write when nothing is there. The fourth wrote the correct one
-// and said so in their report.
-//
 // A midpoint mixed in display space is darker than the light between the two
 // colours actually is. That is not a preference, it is the difference between
 // averaging numbers and averaging photons, and it shows most on the mixes

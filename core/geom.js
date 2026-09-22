@@ -1,42 +1,5 @@
-// Geometry on polylines. The operations every author writes and nobody ships.
-//
-// WHY THIS EXISTS, AND WHY THE EVIDENCE IS NOT OUR OWN EXAMPLES. N4 says a core
-// module reached by one kind of art is a preset wearing a core module's clothes,
-// and it derives "one kind of art" from the five examples in this repository --
-// which were written to demonstrate five idioms and therefore reach exactly as
-// far as we had already imagined. That population is too narrow to license a
-// module and too narrow to refuse one.
-//
-// The population that licensed this file:
-// a 1.1 MB body of finished work by someone who has never seen this project
-// defines, before it draws anything at all, `resample chaikin bbox pip centroid
-// blob rotPts arcPts polyPts starPts ribbon`. Five field-test authors handed
-// this library cold each wrote a subset of the same list. And
-// the field-test findings have carried "offsetting, intersections,
-// point-in-polygon, area" as an open gap since the field test.
-//
-// Three independent populations, one list. That is the evidence.
-//
-// WHAT IS NOT HERE. Boolean operations and true polygon offsetting: both need a
-// robust intersection kernel, both are large, and neither has been asked for by
-// any of the three populations. When one asks, it gets written properly rather
-// than approximated here.
-//
-// ONE HAS NOW ASKED. `Code as Creative Medium` (Levin & Brain, MIT Press 2021)
-// collects the assignments of hundreds of educators across thirty years, and its
-// Geometry exercises name a polyline offset by a fixed distance, the
-// intersection of two line segments, and the shortest distance from a point to a
-// line. That is a fourth population, and the third to name offsetting. The
-// paragraph above stands as the standard -- written properly, not approximated
-// -- but it is no longer waiting.
-//
-// WHAT WAS CUT, AND WHY. A first pass also shipped `area`, `polyPts`,
-// `starPts`, `arcPts` and `rotPts`. Nothing outside the tests reached any of
-// them, and two of the five -- the n-gon and the star -- are `ring` with a
-// constant radius and `ring` with an alternating one, which is one capability
-// wearing three names. They were deleted rather than kept for later. This
-// project has already paid for shipping code nothing reads; see commit d92a703.
-// When a piece needs an arc, it arrives with the piece that needs it.
+// Geometry on polylines: measurement, resampling, smoothing and construction.
+// Boolean operations and general polygon offsetting are not implemented.
 //
 // Nothing here knows what kind of art a piece makes.
 
@@ -282,8 +245,8 @@ function chain(segs) {
  * A closed irregular ring: a circle whose radius is modulated by a function of
  * the angle. `radiusAt(angle, i, n)` returns the radius for that spoke.
  *
- * The generic form of the thing five authors wrote as `blob`. It is a ring
- * constructor, not a look -- hand it a noise field and it is an organic blob,
+ * This constructor takes its shape from the radius function: a noise field
+ * makes an organic blob,
  * hand it a step function and it is a gear, hand it a constant and it is a
  * circle drawn the slow way.
  */

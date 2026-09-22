@@ -1,1 +1,1 @@
-@AGENTS.md
+@docs/knowledge/development.md

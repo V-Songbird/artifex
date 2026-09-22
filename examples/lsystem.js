@@ -32,11 +32,8 @@ const M = 95;
 
 // THE GRAMMAR DOES NOT KNOW HOW BIG THE PAPER IS. Run lengths are axiom units,
 // the axiom square is one unit on a side, and the finished ring is fitted to
-// the sheet at the very end. Sizing the axiom to the sheet instead was the
-// first version of this file, and an outward cape at the first pass is a third
-// of the axiom wide: the form ran off the edge and the frame cropped it
-// wherever the productions happened to fall, which is the frame doing the
-// composition by accident.
+// the sheet at the very end. An outward cape can extend a third of the axiom
+// width, so fitting before expansion would crop the finished form.
 const MIN_RUN = 0.0035;   // a production makes five of these; below it, stop
 const ROUND = 2.6;        // how hard the corners are cut, in paper pixels
 const SPACING = 1.2;      // how densely the finished line is described

@@ -13,12 +13,9 @@
 //   Delete the dead. Prove the unproven -- and prefer proving it when its
 //   absence would make two outputs disagree.
 //
-// The second case is not hypothetical. This scan's first run found five members
-// of the vector surface that had never been exercised, and deleting them would
-// have been wrong: the surface is Canvas2D-shaped so one `draw` reaches a
-// screen, a print and a plotter unchanged, and a method that exists on a canvas
-// and is missing here throws a bare TypeError on export from a piece that
-// worked live. All five were correct. What they lacked was proof.
+// The vector surface is Canvas2D-shaped so one `draw` can reach a screen,
+// print and plotter. An unused surface method may need a regression test:
+// removing it could break a piece that uses the same method on a canvas.
 //
 // No dependencies, no build, no browser, no art. It runs before anything else.
 
@@ -44,14 +41,9 @@ function sources() {
 /**
  * A second pass, for a fault the first cannot see.
  *
- * `time.hold` was accepted by the contract, asserted by a test, and read by
- * NOTHING -- frameT, frameCount, playheads and render.js all ignored it, so
- * declaring it got you no hold, silently. That is the disease this project
- * cured for `params` and then reproduced inside `time` two commits later.
- *
- * The first pass could not catch it because `hold` was never a declared NAME,
- * only a string in a validator. So: every key the contract accepts must be
- * mentioned somewhere that is not the declaration itself.
+ * A contract key can appear only as a string in a validator, without a named
+ * declaration. Every accepted key must also occur in code that consumes it;
+ * otherwise a declared option could have no effect.
  *
  * It is coarse -- a key whose name collides with a common identifier passes for
  * the wrong reason -- but it catches a key nothing else mentions, which is
@@ -69,10 +61,8 @@ function unreadContractKeys() {
   if (known) for (const m of known[1].matchAll(/'([^']+)'/g)) keys.push(`time.${m[1]}`);
 
   // Everything that could consume a key: the rest of piece.js, plus the other
-  // core modules -- WITH COMMENTS STRIPPED. The first version matched raw text
-  // and passed `hold` because the word appears in a sentence in rand.js. A
-  // check satisfied by prose is a check that cannot fail, which is the thing
-  // this tool exists to find.
+  // core modules -- WITH COMMENTS STRIPPED. A mention in prose does not show
+  // that runtime code consumes the key.
   let consumers = src.slice(cut);
   for (const f of fs.readdirSync(path.join(ROOT, 'core'))) {
     if (f.endsWith('.js') && f !== 'piece.js') consumers += fs.readFileSync(path.join(ROOT, 'core', f), 'utf8');
@@ -84,9 +74,8 @@ function unreadContractKeys() {
   return keys
     .filter((k) => {
       const name = k.replace('time.', '');
-      // A template literal turns \b into a BACKSPACE, not a word boundary, so
-      // the first version of this line flagged every key at once having
-      // previously flagged none. String.raw keeps the escape as written.
+      // A template literal turns \b into a BACKSPACE, not a word boundary.
+      // String.raw keeps the escape as written.
       return !new RegExp(String.raw`\b` + name + String.raw`\b`).test(consumers);
     })
     .map((k) => ({ file: 'core/piece.js', name: k, kind: 'contract key, no consumer' }));

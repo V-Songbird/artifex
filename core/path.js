@@ -1,16 +1,5 @@
-// Polylines, and the one operation the design box never had.
-//
-// WHY THIS EXISTS. Every example in this library carries its own copy of the
-// same four lines -- beginPath, moveTo the first point, lineTo the rest,
-// stroke -- and so did every piece written by the five authors handed the
-// library from outside. It is the single most duplicated thing in the project.
-//
-// And `size` is the contract's central object, described as "the DESIGN BOX. It
-// never changes", with no operation on it at all. Any piece that is a WINDOW
-// onto something larger -- a tiling, a map, a crop, a zoom -- needs to clip on
-// line one. Two authors wrote Liang-Barsky and Sutherland-Hodgman by hand; one
-// of them only because the vector surface's own `clip()` was unusable from an
-// example at the time.
+// Shared polyline drawing and rectangular clipping operations.
+// Use clipping when the design box is a window onto a larger tiling, map or crop.
 //
 // Nothing here knows what kind of art a piece makes.
 
@@ -20,9 +9,8 @@
  * Draw a polyline. Does NOT paint: the caller decides fill, stroke or both,
  * because a shape and its treatment are separate decisions.
  *
- * `close` joins the last point to the first. A two-point run is a polyline like
- * any other and is never filtered by length -- a letter lost its crossbar that
- * way once, and nothing threw.
+ * `close` joins the last point to the first. Two-point runs are preserved;
+ * filtering them by length would remove valid strokes such as letter crossbars.
  */
 function poly(g, pts, close = false) {
   if (!pts || pts.length === 0) return g;

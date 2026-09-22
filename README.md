@@ -1,251 +1,107 @@
 # Artifex
 
-**Programmatic art for AI agents.** Write one piece; render it to an
-interactive page, a video, a print-resolution still or a plotter-ready SVG.
-Check it with tests that can actually fail.
+Artifex is a JavaScript library and agent skill for making art from code. A piece can produce a page, PNG, WebM, or supported SVG.
 
-Artifex is a JavaScript library and the agent skill that teaches an AI to use
-it. Use it for generative, algorithmic or procedural art: a poster, a pattern,
-a type specimen, a data piece, an abstract composition, an animated or growing
-piece, or an SVG for a pen plotter. It is not for chart libraries, dashboards,
-UI mockups or image generation from a prompt.
-
-## The one property everything rests on
-
-> The seed and the playhead are the only inputs, and the same pair always
-> produces the same frame — forwards, backwards, or after a scrub.
-
-That is what makes an agent's work reviewable, a video reproducible rather than
-recorded, a print re-renderable at any size, and a plotter file trustworthy.
-
-## The governing rule
-
-**Artifex assumes nothing about what art gets made with it.**
-
-This is not a style guideline. It is a structural constraint, and it outranks
-convenience, elegance and performance. A previous engine
-drew one kind of picture seven times. Its default line family ended up named
-`botanic`, its inking term assumed a contour bounded a volume, and the first
-hard-edged piece anyone tried broke in seven places. Its own conclusion:
-
-> "They are the shape of a library built by making one kind of picture seven
-> times, **and they would not have appeared from reading the code**."
-
-## Requirements
-
-- Node 20 or later. `.nvmrc` pins 22.
-- Nothing else: no dependencies, no build step. Modules are CommonJS.
-- To use the skill: Claude Code, Codex or Antigravity.
-
-## Install
-
-Clone the repository, then confirm it works from its root:
-
-```bash
-npm run check
-```
-
-Expected output, trimmed:
-
-```text
-unread-name scan: 399 names across 29 files in core, examples, tests
-every declared name has a reader, and every contract key has a consumer
-# tests 162
-# pass 162
-# fail 0
-```
-
-The package is private, so there is no `npm install artifex`. Every `require`
-path below is relative to the repository root.
+Use it for seeded compositions, animation, and vector artwork. It does not generate images from text or judge artistic quality.
 
 ## Quick start
 
-Save this as `first.js` in the repository root:
+Requires Node.js 20 or later; [`.nvmrc`](.nvmrc) pins the development version. From a local checkout, run:
 
-```js
-const { renderVector } = require('./core/render.js');
-
-const r = renderVector({
-  name: 'first',
-  size: { w: 400, h: 300 },          // the DESIGN BOX. It never changes.
-  outputs: ['raster', 'vector'],     // 'vector' is a claim, and it is checked
-  draw(g) {
-    g.strokeStyle = '#1b1b1b';
-    for (let i = 0; i < 24; i++) {
-      g.beginPath();
-      g.arc(200, 150, 8 + i * 5, i * 0.3, i * 0.3 + 2.2);
-      g.stroke();
-    }
-  },
-}, { seed: 1 });
-
-console.log(r.marks, 'marks');
-require('fs').writeFileSync('out.svg', r.svg);
+```shell
+npm run page
 ```
 
-```bash
-node first.js
-```
-
-Expected output:
+Example output; size and module count depend on the checkout:
 
 ```text
-24 marks
+out\index.html  237.4 kB  21 modules, no dependencies
 ```
 
-It also writes `out.svg`, 24 arcs, next to `first.js`. If `draw` calls a raster
-operation such as `fillText`, the vector surface throws and names the operation.
-That is the design.
+The command writes `out/index.html` and prints its size and bundled module count. Open that file in a browser to select an example and export artwork.
 
-Then read a real piece: `examples/contours.js`. Eleven ship, and none is the
-starter.
+No dependency installation, build toolchain, account, or network service is required. Video export needs browser APIs described in [output formats](docs/knowledge/output-formats.md).
 
-## Use it as a skill
+## Use the agent skill
 
-Each host loads the skill on its own when a request matches it, for example
-"make me a seeded poster I can send to a pen plotter". The skill finds the
-library from its own location, so it works from a clone and from an installed
-copy.
+The plugin bundles the library with [the Artifex skill](skills/artifex/SKILL.md). It guides an agent through authoring a piece, rendering it, and reviewing multiple seeds.
 
-### Install the plugin
+Install from a clean local checkout intended for distribution. Local plugin installations can copy files beyond those tracked by Git.
 
-An install copies the whole library next to the skill, so it works from any
-project. All three routes were run on 2026-09-20 against throwaway config homes.
+With Codex CLI installed, run from that checkout:
 
-**Claude Code.** The catalog is `.claude-plugin/marketplace.json`:
-
-```bash
-claude plugin marketplace add V-Songbird/artifex
-```
-
-```bash
-claude plugin install artifex@artifex
-```
-
-**Codex.** The catalog is `.agents/plugins/marketplace.json`:
-
-```bash
-codex plugin marketplace add V-Songbird/artifex
-```
-
-```bash
+```shell
+codex plugin marketplace add .
 codex plugin add artifex@artifex
 ```
 
-**Antigravity.** It installs from a folder, so clone first:
+For Claude Code, use its installed CLI instead:
 
-```bash
-agy plugin install .
+```shell
+claude plugin marketplace add .
+claude plugin install artifex@artifex
 ```
 
-Until the GitHub repository exists, give the first two a path to a clone instead
-of `V-Songbird/artifex`. Install from a clean clone: a local path copies
-git-ignored files too.
+For an installed Antigravity CLI, run `agy plugin install .` from the same checkout.
 
-### Use it from a clone
+Ask your host: “Use the Artifex skill to make a seeded SVG poster and render nine variations.”
+The expected result is piece source and rendered artwork for review; the skill is guidance, not a standalone renderer.
 
-**Claude Code.** Load the plugin for one session:
+The repository contains manifests for these hosts. Installation and skill discovery depend on the installed client; manifest consistency alone does not establish host compatibility.
 
-```bash
-claude --plugin-dir .
+## Render and compare
+
+From the checkout root, render all registered vector examples:
+
+```shell
+npm run examples
 ```
 
-Then call it directly with `/artifex:artifex`.
+This writes SVG files under `out/` and reports raster-only examples as skipped. Compare one example across nine seeds:
 
-**Codex and Antigravity.** Both read project skills from `.agents/skills/`.
-Copy the skill there:
-
-```bash
-mkdir -p .agents/skills
-cp -r skills/artifex .agents/skills/
+```shell
+npm run seeds -- drift 9 0.5
 ```
 
-That copy is git-ignored here. The source stays `skills/artifex/`.
+Open `out/drift-seeds.html` to inspect seeds 1 through 9 at playhead 0.5. Names come from [the example registry](examples/index.js).
 
-In Codex, call it directly with `$artifex`. Antigravity has no direct call and
-picks the skill by its description.
+The library has no required configuration file or environment variables. Piece definitions set dimensions, seed, parameters, outputs, and timeline.
 
-Check the manifests with `claude plugin validate .`, which reads the catalog,
-`claude plugin validate .claude-plugin/plugin.json` and `agy plugin validate .`.
-All pass. The second adds one warning: the root `CLAUDE.md` is not shipped as
-plugin context. That is intended, because that file serves work on this
-repository. Antigravity's `plugin@marketplace` route is undocumented and has no
-catalog here.
+## Write a piece
 
-What changes: the agent writes pieces against the contract in `core/piece.js`,
-keeps randomness addressed rather than sequential, and runs `npm run check`
-before it reports. The skill text is
-[skills/artifex/SKILL.md](skills/artifex/SKILL.md).
+The [piece API](docs/apis/piece-api.md) provides a copyable example that writes one horizontal stroke to `out/first.svg`.
+Use `validate` and `solve` to build state, `drawFrame` for a canvas surface, or `renderVector` for SVG.
 
-## Commands
+For fixed source, data, parameters, rendering configuration, and execution environment, repeated seed/playhead pairs should reproduce the same frame.
+Arbitrary drawing code must uphold that requirement; cross-browser pixel equality is not guaranteed.
 
-```bash
-npm run check       # lint, then the tests. The one command to run after a change
-npm test            # 164 tests
-npm run negative    # break it on purpose; 85 caught, 0 escaped, 0 misnamed. About 17 minutes
-npm run lint        # every declared name must have a reader, every contract key a consumer
-npm run examples    # render every example that declares vector, and report what it reached
-npm run page        # build out/index.html, one self-contained file. Open it yourself
-npm run seeds       # nine seeds of every example on one page, and LOOK
-npm run bench       # generation-speed measurements
+## Output limits
+
+SVG requires a piece that declares vector support and uses supported drawing operations. Raster-only pieces are valid.
+WebM export requires an animated piece and compatible browser APIs. See [format behavior and export checks](docs/knowledge/output-formats.md).
+
+## Troubleshooting
+
+If the seed tool reports `no example called`, use a name from [the registry](examples/index.js), not a source file path.
+An SVG error naming an unsupported operation means the drawing needs a supported vector operation or raster output.
+
+## Development
+
+From the repository root:
+
+```shell
+npm run check
 ```
 
-## What exists
-
-| | |
-|---|---|
-| `core/piece.js` | the contract: one source of truth, unknown keys refused by name, a still is a legal piece, declared parameters that must move the output |
-| `core/rand.js` | the stochastic source, **addressed, never sequential**, plus smooth fields built on it |
-| `core/num.js` | the arithmetic every piece was writing for itself. Five outside authors all wrote `clamp` |
-| `core/colour.js` | mixing **in linear light**, luminance, contrast, and a readable ink measured rather than guessed |
-| `core/path.js` | polylines, and the first operation the design box ever had: clip to it |
-| `core/geom.js` | polyline geometry: length, bbox, centroid, point-in-polygon, resample, chaikin, `chain` (segments to as few pen-downs as possible), ring, ribbon |
-| `core/surface-vector.js` | a Canvas2D-shaped surface that emits SVG, and refuses every raster operation **by name** |
-| `core/render.js` | one frame to any surface, at any scale, with the playhead quantised to the drawn-frame grid |
-| `examples/` | eleven pieces spanning idioms that break each other |
-| `tools/build-page.js` | one self-contained HTML file: the live backend, the raster backend at any scale, a transport, and a frame-exact WebM export judged by what its file holds |
-| `tools/lint-unread.js` | every declared name must have a reader, every contract key a consumer. No build, no browser, no art |
-| `tools/contact-sheet.js` | nine seeds on one page. The only instrument for compositional faults |
-| `tests/` | 164 tests |
-| `tests/negative.js` | 85 mutations, each naming the test it must trip. A suite that has never been red is not evidence |
-
-| example | idiom | time | declares |
-|---|---|---|---|
-| `drift` | organic, painterly | 240 frames | **raster only**, and means it |
-| `specimen` | hard-edged, typographic | a still | raster + vector |
-| `readout` | data-driven. **The seed does not decide what it says** | 144 frames | raster + vector |
-| `partition` | recursive subdivision, made of area | a still | raster + vector |
-| `contours` | plotter-native: one pen, one weight, no fills | a still | raster + vector |
-| `packing` | closed forms grown until they touch. Composition decided by **refusal** | a still | raster + vector |
-| `pattern` | one motif, repeated by a wallpaper group. The structure is a **group** | a still | raster + vector |
-| `lsystem` | a grammar and a turtle. It computes a **word**, not coordinates | a still | raster + vector |
-| `attractor` | a chaotic orbit printed as a density. **Arithmetic only** | a still | **raster only** |
-| `cover` | a magazine front cover. The type is set, and the picture grows around it | a still | raster + vector |
-| `settle` | forces finding their own arrangement. **State that evolves**, still scrubbable | 144 frames | raster + vector |
-
-Not yet built: the check suite as a shipped tool, and the
-mathematics import.
-
-## Configuration
-
-Artifex has no configuration file and no environment variables. A piece
-declares its own `params`, and the render call takes `seed` and `scale`.
-
-## Documentation
-
-This file is the documentation for using the library, and
-[skills/artifex/SKILL.md](skills/artifex/SKILL.md) is what an agent reads. Agents
-working on the repository itself start at [AGENTS.md](AGENTS.md), the repository map.
-[CONTRIBUTING.md](CONTRIBUTING.md) has the checks to run and the documentation
-conventions.
+This runs lint and the Node test suite. See [contributing](docs/knowledge/contributing.md) for change guidance and [development](docs/knowledge/development.md) for all commands.
 
 ## Support
 
-There is no public issue tracker yet. Report bugs and questions to the author,
-Victor Villegas, at the address in the [plugin manifest](plugin.json).
-Include the seed, the piece name and the output of `npm run check`. Report a
-vulnerability to the same address, not in public.
+- Learn the contract: [piece API](docs/apis/piece-api.md).
+- Change the project: [contributing](docs/knowledge/contributing.md).
+- Report a reproducible bug or ask a usage question: use [GitHub issues](https://github.com/V-Songbird/artifex/issues).
+- Report a vulnerability privately through the [security policy](docs/security.md).
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+[MIT](LICENSE).

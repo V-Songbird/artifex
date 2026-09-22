@@ -18,9 +18,8 @@ const { VectorSurface } = require('./surface-vector.js');
 /**
  * Draw one frame onto any Canvas2D-shaped surface.
  *
- * `scale` is device units per design unit. It is NOT capped: a print needs 8x or
- * more, and the engine this imports from capped it at 2 inside its published
- * hook, which put print resolution out of reach of every caller.
+ * `scale` is device units per design unit. Any positive finite scale is valid;
+ * the destination surface determines the available output resolution.
  *
  * Note for authors: do not multiply every stochastic frequency by `scale`.
  * Macro composition must be invariant under resolution; only micro-detail
@@ -79,10 +78,8 @@ function renderVector(piece, opt = {}) {
  * A video export walks exactly this list: the frames are a property of the
  * piece, never of how fast the machine happened to be.
  *
- * It walks the lattice directly rather than sampling it. Sampling i/(n-1) and
- * letting frameT round is what dropped the middle frame of every timeline in
- * this library for as long as the function existed -- n samples over a lattice
- * that had n+1 positions, with Math.round quietly choosing which one to lose.
+ * Walk the shared frame lattice directly so export visits each drawn frame
+ * once, using the same loop and endpoint conventions as drawing.
  */
 function playheads(piece) {
   const p = validate(piece);

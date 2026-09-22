@@ -1,12 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// The benchmark. A speed claim is a number or it is nothing.
-//
-// The objective: generation speed and render cost are two of
-// the four axes this project is judged on, and neither can be inferred from a
-// file size, a module count or a build that succeeded. So they are measured
-// here, the same way every time, and a change that claims to be faster runs it.
+// Measure generation speed and render cost over a reproducible set of seeds.
 //
 // WHAT IS MEASURED, AND WHY THOSE THREE.
 //

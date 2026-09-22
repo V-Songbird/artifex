@@ -165,14 +165,10 @@ function gradDot(R, name, i, j, dx, dy) {
  * WHY IT EXISTS BESIDE `noise2`. `noise2` is VALUE noise: the random number sits
  * AT the lattice point, and any fade that is flat at both ends carries it in
  * between. So across every one of its own lattice lines the field arrives flat
- * from both sides and the derivative there is zero -- measured on this machine,
- * median |d/dx| 3.8e-5 on x = integer against 3.6e-1 elsewhere, four orders
- * down. No choice of fade repairs that, because the flatness is the
- * construction. Here the random value IS a direction at the lattice point and
+ * from both sides and the derivative there is zero. No fade that is flat at
+ * both ends repairs that. Here the random value IS a direction at the lattice point and
  * the offset to the sample is what it acts on, so the field is moving as it
- * crosses a lattice line and that line is an ordinary place to be: 3.3e-1
- * against 2.0e-1, measured the same way -- if anything STEEPER there, which is
- * what a gradient sitting at the lattice point should give. Anything that takes
+ * crosses a lattice line instead of being forced flat there. Anything that takes
  * a gradient, a curl or a hatch angle out of a field wants this one.
  *
  * The fade is Perlin's quintic, whose value and first AND second derivatives all
@@ -223,18 +219,13 @@ function octaveNames(name, octaves) {
 //
 // With an exact doubling every octave's lattice lines land on the same
 // integers, and `noise2` is value noise, whose derivative across its own
-// lattice lines is zero. Four such octaves therefore agree with each other
-// about where to be flat, and leave a grid of lines on which the whole field's
-// gradient vanishes: measured on this machine, median |d/dx| 1.8e-4 on
-// x = integer against 2.3e-1 elsewhere, a ratio of 7.9e-4. At 2.17 the octaves
-// no longer share a lattice and the same measurement gives 2.8e-1 against
-// 3.3e-1, a ratio of 0.83 -- an integer line stops being a special place.
+// lattice lines is zero. Those octaves share a grid of zero-gradient lines.
+// At 2.17 the octaves no longer share that integer lattice.
 // Texturing & Modeling (3rd ed., p. 88) multiplies by 2.17 for exactly this
 // reason.
 //
-// This changes every picture that used fbm, which is why it is a decision and
-// not a tidy-up. tests/rand.test.js holds the ratio open and tests/negative.js
-// breaks it back to 2 on purpose.
+// Changing this ratio changes seeded output. tests/rand.test.js compares lattice
+// and off-lattice derivatives; tests/negative.js restores 2 to check that guard.
 const LACUNARITY = 2.17;
 
 /**

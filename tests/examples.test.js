@@ -35,19 +35,9 @@ function grab(fn) {
 // the difference between a line arriving and a finished line fading in lives
 // entirely in the style.
 //
-// IT IMPLEMENTS THE WHOLE SURFACE, AND A TEST BELOW ENFORCES THAT. It used to
-// implement a third of it, and because it is what `npm test` hands a piece, it
-// was the real drawing API: anything it lacked failed the suite with a bare
-// TypeError. Five independent authors writing five unrelated pieces all
-// discovered this and all redesigned their work around it -- no curves, no
-// clip, no gradients, no transform stack. One of them lost Beziers, clipping
-// and gradients and called the result "materially cruder". `roundRect` was the
-// sharpest case: core/surface-vector.js carries a comment saying it exists
-// "because hard-edged graphic work has no other way to make one", and using it
-// failed the suite.
-//
-// A measuring instrument that silently narrows what can be measured is worse
-// than no instrument. This is the fix, and the drift guard is what keeps it.
+// It implements the whole drawing surface, and a test below enforces that.
+// Missing recorder methods must not prevent pieces from using supported curves,
+// clipping, gradients or transforms.
 // ---------------------------------------------------------------------------
 class Recorder {
   constructor() {
@@ -258,9 +248,7 @@ function record(raw, seed, t, params) {
 // ---------------------------------------------------------------------------
 
 test('THE RECORDER IMPLEMENTS THE WHOLE SURFACE, so the suite cannot narrow the art', () => {
-  // The drift guard. Without it the harness fell to a third of the surface and
-  // became the real drawing API by accident -- five independent authors each
-  // discovered it by crashing into it, and each quietly made smaller work.
+  // Keep the recorder vocabulary aligned with the supported drawing surface.
   //
   // The exclusions are the members no draw() ever calls -- the ones a CALLER
   // uses to configure the surface or to read its result. `toSVG` reads the
@@ -461,8 +449,7 @@ test('EVERY DECLARED PARAMETER SAYS WHAT IT DOES, in its own words', () => {
   // at risk here -- the risk is the field being filled to get past the
   // validator. Two ways that happens, and both are checked: restating the
   // parameter's own name, and pasting one knob's line onto the next. Either
-  // leaves a declaration that passes every check and tells a reader nothing,
-  // which is the exact disease this project catalogued 23 cases of.
+  // leaves metadata that validates structurally but does not explain the knob.
   let checked = 0;
   for (const n of NAMES) {
     const p = validate(EXAMPLES[n]);

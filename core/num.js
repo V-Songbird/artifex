@@ -1,11 +1,4 @@
-// The arithmetic every piece writes for itself.
-//
-// WHY THIS EXISTS. Five authors were handed this library and asked to make five
-// unrelated pieces. All five wrote `clamp`. Four wrote a lerp. One wrote
-// `Math.max(0, Math.min(1, ...))` inline ten times in a single draw function.
-// `drift.js` declared `clamp` at the bottom of its own file and `partition.js`
-// inlined the same expression, so the repository had produced the same three
-// lines twice before anyone from outside ever looked at it.
+// Shared scalar arithmetic and distribution helpers.
 //
 // Nothing here knows what kind of art a piece makes, and nothing here has a
 // default that only makes sense for one kind. That is the bar for `core/`.
@@ -21,7 +14,7 @@ function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
-/** Hold v inside [0, 1]. The commonest case, and the one written ten times. */
+/** Hold v inside [0, 1]. */
 function clamp01(v) {
   return v < 0 ? 0 : v > 1 ? 1 : v;
 }
@@ -78,10 +71,8 @@ function chance(p, u) {
 /**
  * A triangular draw in [0, 1), centred on 0.5, from TWO flat values.
  *
- * Two, not three, and the number matters. Averaging n uniforms shrinks the
- * spread as 1/sqrt(n): an author reaching for a centred distribution averaged
- * three and got nine seeds that came out as nine siblings, because the extremes
- * had been averaged away. Two is the widest draw that still has a centre.
+ * Averaging n independent uniforms shrinks the standard deviation as 1/sqrt(n).
+ * Two values give a triangular distribution; additional values narrow it.
  */
 function centred(u, v) {
   return (u + v) / 2;

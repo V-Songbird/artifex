@@ -393,7 +393,7 @@ module.exports = {
   },
 };
 
-/** Two colours and a position between them. The core has no colour arithmetic. */
+/** Blend two hex colours in display space, with the position clamped to [0, 1]. */
 function mix(a, b, u) {
   const A = parseInt(a.slice(1), 16);
   const B = parseInt(b.slice(1), 16);

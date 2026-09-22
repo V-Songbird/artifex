@@ -37,9 +37,7 @@ for (const [name, raw] of Object.entries(EXAMPLES)) {
     fs.writeFileSync(path.join(OUT, `${name}.svg`), r.svg);
     row.reached = `${r.marks} marks, ${(r.svg.length / 1024).toFixed(0)} kB svg, ${Date.now() - t1}ms`;
   } else {
-    // Stated, not skipped. A capability-gated step that says nothing reads as a
-    // pass, and a suite that silently passes on absence is how a check over
-    // cached layers passed on four subjects that had none.
+    // Report a capability skip explicitly so it cannot be mistaken for a render.
     row.reached = 'SKIP: declares raster only, so there is no vector file to write';
   }
   rows.push(row);

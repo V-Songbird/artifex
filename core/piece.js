@@ -1,16 +1,7 @@
 // The piece contract. ONE source of truth.
 //
-// The engine this project imports from stated its contract in four places that
-// disagreed -- a prose paragraph said "four things", the runtime header said
-// twelve required and thirteen optional, the suite required fifteen members of a
-// thirty-three member object, and the builder enforced two of them with a regex.
-// All four were correct about different readers, and an author could satisfy
-// every one of them and still be wrong in a way no check could see. One subject
-// shipped for months carrying a style block with the wrong keys.
-//
-// So: this file is the contract. The validator reads FIELDS, the documentation
-// quotes FIELDS, and nothing else states it. Unknown keys are refused, because a
-// misspelled key is the exact fault that got through last time.
+// FIELDS defines the schema consumed by the validator and documented by the
+// skill. Unknown keys are refused so misspelled options cannot pass silently.
 //
 // Nothing here knows what kind of art a piece makes. That is deliberate and it
 // is the project's governing rule.
@@ -93,10 +84,7 @@ const FIELDS = {
     required: false,
     default: () => null,
     check: (v) => {
-      // A STILL IS A LEGAL PIECE. A poster, a plotter drawing and a data plate
-      // have no timeline, and the engine this imports from made one mandatory --
-      // its suite failed any piece whose last frame did not carry more marks
-      // than its first.
+      // Stills are valid pieces and do not need a timeline or increasing marks.
       if (v === null) return null;
       if (!v || typeof v !== 'object') return 'must be null (a still) or { duration, hz, loop? }';
       if (!Number.isFinite(v.duration) || v.duration <= 0) return 'time.duration must be a positive finite number of seconds';
@@ -147,12 +135,8 @@ const FIELDS = {
         }
         if (!(p.min < p.max)) return `params.${k}: min must be less than max`;
         if (p.value < p.min || p.value > p.max) return `params.${k}.value must lie in [min, max]`;
-        // WHY `meaning` IS REQUIRED AND NOT OPTIONAL. Before this, a parameter
-        // was three numbers and a source comment, and a comment is readable by
-        // exactly one kind of reader. An agent handed a piece could sweep a knob
-        // but could not tell what the knob was for, so it could not tell a
-        // worthwhile sweep from a pointless one. Optional would have meant the
-        // six examples filled it in and nothing else ever did.
+        // Require a visual meaning so parameter controls and agent callers can
+        // explain what a sweep changes without reading the piece source.
         if (typeof p.meaning !== 'string' || !p.meaning.trim()) {
           return `params.${k}.meaning must be a non-empty string saying what this knob does to the picture`;
         }
@@ -215,15 +199,9 @@ function frameCount(piece) {
 /**
  * The denominator of the drawn-frame lattice.
  *
- * THIS IS THE FIX FOR A REAL BUG. These functions used to disagree: frameCount
- * rounded `duration * hz`, frameT divided by the UNROUNDED product, and
- * playheads walked i/(n-1) over a lattice that had n+1 positions. The result
- * was that a video export silently dropped exactly one frame -- always the
- * middle one -- for every timeline in the library. On a piece with a musical
- * structure the lost frame was the downbeat where the phrase came round again.
- *
- * The root cause was not arithmetic. It was that the contract could not say
- * whether a piece LOOPS, so there was no way to know which lattice was meant.
+ * Drawing and export share the rounded frame count and loop convention.
+ * Looping timelines exclude the repeated endpoint; non-looping timelines
+ * include both endpoints. A single frame uses denominator one.
  */
 function frameDen(piece) {
   const n = frameCount(piece);
@@ -256,10 +234,8 @@ function frameT(piece, t) {
 /**
  * Everything a piece may know about where it is in its own timeline.
  *
- * `draw` used to receive the playhead and nothing else, so any piece with a
- * fixed timestep had to restate its own `duration` and `hz` as module constants
- * to recover a frame index -- one fact in two places, and editing the timeline
- * without editing the constants indexed the wrong frame in silence.
+ * Derive frame indices and timing from the validated timeline so simulations
+ * do not need a second copy of its duration or draw rate.
  */
 function clockAt(piece, t) {
   const frames = frameCount(piece);
@@ -295,9 +271,7 @@ function solve(piece, seed, params, opt) {
   const sd = seed === undefined ? piece.seed : seed >>> 0;
   const state = piece.state();
   state.seed = sd;
-  // Declared parameters reach the build as VALUES. A `params` block that never
-  // arrives anywhere is a declaration that cannot fail, which is the disease
-  // this project catalogued 23 cases of.
+  // Resolve every declared parameter to its value before running build stages.
   state.params = {};
   for (const [k, p] of Object.entries(piece.params)) state.params[k] = p.value;
   for (const [k, v] of Object.entries(params || {})) {
@@ -335,12 +309,10 @@ function solve(piece, seed, params, opt) {
 const VERSION = '0.1.0';
 
 /**
- * The recipe for a render: everything needed to make this exact picture again.
+ * Resolved render inputs to use with the matching piece source and input data.
  *
- * solve() already knows the piece, the seed and every resolved parameter at the
- * moment it runs, and it used to throw all of it away -- so a picture someone
- * liked was gone on the next click. `t` is not here because a solve has no
- * playhead; the caller that draws a frame fills it in.
+ * The solve records the piece, seed, and resolved parameters. It has no
+ * playhead; the caller that draws a frame adds the quantized `t`.
  *
  * EVERY DECLARED PARAMETER APPEARS, resolved to the value actually used, not
  * only the ones an outside caller overrode. A recipe that lists the overrides

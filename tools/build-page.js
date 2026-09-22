@@ -7,8 +7,7 @@
 // WHY A BUILD STEP RATHER THAN A DIFFERENT MODULE FORMAT. The single-file
 // constraint is a DELIVERY target, not an authoring constraint. The core stays
 // plain CommonJS that `node --test` runs directly, and this file pays the one
-// cost of making it reachable from a browser. The second architecture this
-// project imported from arrived at the same split and it is the right trade.
+// cost of making it reachable from a browser.
 //
 // No dependencies, node: built-ins only.
 
@@ -19,18 +18,8 @@ const ROOT = path.join(__dirname, '..');
 /**
  * The modules to bundle, DISCOVERED rather than listed.
  *
- * This was a hand-maintained array, which made it a second place that had to
- * agree with examples/index.js. When it did not, the build printed a success
- * line and exited 0, and the page then threw
- *
- *     Uncaught Error: module not bundled: examples/<name>.js
- *
- * on load and rendered NOTHING -- not just the new piece, every piece -- while
- * the test suite, the mutation suite, the lint and the example renderer all
- * stayed green. Four of five authors adding an example hit it. The one artefact
- * a human actually looks at was the one with no check on it.
- *
- * A list cannot disagree with the directory it is derived from.
+ * Deriving the list from the directories includes newly added examples and
+ * their helper modules without a second registry to keep in sync.
  */
 function modules() {
   const files = (dir) => fs.readdirSync(path.join(ROOT, dir))
@@ -543,13 +532,9 @@ ${filmVerdict.toString()}
 // -- and hands each drawn frame to the encoder itself, so the file holds the
 // frames the piece declares rather than the ones the machine managed to paint.
 //
-// Two measurements decide the shape.
-// A canvas MediaStream is paced by the COMPOSITOR: four routes gave
-// 159, 112, 96 and 92 frames of 300, and every one of those files still played
-// ten seconds. And a timer is clamped to one second in a page that is not in
-// front, which wrote thirty frames at once and then froze. So: no canvas stream
-// and no timer of any kind -- frames the code builds, paced by a MessageChannel
-// round trip, which is a macrotask and is not clamped.
+// A canvas capture stream follows compositor updates and may omit frames.
+// Background timer throttling can also bunch frames together. The exporter
+// supplies each frame directly and paces it with MessageChannel macrotasks.
 //
 // It saves nothing itself and judges the FILE, not the loop: filmVerdict reads
 // the blocks the recorder actually wrote, and throws on a missing frame or on
@@ -584,9 +569,7 @@ async function exportVideo() {
     return new Promise(function (r) { mc.port1.onmessage = function () { r(); }; mc.port2.postMessage(0); });
   };
 
-  // RENDER AND ENCODE ARE TWO CALLS, timed apart. On four of five subjects in
-  // the engine this imports from, most of what every instrument had measured
-  // was the encoder, and one number for both hides it.
+  // Render and encode are timed separately so encoder cost cannot hide draw cost.
   function renderFrame(i) {
     octx.clearRect(0, 0, off.width, off.height);
     render.drawFrame(octx, p, s, heads[i]);
@@ -618,13 +601,9 @@ async function exportVideo() {
       renderMs += b - a;
       encodeMs += performance.now() - b;
     }
-    // THE END IS ASKED FOR, NOT WAITED FOR. Stopped straight after the last
-    // write, the recorder drops the frame still in its encoder: 19 of 20, every
-    // run. A fixed wait fixed that in a hidden page, where the frame lands
-    // 17 ms later, and lost it again in a visible one, where it lands later
-    // than a frame interval. So the recorder is asked for what it has until the
-    // file holds every frame, and the two seconds are there only so that a
-    // frame lost for good ends the export instead of hanging it.
+    // Drain recorded data until every frame is present before stopping the
+    // recorder. Encoder latency varies with the host; the two-second deadline
+    // bounds the wait when a frame never arrives.
     var give = performance.now() + 2000;
     while ((await held()) < heads.length && performance.now() < give) await macro();
   } finally {
@@ -701,8 +680,7 @@ window.__artifex = {
   // the wrong answer or megabytes of one.
   //
   // NO BACKTICKS ANYWHERE IN HERE. This whole page body is one template
-  // literal, so a backtick in a comment ends it early -- which is exactly how
-  // this function was written the first time.
+  // literal, so an unescaped backtick in a comment ends it early.
   stages: function () { return current ? current.build.map(function (s) { return s[0]; }) : []; },
   inspect: function (stage) {
     if (!current) return null;
@@ -753,15 +731,11 @@ if (from && EXAMPLES[from.piece]) {
 /**
  * Parse the script this page is about to ship.
  *
- * checkResolvable only proves the MODULES can find each other. Nothing looked
- * at the page body around them, which is a single template literal written in
- * this file -- so an error in THAT wrote a 146 kB file, printed a success line,
- * exited 0 and rendered a blank page.
+ * checkResolvable verifies module paths. This check also parses the page body
+ * emitted by the template literal before writing the output file.
  *
- * The fault that bought this check: a regex written /^\?/ inside the literal,
- * where the backslash is eaten before the browser ever sees it, so the page got
- * /^?/ and died on load with "Nothing to repeat". Nothing in the build, the
- * suite, the mutation run or the lint could see it.
+ * Template escaping can turn a valid regex in this source into invalid browser
+ * JavaScript, so validation must use the emitted script.
  *
  * Its sibling -- a backtick inside a comment in the literal, which ends the
  * literal early -- is NOT caught here: it breaks this file instead, and fails

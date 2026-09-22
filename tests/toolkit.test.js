@@ -1,8 +1,6 @@
 'use strict';
 
-// The arithmetic, the colour and the polylines every piece used to write for
-// itself. Five outside authors rebuilt the first two unanimously; the polyline
-// loop was in every example in the repository and in every piece they wrote.
+// Regression checks for shared arithmetic, colour and polyline operations.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -104,9 +102,8 @@ test('chance is true at the stated rate', () => {
 });
 
 test('centred is a TRIANGULAR draw, and two is not three', () => {
-  // The trap, from an author who reached for a centred distribution, averaged
-  // THREE uniforms, and got nine seeds that came out as nine siblings. The
-  // spread shrinks as 1/sqrt(n).
+  // Averaging additional independent uniforms narrows the standard deviation
+  // as 1/sqrt(n); three values must not substitute for a triangular draw.
   const R = rng(6);
   const spread = (n) => {
     let sum = 0;
@@ -144,9 +141,7 @@ test('centred is a TRIANGULAR draw, and two is not three', () => {
 // ---------------------------------------------------------------------------
 
 test('MIXING HAPPENS IN LINEAR LIGHT, which is the whole point of the module', () => {
-  // The library documented this bug in its trap list and shipped nothing that
-  // avoids it, so three of four authors who needed a blend wrote the version
-  // the trap list warns about.
+  // A midpoint of encoded display values is darker than half the linear light.
   const half = mix('#000000', '#ffffff', 0.5);
   assert.notEqual(half, '#808080', 'a display-space average is not the colour of half the light');
   assert.equal(half, '#bcbcbc');

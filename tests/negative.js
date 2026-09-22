@@ -3,12 +3,8 @@
 
 // Break it on purpose, and check that the RIGHT test notices.
 //
-// A green suite is evidence only if it could have been red. The engine this
-// project imports from ran this experiment on itself and FOUR OF NINE mutations
-// escaped its own checks -- two were real gaps, two were mistakes in the
-// mutations, and one was a check working correctly while looking like an escape.
-// From outside, all five read identically. That is why this reports three
-// verdicts and not two:
+// Each mutation must fail its named regression test. Report coverage gaps
+// separately from failures caught by an unintended test:
 //
 //   ESCAPED    nothing failed. The suite does not cover this.
 //   MISNAMED   something failed, but not the test aimed at. Catching the right
@@ -323,7 +319,7 @@ const MUTATIONS = [
     expect: 'setTransform REPLACES the transform where transform() multiplies it',
   },
 
-  // --- the frame lattice, after the field test found it dropping frames ------
+  // --- the frame lattice --------------------------------------------------
   {
     why: 'a piece that does not loop is walked on the looping lattice, so a frame is lost',
     file: 'core/piece.js',
@@ -428,7 +424,7 @@ const MUTATIONS = [
   },
 
 
-  // --- the arithmetic five authors wrote for themselves ---------------------
+  // --- shared arithmetic --------------------------------------------------
   {
     why: 'turn takes the long way round, so a heading swings back across the wrap',
     file: 'core/num.js',
@@ -653,26 +649,9 @@ const MUTATIONS = [
 
 ];
 
-// What a copy of the project does NOT need in order to run its own tests.
-//
-// This skipped `node_modules` and `.git` and took everything else, which was
-// fine until the tree grew things. Measured on 2026-09-19: 40.4 MB per copy,
-// of which 33.2 MB was `.claude` -- the agent worktrees, each a checkout of
-// this same repository -- and 6.75 MB was `out`, the built pages. The source
-// the suite actually reads is 0.38 MB. One run copies once per mutation plus a
-// control, so at 87 mutations that was 3.5 GB of file copying to test 0.38 MB
-// of code, and a run stopped finishing inside ten minutes.
-//
-// A RULE, and the rule is what the suite can actually read. The first version
-// of this skipped `node_modules` and `.git` and took the rest; the second
-// skipped every dot-directory and `out`. Both were deny lists, and a deny list
-// cannot see what arrives next -- `docs/` arrived, grew to 1.9 MB of prose and
-// renders, and got copied 82 times to test code that never reads it.
-//
-// So: name what a mutation run needs instead. `runSuite` executes
-// `node --test tests/*.test.js`, which reaches `tests/`, the modules those
-// tests require under `core/`, `examples/` and `tools/`, and `package.json`.
-// Nothing else is read, so nothing else is copied.
+// Copy only what `node --test tests/*.test.js` reads: the tests, their modules
+// under `core/`, `examples/` and `tools/`, and `package.json`. Keeping an explicit
+// allowlist prevents unrelated workspace data from increasing every copy.
 //
 // If a test ever reads something new, the control run goes red before any
 // mutation is applied and says so by name. That is the failure announcing
@@ -717,9 +696,7 @@ function main() {
     const control = path.join(tmp, 'control');
     const bytes = copyDir(ROOT, control, true);
     const per = (bytes / 1048576).toFixed(2);
-    // Printed, because this is paid once per mutation and nothing else would
-    // ever say so. It was 40.4 MB and nobody noticed until a run stopped
-    // finishing.
+    // Report copy volume because the same source is copied for every mutation.
     console.log(`copy     ${per} MB per mutation, ${((bytes * (MUTATIONS.length + 1)) / 1048576).toFixed(0)} MB in all`);
     const already = runSuite(control);
     if (already.length) {

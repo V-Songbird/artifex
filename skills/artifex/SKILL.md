@@ -15,10 +15,11 @@ reference; every quantity on screen comes out of a mechanism you wrote.
 
 ## The one property everything rests on
 
-> **The seed and the playhead are the only inputs, and the same pair always
-> produces the same frame — forwards, backwards, or after a scrub.**
+> **For a fixed piece, data, parameters and output configuration, the same seed
+> and playhead always produce the same frame — forwards, backwards, or after a
+> scrub.**
 
-That is what makes your work reviewable (send back a seed and the reviewer sees
+That is what makes your work reviewable (share those inputs and the reviewer sees
 exactly what you saw), a video reproducible rather than recorded, a print
 re-renderable at any size, and a plotter file trustworthy.
 
@@ -41,8 +42,8 @@ two fields independent — one field serving every irregularity is why generativ
 work looks generated.
 
 **3. The playhead is the only clock.** No `Date.now()`, no `performance.now()`,
-no `requestAnimationFrame` timestamp reaching a mark. A still has no clock at
-all.
+no `requestAnimationFrame` timestamp reaching a mark. A still has no advancing
+timeline.
 
 **4. A still is a legal piece.** `time: null`. Do not invent a fake reveal to
 satisfy a timeline.
@@ -80,10 +81,9 @@ require('fs').writeFileSync('out.svg', r.svg);
 "
 ```
 
-Then `npm run check` (lint, then the tests) and, when a check or a contract
-key changed, `npm run negative` — about 17 minutes. That one breaks the library
-on purpose and checks that the **right** test notices; a suite that has never
-been red is not evidence.
+Then run `npm run check` (lint, then the tests). When a check or a contract key
+changes, run `npm run negative`: it deliberately mutates the library and verifies
+that the intended check rejects each mutation. Runtime depends on the machine.
 
 `npm run page` builds `out/index.html` — every example, a seed field, a
 transport, PNG at 1x/4x/8x and SVG export, in one self-contained file.
@@ -102,28 +102,25 @@ require('./core/geom.js')    // lengthOf, bbox, centroid, pointInPoly, resample,
                              // chaikin, chain, ring, ribbon
 ```
 
-**`noise2` is value noise and `gradient2` is gradient noise.** Value noise is
-flat across its own lattice lines by construction, so anything that takes a
-gradient, a curl or a hatch angle out of a field must use `gradient2`.
+**`noise2` is value noise and `gradient2` is gradient noise.** The derivative of
+`noise2` normal to a lattice line is zero on that line. Use `gradient2` for fields
+whose gradients drive curls or hatch angles.
 
-Three of those modules exist because five people were handed this library and
-asked to make five unrelated pieces, and **all five wrote `clamp` and a polyline
-loop, and four wrote a colour mix.** If you find yourself writing something the
-next piece would also want, that is a defect in the library — report it.
+These modules provide subject-independent arithmetic, path and colour operations.
+If a reusable operation needed across pieces is missing, report the gap.
 
 **`mix` works in linear light.** `mix('#000','#fff',0.5)` is `#bcbcbc`, not
-`#808080`: the first is the colour of half the light, the second is the average
-of two numbers and reads a stop dark. Three of the four authors who needed a
-blend wrote the second one, because nothing was there.
+`#808080`: the first represents half the light; averaging the encoded sRGB values
+produces a darker midpoint.
 
 **`turn(from, to)` is a trap, not a convenience.** Steering a heading with a raw
 subtraction sends a mark the long way round exactly when the angle crosses π,
 which is invisible on most frames. For a mark with no direction — a hatch, a
 grain, a line with no arrowhead — use `turn(from, to, Math.PI)`.
 
-**`centred(u, v)` takes two values, and two is not three.** Averaging n uniforms
-shrinks the spread as 1/√n. An author reaching for a centred distribution
-averaged three and got nine seeds that came out as nine siblings.
+**`centred(u, v)` takes two values.** Averaging n independent uniforms reduces
+their standard deviation by 1/√n. Adding more samples concentrates results near
+the centre and reduces variation between seeds.
 
 **`clipPolyline` returns RUNS, not one line.** A line that leaves the design box
 and comes back is two marks; joining them draws a stroke across the middle of
@@ -136,9 +133,8 @@ npm run seeds              # every example, nine seeds, one page
 npm run seeds drift 16 0.5 # one piece, sixteen seeds, at a playhead
 ```
 
-The checks catch roughly half the defects. The other half are compositional and
-this is the only instrument for them. The seeds are the first N integers, not
-random ones, so "seed 6 is the bad one" still means something tomorrow.
+Automated checks cover mechanical properties; composition also requires visual
+review. The sheet uses seeds 1 through N so an identified seed can be reproduced.
 
 ## Read an example before you write a piece
 
@@ -160,29 +156,27 @@ the notes at the top of each say what it is in the set to prove.
 | `cover.js` | a front cover — the type is set first, the picture grows around it | a still | raster + vector |
 | `settle.js` | forces finding their own arrangement — state that evolves, still scrubbable | 144 frames | raster + vector |
 
-General mathematics reached by one example stays *out* of the core on purpose:
-a core module reached by one kind of art is a preset in disguise. Marching
-squares lives in `contours.js` for that reason. The stroke font in
-`examples/stroke-font.js` is now reached by three pieces and has earned its
-move; where it and `chain` belong is ROADMAP 037, undecided.
+Subject-specific algorithms stay with their examples; core helpers must remain
+useful across subjects. Marching squares lives in `examples/contours.js`. The
+shared stroke font lives in `examples/stroke-font.js`, while segment chaining
+lives in `core/geom.js`.
 
 ## The contract
 
-`core/piece.js` **is** the contract. It is not described anywhere else, because
-the last project to describe its contract in four places had all four disagree
-and shipped a piece that was wrong in a way no check could see.
+`core/piece.js` defines the authoritative contract through `FIELDS`. Consult its
+validator and field documentation when changing a piece or the contract.
 
 Required: `name`, `size`, `draw`.
 Optional: `state`, `build`, `seed`, `time`, `outputs`, `params`.
-**Unknown keys are refused by name.** A misspelled key is how a wrong contract
-passed every check last time.
+**Unknown keys are refused by name.** This catches misspelled or unsupported
+contract fields.
 
 ```js
 {
   name: 'kebab-case',
   size: { w, h },                 // the DESIGN BOX. It never changes.
   state: () => ({}),              // a fresh object per solve
-  build: [['stage name', fn]],    // pure in the seed; named, so a throw is reportable
+  build: [['stage name', fn]],    // pure in seed, data and params; named for errors
   draw(surface, state, t, clock), // pure in (state, t). t is NORMALISED, [0,1]
   seed: 1,                        // zero is a seed
   time: null,                     // or { duration, hz, loop? }
@@ -205,21 +199,18 @@ draw(g, s, t, clock) {
 }
 ```
 
-Before this existed, a piece with a fixed timestep had to restate its own
-`duration` and `hz` as constants to recover a frame index — one fact in two
-places, and editing the timeline without editing the constants indexed the wrong
-frame in silence.
+Use `clock.frame` for fixed-step lookups and `clock.hz` for the declared rate. Do
+not duplicate `duration` and `hz` as separate constants to recover a frame index.
 
 **Declared parameters arrive as `state.params.<name>`**, already validated
 against the range you declared. An unknown or out-of-range one is refused by
 name.
 
-**`loop` decides where the frames sit**, and it is not cosmetic. A looping piece
-has n frames at `i/n` and `t=1` is `t=0` again, so it can repeat seamlessly. A
-piece that does not loop has n frames at `i/(n-1)` and its last frame is the
-completed one, so a reveal finishes. Not being able to say which is how a video
-export in this library came to drop its middle frame, for every timeline, for as
-long as the walk existed.
+**`loop` decides where the frames sit.** For n > 1, a looping piece has n frames
+at `i/n` and `t=1` is `t=0` again, so it can repeat seamlessly. A piece that does
+not loop has n frames at `i/(n-1)` and its last frame is the completed one, so a
+reveal finishes. A one-frame timeline has the single playhead 0. Use the shared
+frame helpers for drawing and export so they agree on the frame grid.
 
 The **design box never changes**. Aspect ratio, device scale and output medium
 are render-time choices — that is the whole reason one piece serves four
@@ -234,20 +225,18 @@ outputs.
 | a video | walk `playheads(piece)`; the frames are a property of the piece, never of how fast the machine is. The built page does it: **WebM video**, or `__artifex.video()`, which saves nothing and returns the report |
 | a plotter / print SVG | `renderVector(piece)` — declare `outputs: ['raster','vector']` first |
 
-**Chain your segments before you draw them.** A plotter lifts the pen between
-paths and lifting is the slow, ugly part. `chain(segs)` in `core/geom.js` turns
-loose segments into as few pen-down paths as possible — 6021 segments into 47
-in `contours`. It matches endpoints exactly rather than within a tolerance,
-because points computed by the same expression from the same inputs are
-bit-identical, and it keys on the coordinates themselves, never on a formatted
-string: `String(-0)` is `"0"` but `(-0).toFixed(6)` is `"-0.000000"`, and a
-key built that way once cut sixteen strands dead in the middle of a sheet with
-nothing thrown.
+**Chain your segments before you draw them.** A plotter lifts its pen between
+paths. `chain(segs)` in `core/geom.js` joins connected segments into longer
+pen-down paths. Endpoints match exactly: generate shared endpoints with the same
+arithmetic. The implementation uses numeric `Map` keys, which treat `-0` and `0`
+as equal. Rounding coordinates into string keys can merge distinct endpoints and
+can distinguish tiny negative values rounded to `"-0.000000"` from values rounded
+to `"0.000000"`.
 
 **A raster check must render into its own canvas** created with
-`willReadFrequently: true`. A displayed canvas is GPU-rasterised until the
-browser decides otherwise, and its anti-aliasing changes when it switches — that
-is a property of the browser, not of your piece.
+`willReadFrequently: true`. Canvas rasterization and anti-aliasing can vary with
+the rendering backend; comparing measurements from differently configured
+canvases can introduce differences unrelated to the piece.
 
 The surface is **Canvas2D-shaped** in all four, so one `draw` reaches all of
 them unchanged.
@@ -263,7 +252,7 @@ bandwidth may rise with it.
 
 ## Art direction, which is where the difficulty actually is
 
-The mathematics is rarely the problem. These are, and each one has been paid for:
+Review these compositional properties in rendered output:
 
 **Give every irregularity a cause.** Not one noise source standing in for all of
 them. Keep them separate: *morphological* (the form itself), *gestural* (how it
@@ -276,20 +265,20 @@ a finished image treats every surface as though the same particulate process
 affected it. Variation attached to the *mark* is more informative than variation
 attached to every pixel.
 
-**Paint order is the art fault no number catches.** Four iterations of a previous
-project shipped wrong-looking pictures with every invariant green.
+**Inspect paint order in rendered output.** Correct invariants do not establish
+that layering and occlusion produce the intended image.
 
 **Prefer five excellent marks to fifty equivalent decorative ones.** Detail and
-contrast should fall away from the focal relationship. Everything receiving the
-same algorithmic attention is the most common generative tell.
+contrast should fall away from the focal relationship. Giving every element the
+same detail and contrast can weaken visual hierarchy.
 
 **A line must arrive, not fade up.** `globalAlpha = progress` is a finished line
 fading in, not a pen moving, and the difference is most of what makes a drawing
 read as drawn.
 
-**A mean cannot see a small mark however hard it moves.** One mark covering 0.19%
-of a frame moved it 98 luma, and a grid mean reported 0.19. Pair every mean with
-the largest single cell.
+**A mean can hide changes in a small mark.** A large local change may contribute
+little to a frame-wide average. Pair each mean with the largest single-cell
+change.
 
 **Seed robustness is the real test.** A system is not good because it accidentally
 produced one beautiful seed. Render nine and look at all of them.
@@ -300,48 +289,44 @@ produced one beautiful seed. Render nine and look at all of them.
   value it read makes the result a function of how many times the page has been
   re-rolled, not of the seed.
 - **A cached layer may not read the playhead.** It freezes the frame it was built
-  on and the piece silently stops animating there. One did, for four months.
+  on and the piece silently stops animating there.
 - **Solve a simulation in `build`; make `draw` a lookup.** Advancing a system
   inside `draw` makes `draw` stateful, so landing on t=0.3 gives whatever the
   previous call left behind and the piece is unscrubbable. Step the whole
   trajectory once, store a snapshot per drawn frame, and have `draw` read
   `clock.frame`. Quantise the whole frame, not just the reveal: a simulation
   advanced continuously under a stepped drawing slides.
-- **A straight run can vanish.** Curvature-based resampling can drop a two-point
-  stroke below a station minimum. A letter lost its crossbar that way, and the
-  page read as a broken font rather than a caller error.
-- **Display values are not linear light.** `round(v*255)` with no sRGB encode
-  renders a table fitted in linear light a stop dark.
-- **A limiter that is always binding is not a limiter, it is the animation.**
-  A simulation cooled by a falling ceiling on displacement had the ceiling
-  binding on essentially every frame for seven of nine seeds — the motion on
-  screen was the cooling curve and the physics was only choosing directions.
-  Measure how often a clamp actually clamps.
-- **Curvature is not occlusion.** Using the Laplacian of a height field for
-  ambient occlusion brightens every hollow and darkens every apex if the sign is
-  wrong — and with the sign right it still gives every mound a bright core and a
-  dark ring, because a mound is negatively curved at its apex and positively
-  curved around its rim. It took a horizon sweep to be right.
-- **A sequential address gets written by reflex.** Keying a value on an output
-  index — `R('dither', 'f', facets.length)` — reads as addressed and is not: the
-  index moves whenever something ahead of it is dropped. An author who had read
-  non-negotiable 2 an hour earlier wrote it anyway.
+- **Preserve straight runs when resampling.** Curvature-based resampling can drop
+  a two-point stroke below a station minimum, removing a letter's crossbar or
+  another straight feature. Retain its endpoints.
+- **Display values are not linear light.** Passing linear-light values directly
+  to `round(v*255)`, without sRGB encoding, produces an incorrectly dark display
+  result.
+- **A limiter that binds throughout a simulation can determine the animation.**
+  With a falling displacement ceiling, the ceiling may dictate motion magnitude
+  while the forces only choose direction. Measure how often the clamp binds
+  across frames and seeds.
+- **Curvature is not occlusion.** A Laplacian measures local curvature rather
+  than visibility and can produce bright centres and dark rings unrelated to
+  blocked light. When estimating ambient occlusion from a height field, use
+  visibility information, such as a horizon sweep.
+- **Address stable entities, not output positions.** `R('dither', 'f', facets.length)`
+  changes its address whenever an earlier facet is removed. Use an entity index
+  that remains stable when other output is filtered or reordered.
 - **A check whose pass condition is "no difference" is satisfied by nothing
   happening.** Pair every bound with a floor that must be non-zero.
-- **A declared parameter that the build never reads moves nothing.** Sweep every
-  one of them at three pins — min, value, max — because a cyclic parameter has
-  the same value at both ends. This project reproduced that defect from scratch
-  within an hour of writing the rule down.
+- **A declared parameter must affect the output.** Sweep each parameter at min,
+  value and max: cyclic parameters may produce the same output at both endpoints.
+  Check that the build or draw actually reads its validated value.
 - **A flow field plus starts around a focus defaults to looking botanical.**
-  Integrating `(f - 0.5)` into a heading makes every stroke an arc of a circle,
-  because `f` barely changes over one stroke. Steer *towards* the field with
-  inertia, and let the focus modulate size and density rather than position.
+  If `f` changes little along a stroke, integrating `(f - 0.5)` into its heading
+  produces an approximately circular arc. To avoid that default, steer *towards*
+  the field with inertia and let the focus modulate size and density rather
+  than position.
 
 ## What this cannot do
 
-There is still no automated way to judge whether the art is good. The checks
-protect the mechanism; the measurements protect the match to a reference; a
-person still has to say what is wrong in words.
-
-And the checks catch roughly half the defects. The other half are compositional,
-and the only instrument for those is looking at nine seeds at once.
+The checks validate selected mechanical properties, and measurements quantify
+selected differences from a reference. They do not establish artistic quality.
+Review rendered output across nine seeds and describe any compositional problems
+explicitly.
