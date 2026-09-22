@@ -6,7 +6,7 @@
 
 /** An OfflineAudioContext that records the graph built on it. */
 function fakeAudio() {
-  const record = { contexts: [], oscillators: [], sources: [] };
+  const record = { contexts: [], oscillators: [] };
   const param = (value) => {
     const p = { value, events: [] };
     for (const m of ['setValueAtTime', 'linearRampToValueAtTime', 'exponentialRampToValueAtTime',
@@ -42,14 +42,6 @@ function fakeAudio() {
 
     createBuffer(channels, length, sampleRate) { return buffer(channels, length, sampleRate); }
 
-    createBufferSource() {
-      const s = node({ buffer: null, loop: false, playbackRate: param(1), at: null });
-      s.start = (at = 0) => { s.at = at; };
-      s.stop = () => {};
-      record.sources.push(s);
-      return s;
-    }
-
     startRendering() { return Promise.resolve(buffer(this.channels, this.length, this.sampleRate)); }
   }
   return { Context, record };
@@ -63,7 +55,7 @@ function fakeAudio() {
  * whose queue never drains.
  */
 function fakeCodecs({ supported = () => true, colorSpace, aac = true, failAt = -1, stall = false } = {}) {
-  const log = { frames: [], configs: [], audioFrames: 0 };
+  const log = { frames: [], audioFrames: 0 };
   const space = colorSpace === undefined
     ? { primaries: 'bt709', transfer: 'iec61966-2-1', matrix: 'bt709', fullRange: true }
     : colorSpace;
@@ -71,7 +63,7 @@ function fakeCodecs({ supported = () => true, colorSpace, aac = true, failAt = -
 
   class VideoFrame {
     constructor(source, init) {
-      Object.assign(this, { source, timestamp: init.timestamp, duration: init.duration, closed: false });
+      Object.assign(this, { timestamp: init.timestamp, duration: init.duration, closed: false });
       log.frames.push(this);
     }
 
@@ -85,7 +77,7 @@ function fakeCodecs({ supported = () => true, colorSpace, aac = true, failAt = -
       Object.assign(this, { output, error, state: 'unconfigured', encodeQueueSize: stall ? 5 : 0, sent: 0 });
     }
 
-    configure(config) { this.config = config; this.state = 'configured'; log.configs.push(config); }
+    configure(config) { this.config = config; this.state = 'configured'; }
 
     encode(frame, options) {
       if (this.sent === failAt) { this.error(new Error('fixture encoder failed')); return; }
