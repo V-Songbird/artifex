@@ -2,7 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { renderVector, playheads, drawFrame } = require('../core/render.js');
+const { renderVector, playheads, drawFrame, renderSound } = require('../core/render.js');
+const { fakeAudio } = require('./fake-media.js');
 const { validate, solve, frameT, frameCount, frameDen, frameIndex } = require('../core/piece.js');
 const { VectorSurface } = require('../core/surface-vector.js');
 
@@ -291,4 +292,24 @@ test('the frame index is an integer in [0, frames-1] wherever the playhead lands
       assert.ok(Number.isInteger(i) && i >= 0 && i < n, `${k / 200} -> ${i} of ${n}`);
     }
   }
+});
+
+test('the soundtrack is exactly as long as the film, frames / hz, and says what it cannot do', async () => {
+  // 1.01 s at 10 Hz rounds to ten frames: the film lasts one second, and a
+  // soundtrack cut to the declared 1.01 s would end a hundredth late.
+  let heard = null;
+  const p = validate({
+    name: 'tone', size: { w: 10, h: 10 }, time: { duration: 1.01, hz: 10 }, draw() {},
+    sound(ctx, state, timeline) { heard = { ctx, state, timeline }; },
+  });
+  const solved = solve(p, 4);
+  const audio = fakeAudio();
+  const buffer = await renderSound(p, solved, { OfflineAudioContext: audio.Context });
+  assert.equal(buffer.length, 48000, 'one second at 48 kHz');
+  assert.equal(audio.record.contexts[0].channels, 2);
+  assert.deepEqual(heard.timeline, { duration: 1, frames: 10, hz: 10, loop: false });
+  assert.equal(heard.state, solved.state, 'the same solved state the picture is drawn from');
+
+  assert.equal(await renderSound(validate({ name: 'mute', size: { w: 1, h: 1 }, draw() {} }), solved), null);
+  await assert.rejects(renderSound(p, solved, { OfflineAudioContext: null }), /no OfflineAudioContext/);
 });

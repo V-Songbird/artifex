@@ -1,6 +1,6 @@
 ---
 name: artifex
-description: Make art out of code — a piece whose every mark is solved rather than placed, rendered from one source to an interactive page, a video, a print-resolution still or a plotter-ready SVG, with checks that can actually fail. Use when asked to create generative, algorithmic or procedural art; a poster, plate, pattern, diagram-as-art, type specimen, data piece, abstract composition, illustration, creature, scene or object built out of code; an animated or growing piece; a seeded artwork that can be re-rolled; an SVG for a pen plotter; or to debug, optimise or art-direct an existing piece. Not for chart libraries, dashboards, UI mockups, or image generation from a prompt.
+description: Make art out of code — a piece whose every mark comes from code rather than a traced reference, rendered from one source to an interactive page, a frame-exact MP4 film with its own soundtrack, a print-resolution still or a plotter-ready SVG, with checks that can actually fail. Use when asked to create generative, algorithmic or procedural art; a poster, plate, pattern, diagram-as-art, type specimen, data piece, abstract composition, illustration, creature, scene or object built out of code; an animated or growing piece, or an animated short with sound; a seeded artwork that can be re-rolled; an SVG for a pen plotter; or to debug, optimise or art-direct an existing piece. Not for chart libraries, dashboards, UI mockups, or image generation from a prompt.
 argument-hint: "<what to make — optional seed, size or output>"
 license: MIT
 compatibility: Requires Node 20 or later and the artifex library on disk — the piece contract, the core modules and the npm scripts named here ship with the repository or the plugin. Nothing here needs network access or a dependency install.
@@ -10,8 +10,11 @@ metadata:
 
 # Artifex
 
-A piece is **solved, not drawn**. Nothing is keyframed and nothing traces a
-reference; every quantity on screen comes out of a mechanism you wrote.
+A piece is **solved, not traced**. Nothing copies a reference; every quantity on
+screen comes out of code you wrote -- a mechanism that finds it, or motion you
+author over the playhead, such as an eased move, a blink or a cut on a frame.
+Either way the frame is a function of the seed and the playhead, and so is the
+sound.
 
 ## The one property everything rests on
 
@@ -54,7 +57,8 @@ work looks generated.
 
 **3. The playhead is the only clock.** No `Date.now()`, no `performance.now()`,
 no `requestAnimationFrame` timestamp reaching a mark. A still has no advancing
-timeline.
+timeline. A soundtrack schedules on its offline context, whose seconds are the
+film's seconds: frame `i` sits at `i / hz`, the `clock.seconds` that `draw` sees.
 
 **4. A still is a legal piece.** `time: null`. Do not invent a fake reveal to
 satisfy a timeline.
@@ -198,7 +202,7 @@ the notes at the top of each say what it is in the set to prove.
 |---|---|---|---|
 | `drift.js` | organic, painterly — dabs, opacity, a flow field | 240 frames | **raster only** |
 | `specimen.js` | hard-edged, typographic — a stroke font, straight runs | a still | raster + vector |
-| `readout.js` | data-driven — a fixed dataset the seed may not touch | 144 frames | raster + vector |
+| `readout.js` | data-driven — a fixed dataset the seed may not touch; it sounds, the data choosing the pitch | 144 frames | raster + vector + sound |
 | `partition.js` | recursive subdivision — area, not marks | a still | raster + vector |
 | `contours.js` | plotter-native — one pen, one weight, no fills | a still | raster + vector |
 | `packing.js` | closed forms grown until they touch — composition decided by refusal | a still | raster + vector |
@@ -231,7 +235,7 @@ surfaces without a reader use scale 1. The tree also stops after twelve reflecti
 validator and field documentation when changing a piece or the contract.
 
 Required: `name`, `size`, `draw`.
-Optional: `state`, `build`, `seed`, `time`, `outputs`, `params`, `preview`.
+Optional: `state`, `build`, `seed`, `time`, `outputs`, `params`, `sound`, `preview`.
 **Unknown keys are refused by name.** This catches misspelled or unsupported
 contract fields.
 
@@ -246,6 +250,7 @@ contract fields.
   time: null,                     // or { duration, hz, loop? }
   outputs: ['raster'],            // add 'vector' to claim plotter/print output
   params: {},                     // declared knobs, each of which must move the output
+  sound: null,                    // or sound(ctx, state, timeline); needs a timeline
   preview: null,                  // optional explicit webgpu-pixels descriptor
 }
 ```
@@ -304,7 +309,7 @@ establish those claims. Shader arithmetic may differ across devices.
 |---|---|
 | an interactive page | pass a real `CanvasRenderingContext2D` to `drawFrame` |
 | a print-resolution still | same, at `scale: 8` or higher. **Not capped.** |
-| a video | walk `playheads(piece)`; the frames are a property of the piece, never of how fast the machine is. The built page does it: **WebM video**, or `__artifex.video()`, which saves nothing and returns the report |
+| a film | walk `playheads(piece)`; the frames are a property of the piece, never of how fast the machine is. The built page does it: **MP4 1x/2x**, frame-exact at any drawing speed and carrying the declared soundtrack, or `__artifex.film({ scale })`, which saves nothing and returns the report read from the file. **WebM video** records in real time, so it needs frames cheaper than their budget and has no sound |
 | a plotter / print SVG | `renderVector(piece)` — declare `outputs: ['raster','vector']` first |
 
 **Chain your segments before you draw them.** A plotter lifts its pen between
@@ -331,6 +336,26 @@ missing half the picture.
 **Scaling to print:** do not multiply every stochastic frequency by the scale.
 Macro composition must be invariant under resolution; only micro-detail
 bandwidth may rise with it.
+
+## Sound
+
+A piece with a timeline may declare `sound(ctx, state, timeline)`: build a Web
+Audio graph on the `OfflineAudioContext` it is handed, as long as the film.
+`timeline` holds `duration` (`frames / hz`), `frames`, `hz` and `loop`. The
+MP4 export renders it offline and muxes it with the frames; `renderSound` in
+`core/render.js` renders it alone. Read the [piece API](../../docs/apis/piece-api.md#soundtrack).
+
+- **Schedule each sound at the second its picture appears.** Frame `i` sits at
+  `i / hz`. Find the frame with draw's own arithmetic rather than an estimate of
+  it, as `readout.js` does, and the two cannot drift.
+- **One solved state feeds both.** Read positions, counts and timings from
+  `state`; never re-derive them in `sound` from different constants.
+- **Noise comes from the seed.** Fill buffers from `rng(seed)`; an unseeded
+  generator makes the soundtrack a function of when it was rendered.
+- **Leave headroom.** Sum the gains you schedule; `npm run browser` reports the
+  decoded peak of the film it exports.
+- Web Audio rendering can differ between engines, so byte-identical sound is
+  scoped to one browser, like pixels.
 
 ## Art-direction preset: focal composition
 
@@ -402,6 +427,16 @@ produced one beautiful seed. Render nine and look at all of them.
   that remains stable when other output is filtered or reordered.
 - **A check whose pass condition is "no difference" is satisfied by nothing
   happening.** Pair every bound with a floor that must be non-zero.
+- **A piece slower than real time cannot be recorded in real time.** The WebM
+  recorder stamps frames by the wall clock, so frames that cost more than their
+  budget are lost and the export says so. MP4 encodes every frame at its own
+  time; a heavy frame makes a slower export, never a shorter film.
+- **A clock read after the drawing calls return measures their submission.**
+  A browser canvas defers rasterization; force it, for example with a one-pixel
+  `getImageData`, before timing a frame.
+- **A film without a colour tag shifts every colour.** A canvas frame may be
+  encoded full range, and an untagged file is decoded as limited range. The MP4
+  export writes the encoder's report; carry it through any re-encode.
 - **A declared parameter must affect the output.** Sweep each parameter at min,
   value and max: cyclic parameters may produce the same output at both endpoints.
   Check that the build or draw actually reads its validated value.

@@ -86,6 +86,7 @@ test('failed build keeps its named diagnostic and blocks transport and every exp
   elements.get('svg').onclick();
   elements.get('video').onclick();
   await assert.rejects(api.video(), (error) => error.message === original);
+  await assert.rejects(api.film(), (error) => error.message === original);
   assert.equal(api.read().error, original);
   assert.equal(elements.get('err').textContent, original);
   assert.equal(api.manifest(), null, 'partial state must not be offered as a replay recipe');
@@ -94,7 +95,7 @@ test('failed build keeps its named diagnostic and blocks transport and every exp
   assert.ok(activity.clears > 0, 'a previous picture must not remain as a successful result');
   assert.deepEqual(downloads, []);
   assert.equal(elements.get('facts').innerHTML, '');
-  for (const name of ['play', 't', 'svg', 'video']) assert.equal(elements.get(name).disabled, true, name);
+  for (const name of ['play', 't', 'svg', 'video', 'film1', 'film2']) assert.equal(elements.get(name).disabled, true, name);
   assert.equal(png.disabled, true);
 });
 
@@ -161,4 +162,23 @@ test('an earlier video rejection cannot replace the status of a newly selected v
   assert.equal(api.read().error, null);
   assert.equal(elements.get('videonote').textContent, note);
   assert.equal(elements.get('video').disabled, true, 'the current still keeps its capability limit');
+});
+
+test('the MP4 film is refused by name without an encoder, and a still offers none', async () => {
+  const { api, elements, downloads } = openPage();
+  // With nothing exporting, a still's rebuild alone decides the buttons.
+  api.select('valid');
+  assert.equal(elements.get('film1').disabled, true, 'a still has no film');
+  assert.equal(elements.get('film2').disabled, true);
+  api.select('conditional');
+  api.setSeed(42);
+  assert.equal(elements.get('film1').disabled, false, 'a valid timeline can be filmed');
+  assert.match(elements.get('filmnote').textContent, /encoded at its own time/);
+  await assert.rejects(api.film(), /no VideoEncoder/);
+  elements.get('film2').onclick();
+  api.select('valid');
+  await new Promise(setImmediate);
+  assert.equal(api.read().error, null, 'a rejection for the previous piece does not land on this one');
+  assert.deepEqual(downloads, []);
+  assert.equal(elements.get('film1').disabled, true, 'and the still keeps its limit once that export settles');
 });

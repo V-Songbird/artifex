@@ -1,7 +1,7 @@
 ---
 type: knowledge
-summary: "Explains Artifex's page, PNG, SVG, and WebM outputs and the checks and limitations of each format."
-related_files: ["core/render.js", "core/webgpu-preview.js", "core/surface-vector.js", "examples/inversion.js", "examples/pixel-field.js", "tools/build-page.js", "tools/piece-input.js", "tools/contact-sheet.js", "tools/render-examples.js", "tests/examples.test.js", "tests/external-piece.test.js", "tests/page-build-errors.test.js", "tests/page-preview.test.js"]
+summary: "Explains Artifex's page, PNG, SVG, MP4 and WebM outputs, soundtracks, and the checks and limitations of each format."
+related_files: ["core/render.js", "core/film.js", "core/webgpu-preview.js", "core/surface-vector.js", "examples/inversion.js", "examples/pixel-field.js", "examples/readout.js", "tools/build-page.js", "tools/check-browser.js", "tools/piece-input.js", "tools/contact-sheet.js", "tools/render-examples.js", "tests/examples.test.js", "tests/external-piece.test.js", "tests/film.test.js", "tests/page-build-errors.test.js", "tests/page-preview.test.js"]
 ---
 
 # Output formats
@@ -10,7 +10,7 @@ A piece keeps one design box and one drawing function. [`core/render.js`](../../
 
 ## Interactive page and PNG
 
-`npm run page` bundles the registered examples into `out/index.html`. The page provides example selection, seed and parameter controls, playback, and PNG export at 1x, 4x, and 8x. PNG export redraws into an offscreen canvas at the requested resolution.
+`npm run page` bundles the registered examples into `out/index.html`. The page provides example selection, seed and parameter controls, playback, PNG export at 1x, 4x, and 8x, MP4 export at 1x and 2x, and WebM export. PNG and MP4 export redraw into an offscreen canvas at the requested resolution.
 
 `npm run page -- ./piece.cjs` instead selects one external CommonJS piece and writes `piece-page.html` beside its source. It provides the same controls and exports. `npm run seeds -- ./piece.cjs 9 0.5` writes `piece-seeds.html` beside the source for comparison. See [external pieces](development.md#external-pieces) for invocation from another project, bundled dependency limits and parameter sweeps.
 
@@ -20,7 +20,7 @@ The rendering API accepts any positive finite scale, subject to the destination 
 
 The page defaults to **CPU reference**. Raster-only pieces with an explicit
 `webgpu-pixels` preview descriptor also expose **GPU preview**, an approximate
-opaque pixel renderer. PNG, WebM, contact sheets and reference recipes always
+opaque pixel renderer. PNG, MP4, WebM, contact sheets and reference recipes always
 use the original CPU `draw`; GPU mode does not change exported pixels or SVG
 eligibility. Native browser support and an eligible hardware adapter are required.
 Unavailable adapters, software adapters, insufficient limits, shader errors,
@@ -56,11 +56,23 @@ Identical input angles produce an empty sweep. Unequal whole-turn angles that no
 
 Ordinary SVG export uses the identity transform and retains the design-resolution cutoff. Enlarging that saved SVG preserves its geometry rather than regenerating detail. All outputs also stop after twelve reflections per root circle, bounding the traversal to 24,573 circles and thirteen live recursion levels even at extreme output scales.
 
+## MP4
+
+The page offers MP4 export for animated pieces at 1x and 2x of the design box. [`core/film.js`](../../core/film.js) draws every frame of `playheads(piece)` into an offscreen canvas and hands it to a WebCodecs `VideoEncoder` with the timestamp `i / hz`. Nothing is paced by the wall clock: a piece that draws slower than its frame rate takes longer to export and still keeps every frame at its declared time. When the piece declares `sound`, its soundtrack is rendered offline and encoded as AAC. The file is H.264 video in an MP4 container, with the soundtrack as a second track.
+
+The exporter requires `VideoEncoder` and `VideoFrame`, and for a piece with sound `AudioEncoder`, `AudioData` and `OfflineAudioContext` with AAC encoding. A piece that declares sound in a browser that cannot encode AAC is refused rather than exported silent. It declares the lowest H.264 level that fits the frame size and rate, trying High then Main profile, and rounds each side up to an even pixel count because 4:2:0 video needs one.
+
+The encoder reports the colour space it encoded each canvas frame in, which can be full or limited range depending on the encoder. The film records that report in a `colr` box. Without it a decoder assumes limited range and shifts every colour; the export refuses to write an untagged film. Some platforms re-encode uploads and may still mishandle full range.
+
+Before returning a result, the exporter reads the finished bytes back: exactly one H.264 track, every declared frame, uniform frame durations on the frame grid, the requested size, a first keyframe, the colour tag, every sample inside the media data, and, with sound, one AAC track within an AAC frame of the film's length. A failed check displays an error and nothing is saved. `window.__artifex.film({ scale })` returns the report and blob without saving a file; the report includes draw, encode, soundtrack and total times and the ratio to real time.
+
+`npm run browser` exports one film this way in installed Edge, decodes it, requires the first, middle and last decoded frames to resemble their own drawn frames more than their neighbours, and requires a declared soundtrack to decode to sound as long as the film. Decoded frames and sound are compared within the tested browser; they are not byte-identical to the drawing.
+
 ## WebM
 
-The page offers WebM export for animated pieces. The implementation requires `MediaStreamTrackGenerator`, `VideoFrame`, and `MediaRecorder` with VP8 WebM support. Availability must be checked in the browser used for delivery.
+The page offers WebM export for animated pieces. The implementation requires `MediaStreamTrackGenerator`, `VideoFrame`, and `MediaRecorder` with VP8 WebM support. Availability must be checked in the browser used for delivery. It carries no soundtrack; use MP4 for a piece with sound.
 
-The exporter walks the piece's frame grid and paces frames at its declared rate. Rendering and encoding are measured separately. Before returning a result, it parses the recorded WebM blocks and validates frame count and spacing. A rejected export displays an error instead of downloading a result.
+The exporter walks the piece's frame grid and paces frames at its declared rate, because `MediaRecorder` stamps frames by the wall clock. A piece whose frames take longer than their budget to draw and encode therefore cannot be recorded; the export measures how far it fell behind its schedule and says so, naming MP4 as the export that keeps every frame. Rendering and encoding are measured separately. Before returning a result, it parses the recorded WebM blocks and validates frame count and spacing. A rejected export displays an error instead of downloading a result.
 
 A timeline with one frame still requires exactly one recorded frame, but has no spacing interval to validate. Its report uses zero for the gap statistics and `1 / hz` seconds for the frame's declared interval. This reported duration does not independently measure playback duration in a video player.
 

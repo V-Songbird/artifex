@@ -12,6 +12,11 @@
 //
 // The testable form: solve at two different seeds and the digits are identical
 // while the presentation is not. That check can fail, which is the point.
+//
+// IT IS ALSO THE PIECE THAT SOUNDS. Each digit is heard on the frame that first
+// shows it: the pitch comes from the digit, so the data decides the melody; the
+// voice comes from the sheet, so the seed decides only how it is played. The
+// same split, read a fourth way, and the same check can fail.
 
 'use strict';
 
@@ -42,6 +47,20 @@ const TAPE_H = 110;
 const GRID_H = H - 2 * M - TAPE_H - 34;
 const CELL_W = GRID_W / COLS;
 const CELL_H = GRID_H / ROWS;
+
+// A major pentatonic from A3, one degree per digit: any order of digits stays
+// consonant, so what is heard is the order itself.
+const DEGREES = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21];
+const ROOT_NOTE = 57;
+// One voice per accent. The accent is the seeded choice of the sheet, so the
+// voice is presentation; it may change the timbre and never the pitch.
+const VOICES = [
+  { wave: 'triangle', decay: 0.34, octave: 0.35 },
+  { wave: 'sine', decay: 0.5, octave: 0.2 },
+  { wave: 'sine', decay: 0.28, octave: 0.6 },
+  { wave: 'triangle', decay: 0.5, octave: 0.1 },
+];
+const hertz = (note) => 440 * 2 ** ((note - 69) / 12);
 
 module.exports = {
   name: 'readout',
@@ -157,6 +176,56 @@ module.exports = {
       g.moveTo(M, M + row * CELL_H - 4);
       g.lineTo(W - M, M + row * CELL_H - 4);
       g.stroke();
+    }
+  },
+
+  // Heard, not only seen. A note starts on the first frame on which the scan
+  // reaches the cell's first slot -- the frame that fills it, for any digit
+  // above zero -- found with draw's own arithmetic rather than an estimate of
+  // it, and scheduled at that frame's second on the audio clock.
+  sound(ctx, s, timeline) {
+    const out = ctx.createGain();
+    out.gain.value = 0.8;
+    const air = ctx.createBiquadFilter();
+    air.type = 'lowpass';
+    air.frequency.value = 4200;
+    out.connect(air);
+    air.connect(ctx.destination);
+    const voice = VOICES[ACCENTS.indexOf(s.accent)];
+    const den = timeline.loop ? timeline.frames : timeline.frames - 1;
+    const scanAt = (i) => (i / den) * (s.cells.length + s.params.lead);
+    const note = (at, pitch, decay, gain, pan, overtone) => {
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0, at);
+      env.gain.linearRampToValueAtTime(gain, at + 0.006);
+      env.gain.exponentialRampToValueAtTime(0.0005, at + decay);
+      const place = ctx.createStereoPanner();
+      place.pan.value = pan;
+      env.connect(place);
+      place.connect(out);
+      for (const [mul, level] of [[1, 1], [2, overtone]]) {
+        if (!level) continue;
+        const osc = ctx.createOscillator();
+        osc.type = voice.wave;
+        osc.frequency.value = hertz(pitch) * mul;
+        const mixer = ctx.createGain();
+        mixer.gain.value = level;
+        osc.connect(mixer);
+        mixer.connect(env);
+        osc.start(at);
+        osc.stop(at + decay + 0.05);
+      }
+    };
+    let frame = 0;
+    for (const c of s.cells) {
+      while (frame < timeline.frames && Math.floor((scanAt(frame) - c.k) * 2.4) < 1) frame++;
+      if (frame >= timeline.frames) break;
+      const at = frame / timeline.hz;
+      // The scan wraps to a new row here, and the row is marked an octave down.
+      if (c.col === 0) note(at, ROOT_NOTE - 12, 0.9, 0.22, 0, 0);
+      // The digits the picture paints in the accent ring brighter, as they look.
+      note(at, ROOT_NOTE + DEGREES[c.digit], voice.decay * (c.wide ? 1.6 : 1), 0.2,
+        (c.col / (COLS - 1)) * 1.2 - 0.6, c.digit >= 7 ? voice.octave * 2 : voice.octave);
     }
   },
 };

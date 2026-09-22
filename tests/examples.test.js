@@ -742,6 +742,31 @@ test('readout: the DATA is not seeded, and the presentation is', () => {
   assert.notEqual(a.accent, b.accent);
 });
 
+test('readout: the soundtrack reads the data, and the seed only chooses its voice', async () => {
+  const { renderSound } = require('../core/render.js');
+  const { fakeAudio } = require('./fake-media.js');
+  const p = validate(EXAMPLES.readout);
+  const listen = async (seed, params) => {
+    const audio = fakeAudio();
+    await renderSound(p, solve(p, seed, params), { OfflineAudioContext: audio.Context });
+    const notes = audio.record.oscillators.slice().sort((a, b) => a.at - b.at || a.frequency.value - b.frequency.value);
+    return { at: notes.map((o) => o.at), hz: notes.map((o) => o.frequency.value), voice: notes.map((o) => o.type).join() };
+  };
+  // Seeds 1 and 99999 choose different accents, so different voices.
+  const a = await listen(1);
+  const b = await listen(99999);
+  assert.ok(a.hz.length >= 96, 'every digit is heard');
+  assert.deepEqual(a.hz, b.hz, 'a re-roll changed the melody, which would make the piece say something else');
+  assert.deepEqual(a.at, b.at, 'or when it says it');
+  assert.notEqual(a.voice, b.voice, 'the voice is presentation, so the seed moves it');
+
+  // Every note starts on a drawn frame, and the scan's lead moves them all.
+  const hz = p.time.hz;
+  assert.ok(a.at.every((s) => Math.abs(s * hz - Math.round(s * hz)) < 1e-9), 'notes sit on the frame grid');
+  const late = await listen(1, { lead: p.params.lead.max });
+  assert.notDeepEqual(late.at, a.at, 'a longer lead reaches each cell later');
+});
+
 test('contours: chaining collapses the segments into few pen-down paths', () => {
   // A plotter lifts between paths, and lifting is the slow, ugly part. Stated
   // as a RATIO the piece publishes, so it is measured rather than assumed.
@@ -1056,6 +1081,22 @@ test('a single-frame film needs exactly one frame and no spacing interval', () =
     assert.equal(v.p95GapMs, 0);
     assert.equal(v.maxGapMs, 0);
   }
+});
+
+test('a film too slow to record in real time says so, and names the export that can', () => {
+  const { filmVerdict } = require('../tools/build-page.js');
+  const even = Array.from({ length: 300 }, (_, i) => Math.round((i * 1000) / 30));
+  // The same holes, told apart by how far the loop fell behind its schedule.
+  const lost = grab(() => filmVerdict(300, 30, even.slice(1), { worstLagMs: 4 })).message;
+  assert.match(lost, /missing pictures rather than slow/);
+  const slow = grab(() => filmVerdict(300, 30, even.slice(1), { worstLagMs: 640 })).message;
+  assert.match(slow, /holds 299 of 300 frames\. The export fell 640 ms behind/);
+  assert.match(slow, /draws slower than real time/);
+  assert.match(slow, /Export MP4 instead/);
+  assert.doesNotMatch(slow, /rather than slow/);
+  const bursts = even.map((_, i) => Math.floor(i / 30) * 1000 + (i % 30) * 1.3);
+  assert.match(grab(() => filmVerdict(300, 30, bursts, { worstLagMs: 900 })).message, /spacing is uneven.*draws slower than real time/);
+  assert.equal(filmVerdict(300, 30, even, { worstLagMs: 900 }).frames, 300, 'a complete, even film passes however it was paced');
 });
 
 test('a film with every frame and uneven spacing is refused, and so is one missing a frame', () => {

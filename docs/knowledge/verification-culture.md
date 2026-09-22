@@ -16,6 +16,7 @@ Use evidence that matches the claim:
 - Mutation checks show whether the intended assertion detects a particular defect. A subprocess failure is not evidence that the intended assertion fired.
 - Byte comparisons establish equality for the compared artifacts in the recorded environment.
 - Browser checks exercise native canvas and export paths in the tested browser. They do not establish other browsers or physical devices.
+- Browser timings measure drawing only when rasterization is forced before the clock is read; drawing calls can return before any pixel is painted.
 - Inspect rendered output across seeds and parameter ranges to assess composition, layering, and readability. Numerical agreement does not establish artistic quality.
 
 For export behavior and replay requirements, see [output formats](output-formats.md). For executable checks and their scope, see [development guidance](development.md).
