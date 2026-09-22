@@ -26,6 +26,8 @@ The page offers WebM export for animated pieces. The implementation requires `Me
 
 The exporter walks the piece's frame grid and paces frames at its declared rate. Rendering and encoding are measured separately. Before returning a result, it parses the recorded WebM blocks and validates frame count and spacing. A rejected export displays an error instead of downloading a result.
 
+A timeline with one frame still requires exactly one recorded frame, but has no spacing interval to validate. Its report uses zero for the gap statistics and `1 / hz` seconds for the frame's declared interval. This reported duration does not independently measure playback duration in a video player.
+
 `window.__artifex.video()` returns the export report and blob without saving a file. The page's video button downloads that result. A still has no video timeline and cannot use this exporter.
 
 A completed build or Node suite does not verify the browser's encoder, download behavior, or how the saved video looks. Validate those in the target browser using the saved file.

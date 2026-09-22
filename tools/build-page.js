@@ -176,6 +176,9 @@ function filmVerdict(expected, hz, times) {
       : 'the gaps are even, so they went missing at an end';
     throw new Error(`the file holds ${v.frames} of ${expected} frames, and ${where}. This film is missing pictures rather than slow. Nothing was saved.`);
   }
+  // One recorded frame has no spacing interval. Keep the numeric gap report at
+  // zero, but only accept it after checking the exact declared frame count.
+  if (expected === 1) return v;
   if (Math.abs(v.medianGapMs - budget) > budget * 0.1 || v.p95GapMs > budget * 1.5 || v.maxGapMs > budget * 3) {
     throw new Error(`the frame spacing is uneven: median ${v.medianGapMs.toFixed(1)} ms, p95 ${v.p95GapMs.toFixed(1)} ms, `
       + `max ${v.maxGapMs.toFixed(1)} ms against a budget of ${budget.toFixed(1)} ms. Every frame is there and the film would still judder. Nothing was saved.`);
