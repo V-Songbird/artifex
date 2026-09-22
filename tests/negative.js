@@ -1279,6 +1279,34 @@ const MUTATIONS = [
     to: '    alive = [];',
     expect: 'owned teardown waits for named processes and fails only while one still runs',
   },
+  {
+    why: 'the settle detune glides on a schedule from where each node started, not from where it is',
+    file: 'examples/settle.js',
+    from: '        const lift = s.traj[rest + i * 2 + 1] - s.traj[o + 1];',
+    to: '        const lift = (s.traj[rest + i * 2 + 1] - s.traj[i * 2 + 1]) * (1 - k / den);',
+    expect: 'settle: the soundtrack follows the system frame by frame, and comes to rest with it',
+  },
+  {
+    why: 'the settle level fades on the clock instead of following the energy trace',
+    file: 'examples/settle.js',
+    from: '      const heard = Math.max(0, Math.log(s.energy[f] / STILL)) / Math.log(TEMP0 / STILL);',
+    to: '      const heard = k === 0 ? 0 : 1 - k / den;',
+    expect: 'settle: the soundtrack follows the system frame by frame, and comes to rest with it',
+  },
+  {
+    why: 'the settle sound reads the frame index instead of the snapshot draw shows, one behind from frame 72',
+    file: 'examples/settle.js',
+    from: '      const f = snapshotAt(k / den);',
+    to: '      const f = Math.min(FRAMES, k);',
+    expect: 'settle: the soundtrack follows the system frame by frame, and comes to rest with it',
+  },
+  {
+    why: 'the settle bass follows its node off-centre like every other voice',
+    file: 'examples/settle.js',
+    from: '    const reach = s.nodes.map((nd) => WIDTH * Math.max(0, Math.log2((top + 1 - nd.deg) / 2)) / Math.log2(top / 2));',
+    to: '    const reach = s.nodes.map(() => WIDTH);',
+    expect: 'settle: the soundtrack follows the system frame by frame, and comes to rest with it',
+  },
 
 ];
 

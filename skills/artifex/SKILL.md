@@ -212,7 +212,7 @@ the notes at the top of each say what it is in the set to prove.
 | `attractor.js` | a chaotic orbit printed as a density — arithmetic only | a still | **raster only** |
 | `inversion.js` | three circle mirrors — closed-form reflections and a bounded depth-first word tree | a still | raster + vector |
 | `cover.js` | a front cover — the type is set first, the picture grows around it | a still | raster + vector |
-| `settle.js` | forces finding their own arrangement — state that evolves, still scrubbable | 144 frames | raster + vector |
+| `settle.js` | forces finding their own arrangement — state that evolves, still scrubbable; its sound follows that state on every frame | 144 frames | raster + vector + sound |
 | `pixel-field.js` | seeded pixel noise, domain warp and advection; explicit optional WGSL preview | 240 frames | **raster only** |
 
 Subject-specific algorithms stay with their examples; core helpers must remain
@@ -373,16 +373,46 @@ Audio graph on the `OfflineAudioContext` it is handed, as long as the film.
 MP4 export renders it offline and muxes it with the frames; `renderSound` in
 `core/render.js` renders it alone. Read the [piece API](../../docs/apis/piece-api.md#soundtrack).
 
-- **Schedule each sound at the second its picture appears.** Frame `i` sits at
+Sound follows the picture in two ways, and one piece may use both. An **event**
+starts on the frame that shows its cause: `readout.js` sounds each digit on the
+frame that fills its cell. A **control** follows a quantity the state holds on
+every frame: `settle.js` detunes, pans and levels one voice per node from its
+solved trajectory.
+
+- **Schedule each event at the second its picture appears.** Frame `i` sits at
   `i / hz`. Find the frame with draw's own arithmetic rather than an estimate of
-  it, as `readout.js` does, and the two cannot drift. Cut the sound with the
-  shot list the picture uses: `shots(list, timeline)`.
+  it, and the two cannot drift. Cut the sound with the shot list the picture
+  uses: `shots(list, timeline)`.
+- **Set each control on every drawn frame.** At `i / hz`, give the AudioParam
+  the value of the snapshot `draw` shows on frame `i`, through the lookup `draw`
+  uses rather than a copy of it: `setValueAtTime` on the first frame,
+  `linearRampToValueAtTime` after. The sound is continuous and still sampled
+  from exactly the frames the film holds.
+- **Map through the ear's scales.** Use cents for pitch and a logarithm for
+  level. A quantity that falls through orders of magnitude then stays audible
+  for its whole course instead of going silent after its first second. Scale it
+  against a bound it cannot exceed, not one run's own peak, so a calmer run
+  sounds calmer.
+- **Silence can be state.** Measure a level from a threshold, the smallest
+  value that is heard at all, and it reaches zero where the quantity falls below
+  it. The sound then starts and ends with its cause rather than on a fade the
+  clock schedules.
+- **Keep the bass in the middle and centre the rest on the sound.** Let a
+  voice's pan width grow with its pitch, so the lowest voices stay centred, as
+  mixes keep them: a panned voice loses up to 3 dB when a phone or a mono
+  speaker folds the mix to one channel. Pan the others from the middle of the
+  voices that may move, weighted by power and width; panning from the middle of
+  the picture lets the loudest elements lean the whole mix to one side.
+- **Keep every control a function of the state.** A test can then pool
+  (state, value) pairs from every frame of two different runs and require one
+  curve through them; a control driven by the clock gives two answers for one
+  state.
 - **One solved state feeds both.** Read positions, counts and timings from
   `state`; never re-derive them in `sound` from different constants.
 - **Noise comes from the seed.** Fill buffers from `rng(seed)`; an unseeded
   generator makes the soundtrack a function of when it was rendered.
 - **Leave headroom.** Sum the gains you schedule; `npm run browser` reports the
-  decoded peak of the film it exports.
+  decoded peak of every film it exports.
 - Web Audio rendering can differ between engines, so byte-identical sound is
   scoped to one browser, like pixels.
 

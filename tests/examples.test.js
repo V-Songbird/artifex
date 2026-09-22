@@ -871,6 +871,154 @@ test('readout: the scan line never runs back at the end of the reading', () => {
   }
 });
 
+test('settle: the soundtrack follows the system frame by frame, and comes to rest with it', async () => {
+  // readout starts a sound on the frame that shows its cause. This piece holds
+  // its state on every frame instead, so every control is read back at every
+  // frame's second and set against the snapshot that frame draws.
+  const { renderSound } = require('../core/render.js');
+  const { fakeAudio } = require('./fake-media.js');
+  const p = validate(EXAMPLES.settle);
+  const heads = playheads(p);
+  const hz = p.time.hz;
+
+  // One value per drawn frame, at that frame's second, and nothing in between.
+  const perFrame = (param) => {
+    assert.equal(param.events.length, heads.length, 'a control is set once per drawn frame');
+    return param.events.map(([how, value, at], k) => {
+      assert.equal(how, k ? 'linearRampToValueAtTime' : 'setValueAtTime');
+      assert.ok(Math.abs(at * hz - k) < 1e-9, `a control sits off the frame grid at ${at} s`);
+      return value;
+    });
+  };
+
+  const listen = async (seed, params) => {
+    const solved = solve(p, seed, params);
+    const audio = fakeAudio();
+    // Record every connection, so each voice can be followed to the speakers.
+    class Wired extends audio.Context {}
+    for (const m of ['createOscillator', 'createGain', 'createBiquadFilter', 'createStereoPanner']) {
+      Wired.prototype[m] = function () {
+        const node = audio.Context.prototype[m].call(this);
+        node.to = [];
+        node.connect = (target) => { node.to.push(target); return target; };
+        return node;
+      };
+    }
+    await renderSound(p, solved, { OfflineAudioContext: Wired });
+    const ctx = audio.record.contexts[0];
+    const voices = audio.record.oscillators;   // voice i is node i's, in creation order
+    const routes = voices.map((v) => {
+      const route = [v];
+      while (route[route.length - 1] !== ctx.destination) {
+        const next = route[route.length - 1].to;
+        assert.equal(next && next.length, 1, 'every voice reaches the speakers along one path');
+        route.push(next[0]);
+      }
+      return route;
+    });
+    const shared = routes[0].filter((n) => routes.every((route) => route.includes(n)));
+    const s = solved.state;
+    const N = s.nodes.length;
+    const steps = s.energy.length - 1;
+    // Draw's own lookup, which is not the frame index: there are 145 snapshots
+    // and 144 drawn frames, so from frame 72 on each frame shows snapshot k + 1.
+    const f = heads.map((t) => Math.round(frameT(p, t) * steps));
+    return {
+      s, N, f, voices, rest: steps * N * 2,
+      gain: routes.map((route) => route[1].gain.value),
+      detune: voices.map((v) => perFrame(v.detune)),
+      pan: routes.map((route) => perFrame(route.find((n) => n.pan).pan)),
+      level: perFrame(shared.find((n) => n.gain).gain),
+      cutoff: perFrame(shared.find((n) => n.Q).frequency),
+    };
+  };
+
+  // Pool (state, sound) pairs from every voice, every frame and two different
+  // trajectories: a control that followed the clock instead of the state would
+  // give two answers for one state, or one answer for two. Only the floor may
+  // hold one value for many states: the silence below the slowest motion heard.
+  const rises = (pairs, what, strict) => {
+    pairs.sort((x, y) => x[0] - y[0]);
+    const floor = Math.min(...pairs.map(([, y]) => y));
+    for (let j = 1; j < pairs.length; j++) {
+      const [x0, y0] = pairs[j - 1];
+      const [x1, y1] = pairs[j];
+      const ok = (strict && x1 - x0 > 1e-9 && y0 > floor) ? y1 > y0 : y1 >= y0 - 1e-9;
+      assert.ok(ok, `${what} is not a function of the state: ${y0} at ${x0}, ${y1} at ${x1}`);
+    }
+  };
+
+  const a = await listen(p.seed);
+  const b = await listen(p.seed, { tension: p.params.tension.max });
+  const other = await listen(1);
+  assert.notDeepEqual(a.s.energy, b.s.energy, 'the two trajectories must differ, or pooling proves nothing');
+
+  // The chord is the table's: every voice is a harmonic of the lowest, counted
+  // down from the busiest node by its degree, and a re-roll cannot move it.
+  for (const run of [a, other]) {
+    assert.equal(run.voices.length, run.N, 'one voice per node');
+    const low = Math.min(...run.voices.map((v) => v.frequency.value));
+    const top = Math.max(...run.s.nodes.map((nd) => nd.deg));
+    run.voices.forEach((v, i) => assert.ok(Math.abs(v.frequency.value / low - (top + 1 - run.s.nodes[i].deg)) < 1e-9,
+      `voice ${i} is not on the harmonic its degree gives`));
+  }
+  assert.deepEqual(other.voices.map((v) => v.frequency.value), a.voices.map((v) => v.frequency.value),
+    'a re-roll moved the chord, which would make the graph sound like something else');
+  assert.notDeepEqual(other.detune[0], a.detune[0], 'the seed moves where each voice starts');
+
+  // Every voice at every drawn frame of both trajectories, against the
+  // snapshot that frame draws.
+  const lifts = [], moves = [], spreads = [];
+  for (const run of [a, b]) {
+    const { s, N, rest } = run;
+    assert.ok(run.voices.some((v) => v.frequency.value < 250), 'there is a bass to keep in the middle');
+    run.f.forEach((f, k) => {
+      const bands = new Map();
+      for (let i = 0; i < N; i++) {
+        const o = f * N * 2 + i * 2;
+        lifts.push([s.traj[rest + i * 2 + 1] - s.traj[o + 1], run.detune[i][k]]);
+        const hz = run.voices[i].frequency.value;
+        if (!bands.has(hz)) bands.set(hz, []);
+        bands.get(hz).push([s.traj[o], run.pan[i][k]]);
+      }
+      // Place follows position where a voice may spread: on every frame the
+      // voices on one harmonic are heard in the order their nodes stand, up to
+      // the edges of the room. Below 250 Hz a voice stays in the middle, and the
+      // room is centred on the sound, so the loudest voices cannot lean the mix.
+      let lo = Infinity, hi = -Infinity;
+      for (const [hz, pairs] of bands) {
+        if (hz < 250) {
+          assert.ok(pairs.every(([, v]) => v === 0), `a ${hz} Hz voice left the middle on frame ${k}`);
+          continue;
+        }
+        rises(pairs, 'pan', false);
+        for (const [, v] of pairs) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+      }
+      spreads.push(hi - lo);
+      const power = run.gain.map((g) => g * g);
+      const lean = run.pan.reduce((sum, pan, i) => sum + power[i] * pan[k], 0) / power.reduce((x, y) => x + y, 0);
+      assert.ok(Math.abs(lean) < 0.01, `frame ${k} leans ${lean.toFixed(3)} to one side`);
+      moves.push([s.energy[f], run.level[k], run.cutoff[k]]);
+    });
+    const spread = (k) => run.detune.reduce((sum, d) => sum + Math.abs(d[k]), 0) / N;
+    assert.ok(spread(0) > 100, `the scattered start is only ${spread(0).toFixed(1)} cents out of tune`);
+    assert.ok(run.detune.every((d) => Math.abs(d[heads.length - 1]) < 1), 'the settled graph is in tune');
+    assert.equal(run.level[0], 0, 'nothing has moved yet, so nothing is heard');
+    assert.ok(run.level[heads.length - 1] < 0.05, 'and the system at rest falls silent');
+    assert.ok(Math.max(...run.level) > 0.95, 'the first moves are heard at full level');
+  }
+  // Pitch follows height: a voice is sharp by how far its node sits above the
+  // place it comes to rest, flat below it, and in tune once it is there.
+  rises(lifts, 'detune', true);
+  assert.ok(Math.min(...spreads) > 0.3, 'on every frame the voices above the bass spread across the room');
+  // Level follows the energy trace drawn at the foot of the plate, and
+  // brightness follows level.
+  rises(moves.map(([e, v]) => [e, v]), 'level', true);
+  rises(moves.map(([, v, c]) => [v, c]), 'cutoff', true);
+  const cutoffs = moves.map(([, , c]) => c);
+  assert.ok(Math.max(...cutoffs) > 4 * Math.min(...cutoffs), 'and the brightness moves with it');
+});
+
 test('contours: chaining collapses the segments into few pen-down paths', () => {
   // A plotter lifts between paths, and lifting is the slow, ugly part. Stated
   // as a RATIO the piece publishes, so it is measured rather than assumed.

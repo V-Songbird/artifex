@@ -20,6 +20,15 @@
 // The table below is hand-authored and is the whole of the piece's subject: three
 // clusters of different density, three bridges between them, and one chain with a
 // fork hanging off the middle cluster. 46 nodes, 68 edges, degrees 1 to 6.
+//
+// IT ALSO SOUNDS, AND NOTHING IN IT IS A NOTE. `readout` starts a sound on the
+// frame that shows its cause; this piece follows a state that is there on every
+// frame. Each node is a voice on the harmonic its degree gives -- the table
+// again, so no seed can move the chord -- detuned by how far the node still sits
+// above or below its resting place, panned where it stands with the bass held in
+// the middle, and as loud and as bright as the energy trace says the system is
+// moving. The cluster comes into tune as the graph comes to rest, and falls
+// silent with it.
 
 'use strict';
 
@@ -108,6 +117,37 @@ const TEMP0 = 26;            // displacement safety at the first step, falling
                              // final frame is still by construction
 const TAIL = 7;              // frames of travel a node leaves behind it
 const TAIL_MIN = 1.6;        // below this much travel there is no trail at all
+
+// ---- the soundtrack -------------------------------------------------------
+const ROOT = 98;             // G2, in Hz. A node sounds the harmonic its degree
+                             // counts down from the busiest node, so at rest the
+                             // hubs hold the root and its octave, the leaves the
+                             // sixth harmonic, and the spectrum of the chord is
+                             // the degree table of the graph.
+const CENTS = 90;            // detune per unit of asinh(offset / NEAR)
+const NEAR = 4;              // design units. Nearer its rest than this a voice's
+                             // detune falls linearly to nothing; farther, it
+                             // grows as a logarithm, so a node 200 units out is
+                             // about a major third away, where a straight line
+                             // with the same slope at rest would put it almost
+                             // four octaves off.
+const STILL = 0.0003;        // the slowest mean travel per substep that is heard
+                             // at all. The level is the logarithm of the trace
+                             // above it: the trace falls through five orders of
+                             // magnitude, and a level read linearly would be
+                             // silent after the first second.
+const DARK = 500;            // lowpass cutoff in Hz at rest,
+const BRIGHT = 8000;         // and in full motion
+const WIDTH = 0.85;          // how far to either side the highest voices may pan.
+                             // A voice's reach grows with its pitch in octaves
+                             // above the root's octave, so the root and octave,
+                             // at 98 and 196 Hz, stay in the middle, as mixes
+                             // keep the bass: a panned voice loses up to 3 dB
+                             // when a phone or a mono speaker folds the mix to
+                             // one channel, and a centred one keeps its level.
+const LEVEL = 0.8;           // the voices' gains sum to this, so even every voice
+                             // peaking at once, through the filter's 2 dB
+                             // resonance, stays within full scale
 
 // ---------------------------------------------------------------------------
 
@@ -260,7 +300,7 @@ module.exports = {
 
   draw(g, s, t) {
     const N = s.nodes.length;
-    const f = Math.min(FRAMES, Math.max(0, Math.round(t * FRAMES)));
+    const f = snapshotAt(t);
     const at = (frame, i) => {
       const o = frame * N * 2 + i * 2;
       return [s.traj[o], s.traj[o + 1]];
@@ -341,7 +381,7 @@ module.exports = {
       // Size AND value both come from degree, so contrast falls away from the
       // parts of the graph doing the most work instead of every node receiving
       // the same algorithmic attention.
-      const r = 2.0 + 1.35 * nd.deg + nd.grain;
+      const r = radius(nd);
       g.fillStyle = mix(MUTE, INK, 0.34 + 0.13 * nd.deg);
       g.beginPath();
       g.arc(x, y, r, 0, Math.PI * 2);
@@ -391,7 +431,85 @@ module.exports = {
     g.lineTo(px, base - TRACE_H - 8);
     g.stroke();
   },
+
+  // Heard, and continuously. Every control is set on every drawn frame, at that
+  // frame's second, from the snapshot draw shows at that frame, and ramps
+  // linearly to the next. The sound is sampled from the trajectory the picture
+  // is drawn from, at the rate it is drawn, so the two cannot drift apart.
+  sound(ctx, s, timeline) {
+    const N = s.nodes.length;
+    const den = timeline.loop ? timeline.frames : timeline.frames - 1;
+    const rest = FRAMES * N * 2;   // the last snapshot: where every node ends up
+    const top = Math.max(...s.nodes.map((nd) => nd.deg));
+    // A voice is as loud as its disc is large, so the ear, like the eye, is sent
+    // to the nodes doing the most work.
+    const area = s.nodes.map((nd) => radius(nd) ** 2);
+    const sum = area.reduce((a, b) => a + b, 0);
+    // How far each voice may pan: nothing for the root and its octave, then a
+    // share of WIDTH that grows by octaves up to the highest harmonic.
+    const reach = s.nodes.map((nd) => WIDTH * Math.max(0, Math.log2((top + 1 - nd.deg) / 2)) / Math.log2(top / 2));
+    // The room is centred on the voices that may move in it, weighted by their
+    // power and their reach, so the heaviest cannot pull the whole mix aside.
+    const pull = area.map((a, i) => a * a * reach[i]);
+    const weight = pull.reduce((a, b) => a + b, 0);
+
+    const bus = ctx.createGain();
+    const tone = ctx.createBiquadFilter();
+    tone.type = 'lowpass';
+    bus.connect(tone);
+    tone.connect(ctx.destination);
+
+    const voices = s.nodes.map((nd, i) => {
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = ROOT * (top + 1 - nd.deg);
+      const level = ctx.createGain();
+      level.gain.value = (LEVEL * area[i]) / sum;
+      const place = ctx.createStereoPanner();
+      osc.connect(level);
+      level.connect(place);
+      place.connect(bus);
+      osc.start(0);
+      return { osc, place };
+    });
+
+    for (let k = 0; k < timeline.frames; k++) {
+      const f = snapshotAt(k / den);
+      const at = k / timeline.hz;
+      const ramp = k === 0 ? 'setValueAtTime' : 'linearRampToValueAtTime';
+      // Silent while the motion is too slow to hear: the first frame, before the
+      // first step, and the last few, as the medium stops everything. Full level
+      // is the displacement ceiling, the most the trace can ever read, and not
+      // this run's own peak: a calmer system sounds calmer instead of being
+      // scaled up to full.
+      const heard = Math.max(0, Math.log(s.energy[f] / STILL)) / Math.log(TEMP0 / STILL);
+      bus.gain[ramp](heard, at);
+      tone.frequency[ramp](DARK * (BRIGHT / DARK) ** heard, at);
+      let mid = 0;
+      for (let i = 0; i < N; i++) mid += pull[i] * s.traj[f * N * 2 + i * 2];
+      mid /= weight;
+      for (let i = 0; i < N; i++) {
+        const o = f * N * 2 + i * 2;
+        // Above its resting place is sharp and below is flat; to one side of that
+        // middle is to that side of the room.
+        const lift = s.traj[rest + i * 2 + 1] - s.traj[o + 1];
+        voices[i].osc.detune[ramp](CENTS * Math.asinh(lift / NEAR), at);
+        voices[i].place.pan[ramp](reach[i] * Math.max(-1, Math.min(1, (s.traj[o] - mid) / EX)), at);
+      }
+    }
+  },
 };
+
+/** The snapshot a playhead shows. `draw` and `sound` both read through it, so
+ *  the picture and the soundtrack cannot sample the trajectory differently. */
+function snapshotAt(t) {
+  return Math.min(FRAMES, Math.max(0, Math.round(t * FRAMES)));
+}
+
+/** A node's disc radius: size is degree, and the grain is the pen's. */
+function radius(nd) {
+  return 2.0 + 1.35 * nd.deg + nd.grain;
+}
 
 /** Blend two hex colours in display space, with the position clamped to [0, 1]. */
 function mix(a, b, u) {
