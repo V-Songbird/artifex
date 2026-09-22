@@ -1103,6 +1103,27 @@ const MUTATIONS = [
     expect: 'the MP4 film is refused by name without an encoder, and a still offers none',
   },
   {
+    why: 'the page offers the WebM recorder where the MP4 film encodes',
+    file: 'tools/build-page.js',
+    from: "      document.getElementById('webm').hidden = format !== 'webm';",
+    to: "      document.getElementById('webm').hidden = false;",
+    expect: 'a browser that encodes the film H.264 offers only the MP4 export',
+  },
+  {
+    why: 'the WebM fallback never appears, so a browser without H.264 offers no film it can make',
+    file: 'tools/build-page.js',
+    from: "    var format = !p.time ? null : encodes ? 'mp4' : 'webm';",
+    to: "    var format = !p.time ? null : 'mp4';",
+    expect: 'where H.264 cannot encode the film, the page offers the WebM recorder instead',
+  },
+  {
+    why: 'an H.264 answer about the previous piece changes the film offered for the current one',
+    file: 'tools/build-page.js',
+    from: '    if (p === current) {',
+    to: '    if (true) {',
+    expect: 'an unanswered H.264 question blocks nothing, and a late answer stays with its piece',
+  },
+  {
     why: 'the readout melody follows the seed instead of the data',
     file: 'examples/readout.js',
     from: '      note(at, ROOT_NOTE + DEGREES[c.digit],',

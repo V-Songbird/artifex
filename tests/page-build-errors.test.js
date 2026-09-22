@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const { html, bundle } = require('../tools/build-page.js');
 const { nullSurface } = require('../tools/bench.js');
+const { fakeCodecs } = require('./fake-media.js');
 
 function registry(module) {
   module.exports = {
@@ -27,7 +28,7 @@ function registry(module) {
   };
 }
 
-function openPage({ deferPng = false, videoFailure = null } = {}) {
+function openPage({ deferPng = false, videoFailure = null, codecs = null } = {}) {
   const elements = new Map(), downloads = [], frames = new Map();
   const pngCallbacks = [];
   const activity = { clears: 0, draws: 0 };
@@ -41,6 +42,8 @@ function openPage({ deferPng = false, videoFailure = null } = {}) {
       getContext() {
         const surface = nullSurface({ w: this.width, h: this.height });
         surface.clearRect = () => { activity.clears++; };
+        // The film's colour conversion reads each drawn frame back.
+        surface.getImageData = (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4) });
         return surface;
       },
       toBlob(callback) {
@@ -66,6 +69,7 @@ function openPage({ deferPng = false, videoFailure = null } = {}) {
   };
   const overrides = "\n__def('examples/index.js', " + registry.toString() + ');';
   if (videoFailure) sandbox.MediaStreamTrackGenerator = function () { throw new Error(videoFailure); };
+  if (codecs) Object.assign(sandbox, { VideoEncoder: codecs.VideoEncoder, VideoFrame: codecs.VideoFrame });
   const script = html(bundle() + overrides).match(/<script>([\s\S]*)<\/script>/)[1];
   vm.runInNewContext(script, sandbox);
   const api = sandbox.window.__artifex;
@@ -181,4 +185,63 @@ test('the MP4 film is refused by name without an encoder, and a still offers non
   assert.equal(api.read().error, null, 'a rejection for the previous piece does not land on this one');
   assert.deepEqual(downloads, []);
   assert.equal(elements.get('film1').disabled, true, 'and the still keeps its limit once that export settles');
+});
+
+test('a browser that encodes the film H.264 offers only the MP4 export', async () => {
+  const asked = [];
+  const { api, elements } = openPage({ codecs: fakeCodecs({ supported: (config) => { asked.push(config); return true; } }) });
+  assert.equal(await api.filmFormat(), 'mp4');
+  assert.equal(elements.get('mp4').hidden, false);
+  assert.equal(elements.get('webm').hidden, true, 'no WebM control where the MP4 film encodes');
+  api.setSeed(42);
+  const report = await api.film();
+  assert.deepEqual(asked[1], asked[0], 'the page asks about the configuration the export encodes with');
+  assert.equal(report.codec, asked[0].codec);
+  api.select('valid');
+  assert.equal(await api.filmFormat(), null, 'a still offers no film');
+  assert.equal(elements.get('webm').hidden, true);
+  api.select('conditional');
+  assert.equal(await api.filmFormat(), 'mp4');
+  assert.equal(asked.length, 2, 'the encoder is asked once per size and frame rate, then by the export');
+});
+
+test('where H.264 cannot encode the film, the page offers the WebM recorder instead', async () => {
+  const cases = [[null, /no VideoEncoder/], [fakeCodecs({ supported: () => false }), /no H\.264 encoder here accepts 40 x 30 at 4 Hz/]];
+  for (const [codecs, refusal] of cases) {
+    const { api, elements } = openPage({ codecs, videoFailure: 'fixture recorder reached' });
+    assert.equal(await api.filmFormat(), 'webm');
+    assert.equal(elements.get('webm').hidden, false);
+    assert.equal(elements.get('mp4').hidden, true, 'an MP4 control that cannot encode is not offered');
+    api.setSeed(42);
+    await assert.rejects(api.film(), refusal, 'the scripted MP4 export still refuses by name');
+    assert.equal(elements.get('video').disabled, false);
+    elements.get('video').onclick();
+    await new Promise(setImmediate);
+    assert.equal(api.read().error, 'fixture recorder reached', 'the WebM control runs the recorder');
+    api.select('valid');
+    assert.equal(await api.filmFormat(), null);
+    assert.equal(elements.get('webm').hidden, true, 'a still offers no film');
+    assert.equal(elements.get('mp4').hidden, false);
+  }
+});
+
+test('an unanswered H.264 question blocks nothing, and a late answer stays with its piece', async () => {
+  let answer;
+  const gate = new Promise((resolve) => { answer = resolve; });
+  const codecs = fakeCodecs({ supported: () => false });
+  const ask = codecs.VideoEncoder.isConfigSupported;
+  codecs.VideoEncoder.isConfigSupported = async (config) => { await gate; return ask(config); };
+  const { api, elements, activity } = openPage({ codecs });
+  api.setSeed(42);
+  assert.equal(api.read().error, null);
+  assert.ok(activity.draws > 0, 'the build and the drawing do not wait for the encoder');
+  assert.equal(elements.get('film1').disabled, false);
+  assert.equal(elements.get('mp4').hidden, false, 'MP4 shows until the encoder answers');
+  assert.equal(elements.get('webm').hidden, true);
+  api.select('valid');
+  answer();
+  assert.equal(await api.filmFormat(), null);
+  await new Promise(setImmediate);
+  assert.equal(elements.get('webm').hidden, true, 'the refusal for the timeline piece stays with it');
+  assert.equal(elements.get('mp4').hidden, false);
 });

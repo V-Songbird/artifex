@@ -10,7 +10,7 @@ A piece keeps one design box and one drawing function. [`core/render.js`](../../
 
 ## Interactive page and PNG
 
-`npm run page` bundles the registered examples into `out/index.html`. The page provides example selection, seed and parameter controls, playback, PNG export at 1x, 4x, and 8x, MP4 export at 1x and 2x, and WebM export. PNG and MP4 export redraw into an offscreen canvas at the requested resolution.
+`npm run page` bundles the registered examples into `out/index.html`. The page provides example selection, seed and parameter controls, playback, PNG export at 1x, 4x, and 8x, and a film: MP4 export at 1x and 2x, or WebM export where the browser cannot encode the MP4 film. PNG and MP4 export redraw into an offscreen canvas at the requested resolution.
 
 `npm run page -- ./piece.cjs` instead selects one external CommonJS piece and writes `piece-page.html` beside its source. It provides the same controls and exports. `npm run seeds -- ./piece.cjs 9 0.5` writes `piece-seeds.html` beside the source for comparison. See [external pieces](development.md#external-pieces) for invocation from another project, bundled dependency limits and parameter sweeps.
 
@@ -70,19 +70,25 @@ Where WebGL2 is available, a shader converts a texture copy of the drawn frame a
 
 Before returning a result, the exporter reads the finished bytes back: exactly one H.264 track, every declared frame, uniform frame durations on the frame grid, the requested size, a first keyframe, the limited-range BT.709 colour tag, every sample inside the media data, and, with sound, one AAC track or one Opus track with its `dOps`, within one audio packet of the film's length. An Opus track's pre-skip does not count toward that length. A failed check displays an error and nothing is saved. `window.__artifex.film({ scale })` returns the report and blob without saving a file; the report includes draw, conversion, encode, soundtrack and total times and the ratio to real time, and `report.sound.codec` names the soundtrack's sample entry, `mp4a` or `Opus`.
 
-`npm run browser` exports one film this way in installed Edge, decodes it, requires the first, middle and last decoded frames to resemble their own drawn frames at least as closely as their neighbours (a held frame ties with an identical neighbour), and requires a declared soundtrack to decode to sound as long as the film. It exercises the soundtrack codec the browser chooses, which is AAC wherever AAC encodes, as in installed Edge, and the colour conversion the browser supports, which is the GPU route there. The Opus path and the CPU conversion are checked in Node against controlled encoders. Decoded frames and sound are compared within the tested browser; they are not byte-identical to the drawing.
+`npm run browser` requires the page to offer MP4 and hide WebM in installed Edge, then exports one film this way, decodes it, requires the first, middle and last decoded frames to resemble their own drawn frames at least as closely as their neighbours (a held frame ties with an identical neighbour), and requires a declared soundtrack to decode to sound as long as the film. It exercises the soundtrack codec the browser chooses, which is AAC wherever AAC encodes, as in installed Edge, and the colour conversion the browser supports, which is the GPU route there. The Opus path and the CPU conversion are checked in Node against controlled encoders. Decoded frames and sound are compared within the tested browser; they are not byte-identical to the drawing.
+
+### Which film the page offers
+
+For an animated piece, the page asks `VideoEncoder.isConfigSupported` about the H.264 configuration the export uses at 1x. `filmConfig(piece, VideoEncoder, { scale })` in [`core/film.js`](../../core/film.js) makes that choice for both the question and the export. The page asks once per design size and frame rate. It starts and draws without waiting for the answer, and shows the MP4 controls until the answer arrives. Where the encoder accepts no configuration, or the browser has no `VideoEncoder` or `VideoFrame`, the page hides the MP4 controls and offers the WebM export instead. A still offers no film. Either film control stays disabled until the piece has a valid build.
+
+`window.__artifex.filmFormat()` resolves to `'mp4'`, `'webm'` or `null` (a still) once the page has applied the answer for the selected piece. The scripted exports do not follow the controls: `film()` still refuses by name where H.264 cannot encode the film, and `video()` still records wherever its recorder APIs exist, so existing scripts keep working. A 2x MP4 can still be refused where 1x encodes; its error names the size and asks for a smaller scale.
 
 ## WebM
 
-The page offers WebM export for animated pieces. The implementation requires `MediaStreamTrackGenerator`, `VideoFrame`, and `MediaRecorder` with VP8 WebM support. Availability must be checked in the browser used for delivery. It carries no soundtrack; use MP4 for a piece with sound.
+WebM is the fallback film: the page offers it only for an animated piece whose MP4 this browser cannot encode (see [which film the page offers](#which-film-the-page-offers)). The implementation requires `MediaStreamTrackGenerator`, `VideoFrame`, and `MediaRecorder` with VP8 WebM support. Availability must be checked in the browser used for delivery. It carries no soundtrack, even for a piece that declares one.
 
-The exporter walks the piece's frame grid and paces frames at its declared rate, because `MediaRecorder` stamps frames by the wall clock. A piece whose frames take longer than their budget to draw and encode therefore cannot be recorded; the export measures how far it fell behind its schedule and says so, naming MP4 as the export that keeps every frame. Rendering and encoding are measured separately. Before returning a result, it parses the recorded WebM blocks and validates frame count and spacing. A rejected export displays an error instead of downloading a result.
+The exporter walks the piece's frame grid and paces frames at its declared rate, because `MediaRecorder` stamps frames by the wall clock. A piece whose frames take longer than their budget to draw and encode therefore cannot be recorded; the export measures how far it fell behind its schedule and says so, naming MP4 from a browser that encodes H.264 as the export that keeps every frame. Other work on the same machine can make a light piece miss its schedule too. Rendering and encoding are measured separately. Before returning a result, it parses the recorded WebM blocks and validates frame count and spacing. A rejected export displays an error instead of downloading a result.
 
 A timeline with one frame still requires exactly one recorded frame, but has no spacing interval to validate. Its report uses zero for the gap statistics and `1 / hz` seconds for the frame's declared interval. This reported duration does not independently measure playback duration in a video player.
 
-`window.__artifex.video()` returns the export report and blob without saving a file. The page's video button downloads that result. A still has no video timeline and cannot use this exporter.
+`window.__artifex.video()` returns the export report and blob without saving a file, whichever film the page offers. The page's video button downloads that result. A still has no video timeline and cannot use this exporter.
 
-A completed build or Node suite does not verify the browser's encoder, download behavior, or how the saved video looks. Validate those in the target browser using the saved file.
+The Node page tests cover both offers with stand-in encoders. `npm run browser` exercises only the MP4 offer, because installed Edge encodes H.264. A completed build or Node suite does not verify the browser's encoder, download behavior, or how the saved video looks. Validate those in the target browser using the saved file.
 
 ## Inspection and reproducibility
 

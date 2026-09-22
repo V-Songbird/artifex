@@ -176,7 +176,7 @@ function filmVerdict(expected, hz, times, pace) {
   const slow = pace && pace.worstLagMs > budget
     ? ` The export fell ${pace.worstLagMs.toFixed(0)} ms behind its schedule against a ${budget.toFixed(1)} ms frame budget: `
       + 'this piece draws slower than real time, and a recorder that stamps frames by the wall clock cannot keep them. '
-      + 'Export MP4 instead, which encodes every frame at its own time. Nothing was saved.'
+      + 'Export MP4 from a browser that encodes H.264, which keeps every frame at its own time. Nothing was saved.'
     : null;
   if (v.frames !== expected) {
     if (slow) throw new Error(`the file holds ${v.frames} of ${expected} frames.${slow}`);
@@ -302,13 +302,17 @@ function html(bundle, options = {}) {
       </div>
       <div class="row"><button id="svg">SVG</button></div>
       <div class="note" id="svgnote"></div>
-      <div class="row" style="margin-top:10px">
-        <button id="film1" data-film="1">MP4 1x</button>
-        <button id="film2" data-film="2">MP4 2x</button>
+      <div id="mp4">
+        <div class="row" style="margin-top:10px">
+          <button id="film1" data-film="1">MP4 1x</button>
+          <button id="film2" data-film="2">MP4 2x</button>
+        </div>
+        <div class="note" id="filmnote"></div>
       </div>
-      <div class="note" id="filmnote"></div>
-      <div class="row" style="margin-top:10px"><button id="video">WebM video</button></div>
-      <div class="note" id="videonote"></div>
+      <div id="webm" hidden>
+        <div class="row" style="margin-top:10px"><button id="video">WebM video</button></div>
+        <div class="note" id="videonote"></div>
+      </div>
     </div>
 
     <div class="group">
@@ -436,16 +440,48 @@ function select(name) {
     : 'This piece declares raster only, and means it. Asking for SVG is refused rather than answered with half a picture.';
   document.getElementById('video').disabled = !current.time || videoBusy;
   document.getElementById('videonote').textContent = current.time
-    ? render.playheads(current).length + ' frames, recorded in real time: a piece slower than its frame rate cannot be recorded this way.'
-    : 'A still has no frame list to walk, so there is no film to write.';
+    ? render.playheads(current).length + ' frames, recorded in real time and without sound, because this browser cannot encode the MP4 film.'
+      + ' A piece slower than its frame rate cannot be recorded this way.'
+    : '';
   Array.prototype.forEach.call(filmButtons, function (b) { b.disabled = !current.time || filmBusy; });
   document.getElementById('filmnote').textContent = current.time
     ? render.playheads(current).length + ' frames, each encoded at its own time however long it takes to draw'
       + (current.sound ? ', with the soundtrack the piece declares.' : '.')
-    : '';
+    : 'A still has no frame list to walk, so there is no film to write.';
+  offerFilm();
   Array.prototype.forEach.call(box.children, function (b) { b.classList.toggle('on', b.dataset.name === name); });
   buildParams();
   resolve();
+}
+
+// THE FILM ON OFFER. MP4 is the film export wherever this browser encodes the
+// piece's H.264 configuration -- the one core/film.js picks at 1x. Only where it
+// cannot does the page offer the real-time WebM recorder, which loses frames on
+// a piece slower than real time and carries no sound. The encoder is asked once
+// per size and frame rate, and nothing waits for it: MP4 shows until it answers.
+var h264 = {}, filmOffer = null;
+
+function offerFilm() {
+  var p = current, asked = null;
+  if (p.time) {
+    var key = p.size.w + 'x' + p.size.h + '@' + p.time.hz;
+    if (!h264[key]) {
+      h264[key] = typeof VideoEncoder !== 'function' || typeof VideoFrame !== 'function' ? Promise.resolve(false)
+        : film.filmConfig(p, VideoEncoder).then(function (config) { return !!config; }, function () { return false; });
+    }
+    asked = h264[key];
+  }
+  document.getElementById('mp4').hidden = false;
+  document.getElementById('webm').hidden = true;
+  filmOffer = Promise.resolve(asked).then(function (encodes) {
+    var format = !p.time ? null : encodes ? 'mp4' : 'webm';
+    // An answer about a piece no longer selected says nothing about this one.
+    if (p === current) {
+      document.getElementById('mp4').hidden = format === 'webm';
+      document.getElementById('webm').hidden = format !== 'webm';
+    }
+    return format;
+  });
 }
 
 function buildParams() {
@@ -712,7 +748,8 @@ document.getElementById('svg').onclick = function () {
 ${webmBlockTimes.toString()}
 ${filmVerdict.toString()}
 
-// THE FRAME-EXACT FILM. It walks playheads(piece) -- the piece's OWN frame list
+// THE REAL-TIME WEBM, offered only where the MP4 below cannot be encoded (see
+// offerFilm). It walks playheads(piece) -- the piece's OWN frame list
 // -- and hands each drawn frame to the encoder itself, so the file holds the
 // frames the piece declares rather than the ones the machine managed to paint.
 //
@@ -930,6 +967,10 @@ window.__artifex = {
   setPreview: setPreview,
   video: exportVideo,
   film: exportFilm,
+  // The film export the page offers for the selected piece, once the encoder has
+  // answered: 'mp4', 'webm' where H.264 cannot encode it, or null for a still.
+  // video() and film() stay callable either way; only the controls follow this.
+  filmFormat: function () { return filmOffer; },
   examples: EXAMPLES,
   setSeed: function (s) { document.getElementById('seed').value = s; resolve(); },
   setT: function (v) { stop(); t = v; document.getElementById('t').value = v * 1000; frame(); },

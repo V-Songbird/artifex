@@ -1160,7 +1160,7 @@ test('a film too slow to record in real time says so, and names the export that 
   const slow = grab(() => filmVerdict(300, 30, even.slice(1), { worstLagMs: 640 })).message;
   assert.match(slow, /holds 299 of 300 frames\. The export fell 640 ms behind/);
   assert.match(slow, /draws slower than real time/);
-  assert.match(slow, /Export MP4 instead/);
+  assert.match(slow, /Export MP4 from a browser that encodes H\.264/);
   assert.doesNotMatch(slow, /rather than slow/);
   const bursts = even.map((_, i) => Math.floor(i / 30) * 1000 + (i % 30) * 1.3);
   assert.match(grab(() => filmVerdict(300, 30, bursts, { worstLagMs: 900 })).message, /spacing is uneven.*draws slower than real time/);
