@@ -109,7 +109,7 @@ Arbitrary drawing code must uphold that requirement; cross-browser pixel equalit
 ## Output limits
 
 SVG requires a piece that declares vector support and uses supported drawing operations. Raster-only pieces are valid.
-MP4 export requires an animated piece and a browser with WebCodecs H.264 encoding; a piece that declares sound also needs AAC encoding. It keeps every frame however slowly the piece draws. WebM export records in real time, so it needs frames cheaper than their frame budget, and carries no sound. See [format behavior and export checks](docs/knowledge/output-formats.md).
+MP4 export requires an animated piece and a browser with WebCodecs H.264 encoding; a piece that declares sound also needs AAC or Opus encoding, and gets AAC wherever the browser encodes it. It keeps every frame however slowly the piece draws. WebM export records in real time, so it needs frames cheaper than their frame budget, and carries no sound. See [format behavior and export checks](docs/knowledge/output-formats.md).
 
 ## Troubleshooting
 

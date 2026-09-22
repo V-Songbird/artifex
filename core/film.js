@@ -132,11 +132,45 @@ function aacConfig(rate, channels) {
 }
 
 /**
+ * The `dOps` box from the encoder's OpusHead (RFC 7845, section 5.1): the same
+ * fields in the same order under version 0, big-endian where OpusHead is
+ * little-endian. The pre-skip is kept, because it is how many decoded samples
+ * are the encoder warming up rather than the soundtrack.
+ */
+function opusSpecific(head) {
+  // Mapping families other than 0 add stream counts and a channel mapping.
+  const table = head && head[18] ? 2 + head[9] : 0;
+  if (!head || head.length < 19 + table || String.fromCharCode(...head.subarray(0, 8)) !== 'OpusHead') {
+    throw new Error('film: the Opus encoder described its stream with something other than an OpusHead');
+  }
+  const le = new DataView(head.buffer, head.byteOffset, head.byteLength);
+  return box('dOps', u8(0), u8(head[9]), u16(le.getUint16(10, true)), u32(le.getUint32(12, true)), u16(le.getInt16(16, true)),
+    u8(head[18]), head.subarray(19, 19 + table));
+}
+
+/** An Opus sample entry: 48 kHz whatever rate went in, and its `dOps`. */
+function opusEntry(head) {
+  const dOps = opusSpecific(head);
+  return box('Opus', new Uint8Array(6), u16(1), new Uint8Array(8), u16(head[9]), u16(16), u16(0), u16(0), u32(48000 * 65536), dOps);
+}
+
+/** How many 48 kHz samples an Opus packet holds, from its TOC byte (RFC 6716, section 3.1). */
+function opusSamples(packet) {
+  const config = packet[0] >> 3;
+  const frame = config < 12 ? [480, 960, 1920, 2880][config & 3]
+    : config < 16 ? [480, 960][config & 1]
+      : [120, 240, 480, 960][config & 3];
+  const code = packet[0] & 3;
+  return frame * (code === 0 ? 1 : code === 3 ? packet[1] & 63 : 2);
+}
+
+/**
  * One MP4 file: moov first, so a player can start before it has the whole file.
  *
  * `video`: { width, height, timescale, delta, samples: [{ data, key, offset }],
- * avcC, colour }. `audio`, optional: { sampleRate, channels, samples: [Uint8Array],
- * asc, bitrate }. Every sample is its own chunk.
+ * avcC, colour }. `audio`, optional, is AAC as { sampleRate, channels, samples:
+ * [Uint8Array], asc, bitrate }, or Opus as { codec: 'opus', head, samples }, where
+ * `head` is the encoder's OpusHead. Every sample is its own chunk.
  */
 function muxMp4({ video, audio = null }) {
   const tracks = [{
@@ -149,10 +183,12 @@ function muxMp4({ video, audio = null }) {
     keys: video.samples.map((s, i) => (s.key ? i + 1 : 0)).filter(Boolean),
   }];
   if (audio) {
+    const opus = audio.codec === 'opus';
+    const deltas = audio.samples.map((s) => (opus ? opusSamples(s) : 1024));
     tracks.push({
-      id: 2, handler: 'soun', timescale: audio.sampleRate, duration: audio.samples.length * 1024,
-      entry: aacEntry(audio.channels, audio.sampleRate, audio.asc, audio.bitrate),
-      samples: audio.samples, deltas: audio.samples.map(() => 1024),
+      id: 2, handler: 'soun', timescale: opus ? 48000 : audio.sampleRate, duration: deltas.reduce((n, d) => n + d, 0),
+      entry: opus ? opusEntry(audio.head) : aacEntry(audio.channels, audio.sampleRate, audio.asc, audio.bitrate),
+      samples: audio.samples, deltas,
     });
   }
   const ftyp = box('ftyp', ascii('isom'), u32(512), ascii('isom'), ascii('iso2'), ascii('avc1'), ascii('mp41'));
@@ -179,8 +215,9 @@ const CONTAINERS = new Set(['moov', 'trak', 'mdia', 'minf', 'stbl', 'dinf', 'edt
 
 /**
  * What an MP4 file actually holds: each track's codec, size, timescale, sample
- * durations, keyframes, colour tag and whether every sample lies inside the
- * media data. Reads any file with 32-bit chunk offsets, not only this writer's.
+ * durations, keyframes, colour tag, an Opus track's `dOps`, and whether every
+ * sample lies inside the media data. Reads any file with 32-bit chunk offsets,
+ * not only this writer's.
  */
 function readMp4(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -203,7 +240,7 @@ function readMp4(bytes) {
         const scale = view.getUint32(b + (v1 ? 20 : 12));
         out.seconds = (v1 ? Number(view.getBigUint64(b + 24)) : view.getUint32(b + 16)) / scale;
       } else if (kind === 'trak') {
-        t = { handler: null, codec: null, colour: null, deltas: [], keys: null, sizes: [], chunks: [], stsc: [], offsets: false };
+        t = { handler: null, codec: null, colour: null, opus: null, deltas: [], keys: null, sizes: [], chunks: [], stsc: [], offsets: false };
         out.tracks.push(t);
       } else if (kind === 'hdlr') t.handler = type(b + 8);
       else if (kind === 'mdhd') {
@@ -217,12 +254,18 @@ function readMp4(bytes) {
           t.width = view.getUint16(entry + 32);
           t.height = view.getUint16(entry + 34);
           walk(entry + 86, entry + view.getUint32(entry));
-        } else if (t.codec === 'mp4a') {
+        } else if (t.codec === 'mp4a' || t.codec === 'Opus') {
           t.channels = view.getUint16(entry + 24);
           t.sampleRate = view.getUint32(entry + 32) >>> 16;
+          if (t.codec === 'Opus') walk(entry + 36, entry + view.getUint32(entry));
         }
       } else if (kind === 'colr' && type(b) === 'nclx') {
         t.colour = { primaries: view.getUint16(b + 4), transfer: view.getUint16(b + 6), matrix: view.getUint16(b + 8), fullRange: (bytes[b + 10] & 0x80) !== 0 };
+      } else if (kind === 'dOps' && size - head >= 11) {
+        t.opus = {
+          version: bytes[b], channels: bytes[b + 1], preSkip: view.getUint16(b + 2), inputSampleRate: view.getUint32(b + 4),
+          outputGain: view.getInt16(b + 8), mappingFamily: bytes[b + 10],
+        };
       } else if (kind === 'stts') {
         for (let i = 0, n = view.getUint32(b + 4); i < n; i++) t.deltas.push([view.getUint32(b + 8 + i * 8), view.getUint32(b + 12 + i * 8)]);
       } else if (kind === 'ctts') t.offsets = true;
@@ -261,7 +304,7 @@ function readMp4(bytes) {
       return {
         kind: x.handler, codec: x.codec, width: x.width, height: x.height, channels: x.channels, sampleRate: x.sampleRate,
         timescale: x.timescale, duration: x.duration, samples: x.sizes.length,
-        bytes: x.sizes.reduce((s, v) => s + v, 0), deltas: x.deltas, keys: x.keys, colour: x.colour,
+        bytes: x.sizes.reduce((s, v) => s + v, 0), deltas: x.deltas, keys: x.keys, colour: x.colour, opus: x.opus,
         reordered: x.offsets, inside,
       };
     }),
@@ -301,15 +344,17 @@ function filmCheck(expected, file) {
   let sound = null;
   if (expected.sound) {
     const a = audio[0];
-    if (audio.length !== 1 || a.codec !== 'mp4a' || !a.inside || a.samples === 0) {
+    // A decoder opens an Opus track by its dOps, and drops the pre-skip it names.
+    const opus = a && a.codec === 'Opus' ? a.opus : null;
+    if (audio.length !== 1 || !(a.codec === 'mp4a' || (opus && opus.version === 0)) || !a.inside || a.samples === 0) {
       throw new Error('film: the piece declares sound and the file holds no playable soundtrack. Nothing was saved.');
     }
-    const heard = a.duration / a.timescale;
-    const grain = 1024 / a.timescale;
+    const heard = a.duration / a.timescale - (opus ? opus.preSkip / 48000 : 0);
+    const grain = Math.max(...a.deltas.map(([, d]) => d)) / a.timescale;
     if (heard < seconds - grain || heard > seconds + 2 * grain) {
       throw new Error(`film: the soundtrack lasts ${heard.toFixed(3)} s against a ${seconds.toFixed(3)} s film. Nothing was saved.`);
     }
-    sound = { seconds: heard, channels: a.channels, sampleRate: a.sampleRate };
+    sound = { codec: a.codec, seconds: heard, channels: a.channels, sampleRate: a.sampleRate };
   } else if (audio.length) {
     throw new Error('film: the piece declares no sound and the file holds a soundtrack. Nothing was saved.');
   }
@@ -352,20 +397,24 @@ function copyBytes(source) {
   return source instanceof ArrayBuffer ? new Uint8Array(source.slice(0)) : new Uint8Array(source.buffer.slice(source.byteOffset, source.byteOffset + source.byteLength));
 }
 
+// AAC first, because more MP4 players play it. Opus is the fallback where the
+// encoder refuses AAC: a piece with sound gets its soundtrack or no film at all.
 async function encodeSound(env, buffer, bitrate) {
   const rate = buffer.sampleRate;
   const channels = buffer.numberOfChannels;
-  const config = { codec: 'mp4a.40.2', sampleRate: rate, numberOfChannels: channels, bitrate };
-  const support = await env.AudioEncoder.isConfigSupported(config);
-  if (!support || !support.supported) {
-    throw new Error('film: this browser cannot encode AAC, and a film without its soundtrack is not written');
+  let config = null;
+  for (const codec of ['mp4a.40.2', 'opus']) {
+    const candidate = { codec, sampleRate: rate, numberOfChannels: channels, bitrate };
+    const support = await env.AudioEncoder.isConfigSupported(candidate);
+    if (support && support.supported) { config = candidate; break; }
   }
+  if (!config) throw new Error('film: this browser encodes neither AAC nor Opus, and a film without its soundtrack is not written');
   const samples = [];
-  let asc = null;
+  let description = null;
   let failure = null;
   const encoder = new env.AudioEncoder({
     output(chunk, meta) {
-      if (meta && meta.decoderConfig && meta.decoderConfig.description) asc = copyBytes(meta.decoderConfig.description);
+      if (meta && meta.decoderConfig && meta.decoderConfig.description) description = copyBytes(meta.decoderConfig.description);
       const data = new Uint8Array(chunk.byteLength);
       chunk.copyTo(data);
       samples.push(data);
@@ -387,7 +436,13 @@ async function encodeSound(env, buffer, bitrate) {
   await encoder.flush();
   encoder.close();
   if (failure) throw failure;
-  return { samples, asc: asc || aacConfig(rate, channels), sampleRate: rate, channels, bitrate };
+  if (config.codec === 'opus') {
+    // Only the OpusHead knows the pre-skip, and a guessed one moves the sound
+    // against the pictures. Refused here, before a single frame is drawn.
+    if (!description) throw new Error('film: the Opus encoder gave no OpusHead, so the film cannot say where its sound starts');
+    return { codec: 'opus', head: description, samples };
+  }
+  return { samples, asc: description || aacConfig(rate, channels), sampleRate: rate, channels, bitrate };
 }
 
 /**

@@ -48,13 +48,33 @@ function fakeAudio() {
 }
 
 /**
+ * An OpusHead (RFC 7845, section 5.1), the description a browser's Opus encoder
+ * gives: little-endian, by default stereo at 48 kHz with the 312-sample pre-skip
+ * Edge's encoder reports.
+ */
+function opusHead({ channels = 2, preSkip = 312, rate = 48000, gain = 0, family = 0, table = [] } = {}) {
+  const head = new Uint8Array(19 + table.length);
+  const le = new DataView(head.buffer);
+  head.set(Array.from('OpusHead', (ch) => ch.charCodeAt(0)));
+  head[8] = 1;
+  head[9] = channels;
+  le.setUint16(10, preSkip, true);
+  le.setUint32(12, rate, true);
+  le.setInt16(16, gain, true);
+  head[18] = family;
+  head.set(table, 19);
+  return head;
+}
+
+/**
  * VideoEncoder, VideoFrame, AudioEncoder and AudioData stand-ins. Each encoded
  * frame is four bytes naming its index; `supported` decides which configs are
- * accepted, `colorSpace` is what the encoder reports, `aac` whether AAC encodes,
+ * accepted, `colorSpace` is what the encoder reports, `aac` and `opus` whether
+ * each encodes, `describe` whether the audio encoder describes its stream,
  * `failAt` a frame index whose encode reports an error, and `stall` an encoder
  * whose queue never drains.
  */
-function fakeCodecs({ supported = () => true, colorSpace, aac = true, failAt = -1, stall = false } = {}) {
+function fakeCodecs({ supported = () => true, colorSpace, aac = true, opus = true, describe = true, failAt = -1, stall = false } = {}) {
   const log = { frames: [], audioFrames: 0 };
   const space = colorSpace === undefined
     ? { primaries: 'bt709', transfer: 'iec61966-2-1', matrix: 'bt709', fullRange: true }
@@ -100,25 +120,32 @@ function fakeCodecs({ supported = () => true, colorSpace, aac = true, failAt = -
     close() {}
   }
 
-  // Emits one chunk per 1024 frames received, as an AAC encoder does, and the
-  // remainder on flush.
+  // Emits one chunk per frame of samples received -- 1024 for AAC, 960 (20 ms)
+  // for Opus -- and the remainder on flush. The first chunk carries the decoder
+  // description: an AudioSpecificConfig, or an OpusHead.
   class AudioEncoder {
-    static async isConfigSupported(config) { return { supported: aac && config.codec === 'mp4a.40.2', config }; }
+    static async isConfigSupported(config) {
+      return { supported: config.codec === 'mp4a.40.2' ? aac : config.codec === 'opus' && opus, config };
+    }
 
     constructor({ output, error }) { Object.assign(this, { output, error, held: 0, sent: 0 }); }
 
-    configure(config) { this.config = config; }
+    configure(config) { this.config = config; this.frame = config.codec === 'opus' ? 960 : 1024; }
 
     encode(data) {
       this.held += data.numberOfFrames;
       log.audioFrames += data.numberOfFrames;
-      while (this.held >= 1024) this.emit();
+      while (this.held >= this.frame) this.emit();
     }
 
     emit() {
-      const meta = this.sent === 0 ? { decoderConfig: { description: Uint8Array.of(0x11, 0x90) } } : undefined;
-      this.output(chunk('key', Math.round((this.sent * 1024 * 1e6) / this.config.sampleRate), Uint8Array.of(0x21, this.sent & 255)), meta);
-      this.held = Math.max(0, this.held - 1024);
+      const isOpus = this.config.codec === 'opus';
+      const description = isOpus ? opusHead({ channels: this.config.numberOfChannels, rate: this.config.sampleRate }) : Uint8Array.of(0x11, 0x90);
+      const meta = this.sent === 0 && describe ? { decoderConfig: { description } } : undefined;
+      // 0xfc opens one 20 ms fullband CELT frame, the packet Edge's Opus encoder sends.
+      const data = Uint8Array.of(isOpus ? 0xfc : 0x21, this.sent & 255);
+      this.output(chunk('key', Math.round((this.sent * this.frame * 1e6) / this.config.sampleRate), data), meta);
+      this.held = Math.max(0, this.held - this.frame);
       this.sent++;
     }
 
@@ -130,4 +157,4 @@ function fakeCodecs({ supported = () => true, colorSpace, aac = true, failAt = -
   return { VideoEncoder, VideoFrame, AudioEncoder, AudioData, log };
 }
 
-module.exports = { fakeAudio, fakeCodecs };
+module.exports = { fakeAudio, fakeCodecs, opusHead };

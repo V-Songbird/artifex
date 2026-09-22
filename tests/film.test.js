@@ -11,22 +11,31 @@ const { validate, solve } = require('../core/piece.js');
 const { playheads } = require('../core/render.js');
 const { exportFilm, muxMp4, readMp4, filmCheck, avcCodecs, aacConfig } = require('../core/film.js');
 const { nullSurface } = require('../tools/bench.js');
-const { fakeAudio, fakeCodecs } = require('./fake-media.js');
+const { fakeAudio, fakeCodecs, opusHead } = require('./fake-media.js');
 
 const SPACE = { primaries: 'bt709', transfer: 'iec61966-2-1', matrix: 'bt709', fullRange: true };
 const AVCC = Uint8Array.of(1, 0x64, 0, 0x1f, 0xff, 0xe1, 0, 0);
 
-function film({ frames = 48, delta = 1000, timescale = 24000, keys = [0, 24], colour = SPACE, audio = 94, width = 64, height = 48 } = {}) {
+/** `n` Opus packets of one 20 ms fullband CELT frame each. */
+const celt = (n) => Array.from({ length: n }, (_, i) => Uint8Array.of(0xfc, i & 255));
+
+function film({ frames = 48, delta = 1000, timescale = 24000, keys = [0, 24], colour = SPACE, audio = 94, opus = null, width = 64, height = 48 } = {}) {
   return muxMp4({
     video: {
       width, height, timescale, delta, avcC: AVCC, colour,
       samples: Array.from({ length: frames }, (_, i) => ({ data: Uint8Array.of(i, 1, 2, 3), key: keys.includes(i) })),
     },
-    audio: audio ? {
+    audio: opus ? { codec: 'opus', head: opus.head || opusHead(), samples: opus.packets } : audio ? {
       sampleRate: 48000, channels: 2, asc: aacConfig(48000, 2), bitrate: 128000,
       samples: Array.from({ length: audio }, (_, i) => Uint8Array.of(0x21, i & 255)),
     } : null,
   });
+}
+
+/** The bytes of the first box of `type`, from its size field to its end. */
+function boxBytes(bytes, type) {
+  const at = bytes.findIndex((_, i) => String.fromCharCode(...bytes.subarray(i, i + 4)) === type) - 4;
+  return [...bytes.subarray(at, at + new DataView(bytes.buffer, bytes.byteOffset).getUint32(at))];
 }
 
 const GRID = { frames: 48, hz: 24, width: 64, height: 48, sound: true };
@@ -106,6 +115,48 @@ test('the film check refuses a file that disagrees with its frame grid, and says
   assert.match(grab(() => filmCheck(GRID, readMp4(bytes))).message, /outside the media data/);
 });
 
+test('the dOps box is the OpusHead in big-endian, with its pre-skip and channel mapping kept', () => {
+  // Every multi-byte field reads differently in the other byte order: 312
+  // samples of pre-skip, a 44.1 kHz source and -3.5 dB of output gain.
+  const stereo = film({ opus: { head: opusHead({ preSkip: 312, rate: 44100, gain: -896 }), packets: celt(101) } });
+  assert.deepEqual(boxBytes(stereo, 'dOps'), [0, 0, 0, 19, 0x64, 0x4f, 0x70, 0x73, 0, 2, 0x01, 0x38, 0, 0, 0xac, 0x44, 0xfc, 0x80, 0]);
+  const track = readMp4(stereo).tracks[1];
+  assert.equal(track.codec, 'Opus');
+  assert.deepEqual([track.channels, track.sampleRate, track.timescale], [2, 48000, 48000], 'an Opus track runs at 48 kHz, whatever rate went in');
+  assert.deepEqual(track.opus, { version: 0, channels: 2, preSkip: 312, inputSampleRate: 44100, outputGain: -896, mappingFamily: 0 });
+
+  // 5.1 under mapping family 1: the stream counts and channel mapping pass through unchanged.
+  const surround = film({ opus: { head: opusHead({ channels: 6, family: 1, table: [4, 2, 0, 4, 1, 2, 3, 5] }), packets: celt(101) } });
+  assert.deepEqual(boxBytes(surround, 'dOps').slice(8), [0, 6, 0x01, 0x38, 0, 0, 0xbb, 0x80, 0, 0, 1, 4, 2, 0, 4, 1, 2, 3, 5]);
+  assert.equal(readMp4(surround).tracks[1].channels, 6);
+
+  assert.throws(() => film({ opus: { head: Uint8Array.of(1, 2, 3), packets: celt(1) } }), /something other than an OpusHead/);
+  const cut = opusHead({ channels: 6, family: 1, table: [4, 2] });
+  assert.throws(() => film({ opus: { head: cut, packets: celt(1) } }), /something other than an OpusHead/);
+});
+
+test('an Opus packet lasts what its TOC byte says, in 48 kHz samples', () => {
+  // 20 and 10 ms CELT, 20 and 60 ms SILK, 20 ms hybrid, 2.5 ms CELT, then two
+  // equal frames, two unequal frames and a counted three.
+  const packets = [[0xfc], [0xf4], [0x08], [0x18], [0x68], [0x80], [0xfd, 0], [0xfe, 0], [0xff, 3]].map((p) => Uint8Array.from(p));
+  const track = readMp4(film({ opus: { packets } })).tracks[1];
+  assert.deepEqual(track.deltas, [[1, 960], [1, 480], [1, 960], [1, 2880], [1, 960], [1, 120], [2, 1920], [1, 2880]]);
+  assert.equal(track.duration, 13080);
+});
+
+test('the film check hears an Opus soundtrack without its pre-skip', () => {
+  // 101 packets of 20 ms less 312 samples of pre-skip: what Edge's encoder gives a two-second film.
+  const report = filmCheck(GRID, readMp4(film({ opus: { packets: celt(101) } })));
+  assert.deepEqual(report.sound, { codec: 'Opus', seconds: (101 * 960 - 312) / 48000, channels: 2, sampleRate: 48000 });
+  // Two seconds of packets, but 80 ms of them are pre-skip that no decoder plays.
+  const late = film({ opus: { head: opusHead({ preSkip: 3840 }), packets: celt(100) } });
+  assert.match(grab(() => filmCheck(GRID, readMp4(late))).message, /soundtrack lasts 1\.920 s against a 2\.000 s film/);
+  // Without its dOps no decoder can open the track.
+  const bytes = film({ opus: { packets: celt(101) } });
+  bytes[bytes.findIndex((_, i) => String.fromCharCode(...bytes.subarray(i, i + 4)) === 'dOps') + 3] = 0x78;
+  assert.match(grab(() => filmCheck(GRID, readMp4(bytes))).message, /no playable soundtrack/);
+});
+
 test('every drawn frame is encoded once, at its own timestamp, however slowly it draws', async () => {
   const { p, solved } = piece();
   const { env: e, codecs } = env({ step: 250 });
@@ -138,12 +189,30 @@ test('a piece with sound gets a soundtrack exactly as long as its film, or no fi
   assert.equal(audio.samples, Math.ceil((2 * 48000) / 1024));
   assert.ok(report.sound, 'and the report reads it from the file');
 
-  const mute = env({ aac: false });
-  await assert.rejects(exportFilm(p, solved, mute.env), /cannot encode AAC/);
+  const mute = env({ aac: false, opus: false });
+  await assert.rejects(exportFilm(p, solved, mute.env), /encodes neither AAC nor Opus/);
   assert.equal(mute.codecs.log.frames.length, 0, 'the soundtrack fails before a single frame is drawn');
   const silent = env().env;
   delete silent.AudioEncoder;
   await assert.rejects(exportFilm(p, solved, silent), /no AudioEncoder/);
+});
+
+test('a piece with sound falls back to Opus where AAC is refused, and keeps AAC wherever it is offered', async () => {
+  const { p, solved } = piece({ sound(ctx) { const o = ctx.createOscillator(); o.connect(ctx.destination); o.start(0); } });
+  const both = await exportFilm(p, solved, env().env);
+  assert.equal(readMp4(both.bytes).tracks[1].codec, 'mp4a', 'AAC stays the first choice');
+
+  const { bytes, report } = await exportFilm(p, solved, env({ aac: false }).env);
+  const audio = readMp4(bytes).tracks[1];
+  assert.equal(audio.codec, 'Opus');
+  assert.equal(audio.samples, (2 * 48000) / 960);
+  assert.deepEqual(audio.opus, { version: 0, channels: 2, preSkip: 312, inputSampleRate: 48000, outputGain: 0, mappingFamily: 0 },
+    "the encoder's pre-skip reaches the file");
+  assert.equal(report.sound.codec, 'Opus');
+
+  const blind = env({ aac: false, describe: false });
+  await assert.rejects(exportFilm(p, solved, blind.env), /gave no OpusHead/);
+  assert.equal(blind.codecs.log.frames.length, 0, 'refused before a single frame is drawn');
 });
 
 test('a still, a browser without encoders, a failing or stalled encoder and a bad scale are refused by name', async () => {
