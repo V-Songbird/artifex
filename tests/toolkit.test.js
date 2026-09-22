@@ -300,7 +300,11 @@ test('the contact sheet renders reproducible seeds, not random ones', () => {
   const { page } = require('../tools/contact-sheet.js');
   const html = page(['drift', 'contours'], 9, 1);
 
-  assert.match(html, /var seed = i \+ 1;/, 'the seeds are counted, not rolled');
+  const plans = JSON.parse(/var PLANS = (.*);/.exec(html)[1]);
+  for (const cells of plans) {
+    assert.deepEqual(cells.map((cell) => cell.seed), [1, 2, 3, 4, 5, 6, 7, 8, 9], 'the seeds are counted, not rolled');
+    assert.ok(cells.every((cell) => Object.keys(cell.params).length === 0), 'seed comparisons hold parameters at defaults');
+  }
   assert.doesNotMatch(html, /Math\.random/, 'and nothing in the sheet is random');
 
   assert.match(html, /"drift","contours"/);
@@ -310,5 +314,6 @@ test('the contact sheet renders reproducible seeds, not random ones', () => {
 
   // It renders live rather than writing SVG, which is the only way to see a
   // piece that declares raster only.
-  assert.match(html, /drawFrame\(c\.getContext\('2d'\)/);
+  assert.match(html, /measureFrame\(c\.getContext\('2d'\)/);
+  assert.match(html, /render\.drawFrame\(surface, p, solved/);
 });

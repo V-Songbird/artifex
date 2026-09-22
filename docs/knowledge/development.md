@@ -1,7 +1,7 @@
 ---
 type: knowledge
 summary: "Describes Artifex's source layout, development commands, plugin metadata, and the limits of its checks."
-related_files: ["package.json", ".nvmrc", "core/piece.js", "tests/negative.js", "tools/lint-unread.js", "tools/build-page.js", "plugin.json", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json", "skills/artifex/SKILL.md", ".github/workflows/check.yml"]
+related_files: ["package.json", ".nvmrc", "core/piece.js", "tests/negative.js", "tests/contact-sheet.test.js", "tools/contact-sheet.js", "tools/lint-unread.js", "tools/build-page.js", "plugin.json", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json", "skills/artifex/SKILL.md", ".github/workflows/check.yml"]
 ---
 
 # Developing Artifex
@@ -19,6 +19,8 @@ Artifex has no dependency installation or source compilation step. Use the Node 
 | `npm run page` | Builds the self-contained `out/index.html`. |
 | `npm run examples` | Writes registered vector examples as SVG files under `out/`. |
 | `npm run seeds -- drift 16 0.5` | Writes a contact sheet for a registered example. |
+| `npm run seeds -- drift 5 0.5 --param reach` | Writes a five-value parameter strip at the piece's fixed seed. |
+| `npm run seeds -- drift 3 0.5 --param reach,turn` | Writes a 3-by-3 parameter grid at the piece's fixed seed. |
 | `npm run bench` | Measures build, draw, and vector emission costs. |
 
 Run `npm run check` after source changes. Run the mutation suite when changing a check, contract key, or invariant; it executes a full test run for each mutation and takes longer than the unit suite.
@@ -28,6 +30,22 @@ The benchmark uses a null surface to measure drawing calls without SVG emission.
 `npm run bench` writes or replaces `out/bench.json`. `BENCH_REPS` controls its sample count and defaults to 40. Preserve a baseline elsewhere before running a comparison you need to retain.
 
 For a focused contract check, run `node --test tests/piece.test.js`. Generated pages, artwork, contact sheets, and benchmark results go under `out/`.
+
+## Contact-sheet sweeps and metrics
+
+`npm run seeds -- <piece> [count] [playhead] --param <a>[,<b>]` samples one or two declared parameter ranges evenly, including their exact minimum and maximum. It requires one registered example and distinct, declared parameter names. `count` is samples per axis (default 3, minimum 2), so a two-parameter sweep has `count * count` cells. The first parameter runs across columns; the second runs down rows. The sheet preserves those axes with keyboard-accessible horizontal scrolling on narrow screens. Other parameters retain their declared defaults, and every cell uses the piece's declared seed.
+
+Without `--param`, the existing behavior remains: `count` defaults to 9 and cells use seeds 1 through `count`. The playhead defaults to 1 in either mode. Parameter output names include the selected parameters, such as `out/drift-param-reach-turn.html`; seed output remains `out/drift-seeds.html` (or `out/seeds.html` for all examples).
+
+Each cell labels the varied values and reports three diagnostics:
+
+- **Marks:** successful canvas paint calls (`fill`, `stroke`, `fillRect`, `strokeRect`, `drawImage`, `fillText`, `strokeText`, `putImageData`). A call can paint no visible pixels; this is not an object count. Background paint calls count.
+- **Bbox coverage:** the area of the bounding rectangle around final nontransparent pixels, divided by raster canvas area. It includes background pixels: a fully painted background gives 100%. It is not ink density, foreground segmentation, or a quality score. Bounds are sampled at the preview's raster resolution, 480 pixels wide.
+- **Build ms:** elapsed time around `solve`, including state creation and the build stages, excluding drawing and pixel measurement. Timing varies between runs.
+
+`window.__sheet` retains `names`, `count`, `t`, and `failures()`, and adds `paramNames` and `cells`. Successful cell records carry `name`, `seed`, resolved `params`, quantized `t`, `buildMs`, `markCount`, `bbox` in raster pixels (null when empty), `coverage` in [0, 1], `rasterSize`, and `error: null`. Failed cells retain their inputs and an error message; later cells still render. These data let an agent filter candidates before visual review, without treating the metrics as artistic judgment.
+
+Run `node --test tests/contact-sheet.test.js` for argument, sampling, determinism, metric, and bundle-parsing checks. Actual raster output and native canvas behavior require browser verification.
 
 ## Source entry points
 

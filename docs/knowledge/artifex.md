@@ -1,7 +1,7 @@
 ---
 type: knowledge
 summary: "Explains what Artifex produces and how to render a first piece from a local checkout."
-related_files: ["package.json", "core/render.js", "examples/index.js", "skills/artifex/SKILL.md"]
+related_files: ["package.json", "core/render.js", "tools/contact-sheet.js", "examples/index.js", "skills/artifex/SKILL.md"]
 ---
 
 # Artifex
@@ -34,6 +34,15 @@ npm run seeds -- drift 9 0.5
 ```
 
 Open `out/drift-seeds.html` to inspect seeds 1 through 9 at playhead 0.5. The command accepts names from [`examples/index.js`](../../examples/index.js), not arbitrary piece file paths.
+
+To compare a parameter range while holding the piece's seed fixed:
+
+```shell
+npm run seeds -- drift 5 0.5 --param reach
+npm run seeds -- drift 3 0.5 --param reach,turn
+```
+
+Open `out/drift-param-reach.html` for a five-value strip, or `out/drift-param-reach-turn.html` for a 3-by-3 grid. Values include the declared range endpoints; the first parameter varies across columns and the second down rows. Cells show their values, paint-call count, painted-pixel bounding-box coverage (including backgrounds), and build time. See [contact-sheet metrics](development.md#contact-sheet-sweeps-and-metrics) for their definitions and the `window.__sheet.cells` inspection data.
 
 ## Make a piece
 
