@@ -167,8 +167,9 @@ function inspectPiece(name) {
   return { name, stages, manifest, paintedPixels: painted, pixels: canvas.width * canvas.height };
 }
 
-// Serialized into the page. Exports one film through the page's own MP4 path --
-// the first example that declares sound, else the first with a timeline -- then
+// Serialized into the page. Requires the page to offer the MP4 film and hide the
+// WebM fallback, then exports one film through the page's own MP4 path -- the
+// first example that declares sound, else the first with a timeline -- and
 // decodes it: the first, middle and last frames must each look at least as much
 // like their own drawn frame as like a neighbour, and a declared soundtrack must
 // decode to sound as long as the film. A held frame draws the same picture as
@@ -181,6 +182,12 @@ async function inspectFilm() {
   if (!chosen) return null;
   const [name, p] = chosen;
   api.select(name);
+  const offered = await api.filmFormat();
+  const shown = (id) => document.getElementById(id).checkVisibility();
+  if (offered !== 'mp4' || !shown('film1') || shown('video')) {
+    throw new Error(name + ': the page offers ' + offered + ' with MP4 ' + (shown('film1') ? 'shown' : 'hidden')
+      + ' and WebM ' + (shown('video') ? 'shown' : 'hidden'));
+  }
   const report = await api.film();
   const solved = api.piece.solve(p, api.read().seed);
   const heads = api.render.playheads(p);
@@ -235,7 +242,7 @@ async function inspectFilm() {
     sound = { seconds: +decoded.duration.toFixed(3), peak: +peak.toFixed(3) };
   }
   return {
-    name, codec: report.codec, frames: report.frames, seconds: report.seconds, width: report.width, height: report.height,
+    name, offered, codec: report.codec, frames: report.frames, seconds: report.seconds, width: report.width, height: report.height,
     bytes: report.bytes, colour: report.colour, realtime: report.realtime, decoded: frames, sound,
   };
 }
@@ -380,7 +387,7 @@ async function main() {
   const report = await runBrowserCheck(options);
   console.log(JSON.stringify(report, null, 2));
   const film = report.film
-    ? '; film ' + report.film.name + ' exported ' + report.film.frames + ' frames' + (report.film.sound ? ' with sound' : '') + ' and decoded'
+    ? '; film ' + report.film.name + ' offered as MP4 with WebM hidden, exported ' + report.film.frames + ' frames' + (report.film.sound ? ' with sound' : '') + ' and decoded'
     : '; no example has a timeline, so no film was exported';
   console.log('browser: ' + report.pieces.length + ' examples passed' + film + '; owned browser, server and profile cleaned up');
 }

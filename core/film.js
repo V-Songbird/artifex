@@ -530,6 +530,27 @@ function avcCodecs(width, height, hz) {
 
 const even = (v) => Math.max(2, 2 * Math.round(v / 2));
 
+/**
+ * The H.264 configuration a film of this piece is encoded with at `opt.scale`
+ * (default 1): the lowest fitting level `VideoEncoder` accepts, High profile
+ * before Main, or null when it accepts none. `opt.bitrate` replaces the
+ * bitrate derived from the frame size and rate. The export and any caller
+ * asking whether a film can be encoded share this one choice.
+ */
+async function filmConfig(piece, VideoEncoder, opt = {}) {
+  const scale = opt.scale === undefined ? 1 : opt.scale;
+  const hz = piece.time.hz;
+  const width = even(piece.size.w * scale);
+  const height = even(piece.size.h * scale);
+  const bitrate = opt.bitrate || Math.min(80e6, Math.max(2e6, Math.round(0.12 * width * height * hz)));
+  for (const codec of avcCodecs(width, height, hz)) {
+    const candidate = { codec, width, height, bitrate, bitrateMode: 'variable', framerate: hz, avc: { format: 'avc' }, latencyMode: 'quality' };
+    const support = await VideoEncoder.isConfigSupported(candidate);
+    if (support && support.supported) return candidate;
+  }
+  return null;
+}
+
 // How long the encoder's queue may stand still before the export gives up.
 const STALL_MS = 30000;
 
@@ -612,18 +633,13 @@ async function exportFilm(piece, solved, env, opt = {}) {
   const hz = piece.time.hz;
   const scale = opt.scale === undefined ? 1 : opt.scale;
   if (!Number.isFinite(scale) || scale <= 0) throw new Error(`film: scale must be a positive finite number, got ${scale}`);
-  const width = even(piece.size.w * scale);
-  const height = even(piece.size.h * scale);
-  const bitrate = opt.bitrate || Math.min(80e6, Math.max(2e6, Math.round(0.12 * width * height * hz)));
   const started = now();
 
-  let config = null;
-  for (const codec of avcCodecs(width, height, hz)) {
-    const candidate = { codec, width, height, bitrate, bitrateMode: 'variable', framerate: hz, avc: { format: 'avc' }, latencyMode: 'quality' };
-    const support = await env.VideoEncoder.isConfigSupported(candidate);
-    if (support && support.supported) { config = candidate; break; }
+  const config = await filmConfig(piece, env.VideoEncoder, { scale, bitrate: opt.bitrate });
+  if (!config) {
+    throw new Error(`film: no H.264 encoder here accepts ${even(piece.size.w * scale)} x ${even(piece.size.h * scale)} at ${hz} Hz; export at a smaller scale`);
   }
-  if (!config) throw new Error(`film: no H.264 encoder here accepts ${width} x ${height} at ${hz} Hz; export at a smaller scale`);
+  const { width, height, bitrate } = config;
 
   // The soundtrack first: it costs a fraction of the frames, and a piece whose
   // sound cannot be rendered or encoded should fail before a long export, not
@@ -719,4 +735,4 @@ async function exportFilm(piece, solved, env, opt = {}) {
   };
 }
 
-module.exports = { exportFilm, muxMp4, readMp4, filmCheck, avcCodecs, aacConfig, rgbaToNV12 };
+module.exports = { exportFilm, filmConfig, muxMp4, readMp4, filmCheck, avcCodecs, aacConfig, rgbaToNV12 };

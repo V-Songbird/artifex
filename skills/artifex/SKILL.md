@@ -337,7 +337,7 @@ establish those claims. Shader arithmetic may differ across devices.
 |---|---|
 | an interactive page | pass a real `CanvasRenderingContext2D` to `drawFrame` |
 | a print-resolution still | same, at `scale: 8` or higher. **Not capped.** |
-| a film | walk `playheads(piece)`; the frames are a property of the piece, never of how fast the machine is. The built page does it: **MP4 1x/2x**, frame-exact at any drawing speed and carrying the declared soundtrack, or `__artifex.film({ scale })`, which saves nothing and returns the report read from the file. **WebM video** records in real time, so it needs frames cheaper than their budget and has no sound |
+| a film | walk `playheads(piece)`; the frames are a property of the piece, never of how fast the machine is. The built page does it: **MP4 1x/2x**, frame-exact at any drawing speed and carrying the declared soundtrack, or `__artifex.film({ scale })`, which saves nothing and returns the report read from the file. Only where the browser cannot encode that MP4 does the page offer **WebM video**, which records in real time, so it needs frames cheaper than their budget and has no sound |
 | a plotter / print SVG | `renderVector(piece)` — declare `outputs: ['raster','vector']` first |
 
 **Chain your segments before you draw them.** A plotter lifts its pen between
