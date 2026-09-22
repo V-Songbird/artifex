@@ -532,9 +532,23 @@ const MUTATIONS = [
   {
     why: 'the contact sheet rolls its seeds, so nobody can point at the bad one twice',
     file: 'tools/contact-sheet.js',
-    from: '      var seed = i + 1;',
-    to: '      var seed = Math.floor(Math.random() * 1000);',
+    from: '      cells.push({ seed: paramNames.length ? p.seed : x + 1, params });',
+    to: '      cells.push({ seed: paramNames.length ? p.seed : Math.floor(Math.random() * 1000), params });',
     expect: 'the contact sheet renders reproducible seeds, not random ones',
+  },
+  {
+    why: 'a parameter sweep changes seeds between cells, confounding the comparison',
+    file: 'tools/contact-sheet.js',
+    from: '      cells.push({ seed: paramNames.length ? p.seed : x + 1, params });',
+    to: '      cells.push({ seed: x + 1, params });',
+    expect: 'contact sheet: a strip includes exact endpoints and holds the piece seed and other parameters fixed',
+  },
+  {
+    why: 'the two parameter axes are swapped without changing the labels',
+    file: 'tools/contact-sheet.js',
+    from: 'sample(key, axis ? y : x)',
+    to: 'sample(key, axis ? x : y)',
+    expect: 'contact sheet: a grid covers the Cartesian product with the first parameter in columns',
   },
 
 
