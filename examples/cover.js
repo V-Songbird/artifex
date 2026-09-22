@@ -22,7 +22,7 @@
 'use strict';
 
 const { rng, noise2, fbm } = require('../core/rand.js');
-const font = require('./stroke-font.js');
+const font = require('../core/stroke-font.js');
 
 const W = 840;
 const H = 1120;

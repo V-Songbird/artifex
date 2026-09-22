@@ -30,6 +30,7 @@ const { mix } = require('../core/colour.js');
 const { poly, stroke, clipPolyline, boxOf } = require('../core/path.js');
 const {
   ring, chaikin, resample, ribbon, centroid, pointInPoly, bbox, lengthOf,
+  closestPointOnSegment,
 } = require('../core/geom.js');
 
 const W = 900;
@@ -252,7 +253,17 @@ module.exports = {
       for (const f of s.forms) {
         if (f.r > 26) continue;
         if (!pointInPoly(f.centre, f.pts)) continue;
-        s.dots.push({ at: f.centre, r: Math.max(1.1, f.r * 0.09), ink: f.ink });
+        // An interior centre does not imply the whole dot fits in a concavity.
+        // Reserve clearance from every edge, including the closing segment.
+        let clearance = Infinity;
+        for (let i = 0; i < f.pts.length; i++) {
+          clearance = Math.min(clearance, closestPointOnSegment(f.centre,
+            f.pts[i], f.pts[(i + 1) % f.pts.length]).distance);
+        }
+        // Dot size follows the actual local interior, not the form's outer
+        // growth budget, which can be much larger than a folded outline.
+        const radius = Math.min(Math.max(1.1, clearance * 0.14), clearance * 0.8);
+        if (radius >= 0.5) s.dots.push({ at: f.centre, r: radius, ink: f.ink });
       }
     }],
   ],

@@ -72,6 +72,37 @@ The library has no required configuration file or environment variables. Piece d
 The [piece API](docs/apis/piece-api.md) provides a copyable example that writes one horizontal stroke to `out/first.svg`.
 Use `validate` and `solve` to build state, `drawFrame` for a canvas surface, or `renderVector` for SVG.
 
+Save a CommonJS piece as `first.cjs` in your own project:
+
+```javascript
+module.exports = {
+  name: 'first',
+  size: { w: 400, h: 300 },
+  outputs: ['raster', 'vector'],
+  draw(g) {
+    g.fillStyle = '#f5efe1';
+    g.fillRect(0, 0, 400, 300);
+    g.fillStyle = '#295c7b';
+    g.fillRect(50, 60, 300, 180);
+  },
+};
+```
+
+From that project, replace `/path/to/artifex` with the absolute library or installed-plugin directory, keeping quotes around paths:
+
+```shell
+npm --prefix "/path/to/artifex" run page -- "./first.cjs"
+npm --prefix "/path/to/artifex" run seeds -- "./first.cjs" 9 0.5
+```
+
+Open `first-page.html` or `first-seeds.html` beside your source file. Neither command changes the example registry or writes into the installed plugin.
+Relative piece paths use the directory where you invoked npm. Direct `node` invocations use their current directory.
+
+External bundles support direct, unshadowed literal `require(...)` calls. Helpers must use browser-compatible CommonJS `.js`/`.cjs` or JSON.
+Imports inside template interpolation and any template literal containing literal `</script` text are unsupported. Use ordinary quoted strings or JSON for that data.
+Loading a piece executes trusted local code; Node builtins and dynamic imports are unsupported in the browser bundle.
+See [external-piece behavior](docs/knowledge/development.md#external-pieces) for naming, dependencies and parameter sweeps.
+
 For fixed source, data, parameters, rendering configuration, and execution environment, repeated seed/playhead pairs should reproduce the same frame.
 Arbitrary drawing code must uphold that requirement; cross-browser pixel equality is not guaranteed.
 
@@ -82,7 +113,8 @@ WebM export requires an animated piece and compatible browser APIs. See [format 
 
 ## Troubleshooting
 
-If the seed tool reports `no example called`, use a name from [the registry](examples/index.js), not a source file path.
+If the seed tool reports `no example called`, use a name from [the registry](examples/index.js) or an explicit path such as `./first.cjs`.
+An external module error identifies the missing file, invalid piece field or unsupported dependency; use CommonJS code that can run in a browser.
 An SVG error naming an unsupported operation means the drawing needs a supported vector operation or raster output.
 
 ## Development

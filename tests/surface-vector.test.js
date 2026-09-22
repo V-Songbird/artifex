@@ -3,12 +3,13 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { VectorSurface, RASTER_ONLY } = require('../core/surface-vector.js');
+const { nullSurface } = require('../tools/bench.js');
 
 // ---- helpers: read the emitted path back, so geometry claims are measured ----
 
 function parsePath(d) {
   const out = [];
-  const re = /([MLCZ])([^MLCZ]*)/g;
+  const re = /([MLCAZ])([^MLCAZ]*)/g;
   let m;
   while ((m = re.exec(d))) {
     const nums = m[2].trim() === '' ? [] : m[2].trim().split(/[\s,]+/).map(Number);
@@ -34,6 +35,30 @@ function samplePoints(d, per = 24) {
           u * u * u * p0[0] + 3 * u * u * t * x1 + 3 * u * t * t * x2 + t * t * t * x,
           u * u * u * p0[1] + 3 * u * u * t * y1 + 3 * u * t * t * y2 + t * t * t * y,
         ]);
+      }
+      cur = [x, y];
+    } else if (s.cmd === 'A') {
+      // Read SVG endpoint form independently of the renderer's centre form.
+      let [rx, ry, degrees, large, sweep, x, y] = s.nums;
+      const phi = degrees * Math.PI / 180, c = Math.cos(phi), sn = Math.sin(phi);
+      const dx = (cur[0] - x) / 2, dy = (cur[1] - y) / 2;
+      const px = c * dx + sn * dy, py = -sn * dx + c * dy;
+      const correction = Math.sqrt(px * px / (rx * rx) + py * py / (ry * ry));
+      if (correction > 1) { rx *= correction; ry *= correction; }
+      const ratio = Math.sqrt(Math.max(0, (rx * rx * ry * ry - rx * rx * py * py - ry * ry * px * px)
+        / (rx * rx * py * py + ry * ry * px * px))) * (large === sweep ? -1 : 1);
+      const ox = ratio * rx * py / ry, oy = -ratio * ry * px / rx;
+      const cx = c * ox - sn * oy + (cur[0] + x) / 2;
+      const cy = sn * ox + c * oy + (cur[1] + y) / 2;
+      const a = Math.atan2((py - oy) / ry, (px - ox) / rx);
+      const end = Math.atan2((-py - oy) / ry, (-px - ox) / rx);
+      let delta = end - a;
+      if (sweep && delta < 0) delta += Math.PI * 2;
+      if (!sweep && delta > 0) delta -= Math.PI * 2;
+      for (let i = 1; i <= per; i++) {
+        const angle = a + delta * i / per;
+        const xx = rx * Math.cos(angle), yy = ry * Math.sin(angle);
+        pts.push([cx + c * xx - sn * yy, cy + sn * xx + c * yy]);
       }
       cur = [x, y];
     } else if (s.cmd === 'Z') { cur = start; }
@@ -100,26 +125,156 @@ test('quadraticCurveTo is degree-elevated exactly, not approximated', () => {
   assert.equal(firstPathD(g.toSVG()), 'M0 0C2 2 4 2 6 0');
 });
 
-test('a full arc approximates a circle to better than 3e-4 of its radius', () => {
+test('a full arc is an exact circle serialized as two SVG arcs', () => {
   const g = S();
   g.beginPath(); g.arc(50, 50, 40, 0, Math.PI * 2); g.stroke();
-  const pts = samplePoints(firstPathD(g.toSVG()), 64);
+  const d = firstPathD(g.toSVG());
+  assert.equal(parsePath(d).filter((part) => part.cmd === 'A').length, 2);
+  assert.ok(!d.includes('C'));
+  const pts = samplePoints(d, 64);
   let worst = 0;
   for (const [x, y] of pts) worst = Math.max(worst, Math.abs(Math.hypot(x - 50, y - 50) - 40) / 40);
-  assert.ok(worst < 3e-4, `worst radial error ${worst}`);
-  assert.ok(pts.length > 200);
+  assert.ok(worst < 1e-12, `worst radial error ${worst}`);
+  assert.equal(pts.length, 129);
+});
+
+test('vector and null surfaces report independently specified affine transform order', () => {
+  for (const g of [S(), nullSurface({ w: 100, h: 100 })]) {
+    assert.deepEqual(g.getTransform(), { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 });
+    g.translate(7, 11);
+    g.transform(2, 3, 4, 5, 6, 8);
+    assert.deepEqual(g.getTransform(), { a: 2, b: 3, c: 4, d: 5, e: 13, f: 19 });
+    g.translate(10, -2);
+    g.scale(-2, 0.5);
+    assert.deepEqual(g.getTransform(), { a: -4, b: -6, c: 2, d: 2.5, e: 25, f: 39 });
+    g.setTransform(1, 2, 3, 4, 5, 6);
+    g.rotate(Math.PI / 2);
+    const got = Object.values(g.getTransform());
+    for (const [i, expected] of [3, 4, -1, -2, 5, 6].entries()) assert.ok(Math.abs(got[i] - expected) < 1e-12);
+  }
+});
+
+test('transform snapshots are detached numeric objects and survive later surface changes', () => {
+  for (const g of [S(), nullSurface({ w: 100, h: 100 })]) {
+    g.setTransform(2, 3, 4, 5, 6, 7);
+    const first = g.getTransform(), second = g.getTransform();
+    assert.notStrictEqual(first, second);
+    assert.deepEqual(Object.keys(first), ['a', 'b', 'c', 'd', 'e', 'f']);
+    assert.ok(Object.values(first).every((value) => typeof value === 'number'));
+    first.a = 900; first.e = -20;
+    assert.deepEqual(g.getTransform(), { a: 2, b: 3, c: 4, d: 5, e: 6, f: 7 });
+    g.resetTransform();
+    assert.deepEqual(second, { a: 2, b: 3, c: 4, d: 5, e: 6, f: 7 });
+    assert.deepEqual(g.getTransform(), { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 });
+  }
+});
+
+test('vector and null transform stacks restore nested snapshots after replacement and reset', () => {
+  for (const g of [S(), nullSurface({ w: 100, h: 100 })]) {
+    g.translate(9, 12);
+    g.save(); g.scale(2, 3); g.save();
+    g.setTransform(4, 5, 6, 7, 8, 9); g.resetTransform();
+    g.restore();
+    assert.deepEqual(g.getTransform(), { a: 2, b: 0, c: 0, d: 3, e: 9, f: 12 });
+    g.restore();
+    assert.deepEqual(g.getTransform(), { a: 1, b: 0, c: 0, d: 1, e: 9, f: 12 });
+    g.restore();
+    assert.deepEqual(g.getTransform(), { a: 1, b: 0, c: 0, d: 1, e: 9, f: 12 }, 'an empty restore does not change the matrix');
+  }
 });
 
 test('an arc under a NON-UNIFORM scale becomes a real ellipse', () => {
-  // This is why arcs are flattened to Béziers in user space before the
-  // transform: an SVG arc command could not express this, and baking a circle
-  // would give the wrong silhouette.
+  // General affine ellipses retain the established cubic approximation.
   const g = S();
   g.scale(2, 1);
   g.beginPath(); g.arc(10, 10, 1, 0, Math.PI * 2); g.stroke();
-  const b = bbox(samplePoints(firstPathD(g.toSVG()), 64));
+  const d = firstPathD(g.toSVG());
+  assert.ok(d.includes('C') && !d.includes('A'));
+  const points = samplePoints(d, 64);
+  const b = bbox(points);
   assert.ok(Math.abs((b.x1 - b.x0) - 4) < 2e-3, `width ${b.x1 - b.x0}`);
   assert.ok(Math.abs((b.y1 - b.y0) - 2) < 2e-3, `height ${b.y1 - b.y0}`);
+  for (const [x, y] of points) {
+    assert.ok(Math.abs(Math.hypot((x - 20) / 2, y - 10) - 1) < 3e-4, 'affine fallback retains its radial accuracy');
+  }
+});
+
+test('similarity arcs transform both ellipse axes and reverse reflected sweeps', () => {
+  for (const reflect of [false, true]) {
+    const g = S();
+    const angle = 0.41, c = Math.cos(angle) * 2, s = Math.sin(angle) * 2;
+    const matrix = [c, s, reflect ? s : -s, reflect ? -c : c, 30, 40];
+    g.setTransform(...matrix);
+    g.beginPath(); g.ellipse(0, 0, 12, 4, 0.27, -0.3, 4.1); g.stroke();
+    const d = firstPathD(g.toSVG());
+    const arcs = parsePath(d).filter((part) => part.cmd === 'A');
+    assert.equal(arcs.length, 1);
+    assert.deepEqual(arcs[0].nums.slice(0, 2), [24, 8]);
+    assert.equal(arcs[0].nums[3], 1, 'a sweep longer than pi uses the large arc');
+    assert.equal(arcs[0].nums[4], reflect ? 0 : 1);
+    const det = matrix[0] * matrix[3] - matrix[1] * matrix[2];
+    for (const [x, y] of samplePoints(d, 60)) {
+      const u = (matrix[3] * (x - 30) - matrix[2] * (y - 40)) / det;
+      const v = (-matrix[1] * (x - 30) + matrix[0] * (y - 40)) / det;
+      const ex = Math.cos(0.27) * u + Math.sin(0.27) * v;
+      const ey = -Math.sin(0.27) * u + Math.cos(0.27) * v;
+      assert.ok(Math.abs(Math.hypot(ex / 12, ey / 4) - 1) < 2e-5, 'emitted points stay on the transformed ellipse');
+    }
+  }
+});
+
+test('arc serialization preserves zero, full, multiple and nearly full turns', () => {
+  const tau = Math.PI * 2;
+  for (const [end, ccw, count, sweep] of [[0, false, 0, 1], [tau, false, 2, 1],
+    [-tau, true, 2, 0], [3 * tau, false, 2, 1], [-3 * tau, true, 2, 0],
+    [2 * tau, true, 2, 0], [-2 * tau, false, 2, 1], [tau - 1e-8, false, 2, 1]]) {
+    const g = S();
+    g.beginPath(); g.arc(20, 30, 10, 0, end, ccw); g.stroke();
+    const parts = parsePath(firstPathD(g.toSVG()));
+    const arcs = parts.filter((part) => part.cmd === 'A');
+    assert.equal(arcs.length, count, `${end}, ${ccw}`);
+    assert.ok(arcs.every((part) => part.nums[4] === sweep));
+    if (count === 2) assert.deepEqual(arcs.at(-1).nums.slice(-2), parts[0].nums, 'the serialized loop returns to its start');
+  }
+});
+
+test('shear and singular transforms retain cubic arcs while roundoff rotations use SVG arcs', () => {
+  for (const matrix of [[1, 0, 0.2, 1, 0, 0], [1, 0, 0, 1.000001, 0, 0], [0, 0, 0, 0, 0, 0]]) {
+    const g = S(); g.setTransform(...matrix);
+    g.beginPath(); g.ellipse(0, 0, 10, 5, 0.2, 0, Math.PI); g.stroke();
+    const d = firstPathD(g.toSVG());
+    assert.ok(d.includes('C') && !d.includes('A'));
+  }
+  const g = S();
+  g.rotate(0.3); g.scale(2); g.rotate(-0.7);
+  g.beginPath(); g.arc(0, 0, 10, 0, Math.PI); g.stroke();
+  assert.ok(firstPathD(g.toSVG()).includes('A'));
+});
+
+test('an SVG arc updates the current point for the following quadratic and closes its subpath', () => {
+  const g = S();
+  g.beginPath(); g.moveTo(5, 5); g.arc(20, 20, 10, 0, Math.PI / 2);
+  g.quadraticCurveTo(20, 33, 26, 30); g.closePath(); g.stroke();
+  assert.equal(firstPathD(g.toSVG()), 'M5 5L30 20A10 10 0 0 1 20 30C20 32 22 32 26 30Z');
+});
+
+test('ellipses retain visible geometry when serialized radii round to zero', () => {
+  for (const [rx, ry, scale, start, end, expected] of [
+    [80, 0.000001, 1, Math.PI / 2, Math.PI * 1.5, { x0: 20, x1: 100, y0: 100, y1: 100 }],
+    [0.000001, 80, 1, 0, Math.PI, { x0: 100, x1: 100, y0: 100, y1: 180 }],
+    [0.001, 8000, 0.01, 0, Math.PI, { x0: 100, x1: 100, y0: 100, y1: 180 }],
+  ]) {
+    const g = new VectorSurface({ w: 200, h: 200 });
+    g.translate(100, 100); g.scale(scale);
+    g.beginPath(); g.ellipse(0, 0, rx, ry, 0, start, end); g.stroke();
+    const d = firstPathD(g.toSVG());
+    assert.ok(d.includes('C') && !d.includes('A'), 'an unrepresentable SVG radius keeps the cubic fallback');
+    const bounds = bbox(samplePoints(d, 32));
+    for (const key of Object.keys(expected)) assert.ok(Math.abs(bounds[key] - expected[key]) < 1e-9, key);
+  }
+  const g = S();
+  g.beginPath(); g.ellipse(0, 0, 10, 0.0001, 0, 0, Math.PI); g.stroke();
+  assert.ok(firstPathD(g.toSVG()).includes('A'), 'a representable positive radius still uses SVG arcs');
 });
 
 test('a counter-clockwise arc sweeps the other way', () => {

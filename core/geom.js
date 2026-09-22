@@ -1,9 +1,145 @@
-// Geometry on polylines: measurement, resampling, smoothing and construction.
+// Geometry on polylines: measurement, intersections, offsets and construction.
 // Boolean operations and general polygon offsetting are not implemented.
 //
 // Nothing here knows what kind of art a piece makes.
 
 'use strict';
+
+function finitePoint(p) {
+  if (!Array.isArray(p) || p.length !== 2 || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) {
+    throw new TypeError('geometry: expected a finite [x, y] point');
+  }
+}
+
+function difference(a, b) {
+  const v = [a[0] - b[0], a[1] - b[1]];
+  if (!v.every(Number.isFinite)) throw new RangeError('geometry: coordinate difference overflow');
+  return v;
+}
+
+/** Closest point on the CLOSED segment a-b, its parameter t in [0, 1], and distance. */
+function closestPointOnSegment(p, a, b) {
+  for (const q of [p, a, b]) finitePoint(q);
+  const [dx, dy] = difference(b, a);
+  const [px, py] = difference(p, a);
+  const len = Math.hypot(dx, dy);
+  if (!Number.isFinite(len)) throw new RangeError('geometry: segment length overflow');
+  // Scale the two vectors separately before dot products. This also preserves
+  // direction for subnormal segments whose hypot cannot represent their length.
+  const scale = Math.max(Math.abs(dx), Math.abs(dy));
+  const pScale = Math.max(Math.abs(px), Math.abs(py));
+  const vx = scale === 0 ? 0 : dx / scale; const vy = scale === 0 ? 0 : dy / scale;
+  const dot = pScale === 0 ? 0 : (px / pScale) * vx + (py / pScale) * vy;
+  const ratio = pScale / scale;
+  const projection = dot === 0 ? 0 : Number.isFinite(ratio)
+    ? (dot / (vx * vx + vy * vy)) * ratio
+    : ((dot * pScale) / scale) / (vx * vx + vy * vy);
+  const t = Math.max(0, Math.min(1, projection));
+  const point = t === 0 ? [...a] : t === 1 ? [...b]
+    : [a[0] * (1 - t) + b[0] * t, a[1] * (1 - t) + b[1] * t];
+  const distance = Math.hypot(p[0] - point[0], p[1] - point[1]);
+  if (!Number.isFinite(distance)) throw new RangeError('geometry: distance overflow');
+  return { point, t, distance };
+}
+
+/**
+ * Closed segment intersection: null, { type: 'point', point }, or
+ * { type: 'overlap', points: [start, end] }, ordered along a-b.
+ * Endpoints and zero-length segments count. No snapping tolerance is applied;
+ * predicates use double arithmetic, not exact computational-geometry predicates.
+ */
+function segmentIntersection(a, b, c, d) {
+  for (const p of [a, b, c, d]) finitePoint(p);
+  const r = difference(b, a);
+  const s = difference(d, c);
+  const q = difference(c, a);
+  const magnitude = Math.max(...r.map(Math.abs), ...s.map(Math.abs), ...q.map(Math.abs));
+  const hit = (point) => ({ type: 'point', point: [...point] });
+  if (magnitude === 0) return hit(a);
+  // A binary scale preserves representable differences. Dividing by an
+  // arbitrary length can turn exactly collinear integer vectors into a cross.
+  const scale = 2 ** Math.min(1023, Math.floor(Math.log2(magnitude)));
+  const [rx, ry] = r.map((v) => v / scale);
+  const [sx, sy] = s.map((v) => v / scale);
+  const [qx, qy] = q.map((v) => v / scale);
+  const cross = (x, y, u, v) => x * v - y * u;
+  const within = (p, u, v) => p[0] >= Math.min(u[0], v[0]) && p[0] <= Math.max(u[0], v[0])
+    && p[1] >= Math.min(u[1], v[1]) && p[1] <= Math.max(u[1], v[1]);
+  if (r[0] === 0 && r[1] === 0) {
+    return cross(qx, qy, sx, sy) === 0 && within(a, c, d) ? hit(a) : null;
+  }
+  if (s[0] === 0 && s[1] === 0) {
+    return cross(qx, qy, rx, ry) === 0 && within(c, a, b) ? hit(c) : null;
+  }
+  const den = cross(rx, ry, sx, sy);
+  if (den === 0) {
+    if (cross(qx, qy, rx, ry) !== 0) return null;
+    // Overlap boundaries are input endpoints, so preserve their coordinates.
+    const axis = Math.abs(r[0]) >= Math.abs(r[1]) ? 0 : 1;
+    const ends = [a, b, c, d].filter((p) => within(p, a, b) && within(p, c, d))
+      .sort((p, v) => r[axis] > 0 ? p[axis] - v[axis] : v[axis] - p[axis]);
+    if (!ends.length) return null;
+    const start = ends[0]; const end = ends[ends.length - 1];
+    if (start[0] === end[0] && start[1] === end[1]) return hit(start);
+    return { type: 'overlap', points: [[...start], [...end]] };
+  }
+  // Preserve shared ends before division can move a touching parameter off 1.
+  for (const p of [a, b]) {
+    if ((p[0] === c[0] && p[1] === c[1]) || (p[0] === d[0] && p[1] === d[1])) return hit(p);
+  }
+  const t = cross(qx, qy, sx, sy) / den;
+  const u = cross(qx, qy, rx, ry) / den;
+  if (t < 0 || t > 1 || u < 0 || u > 1) return null;
+  return hit([a[0] * (1 - t) + b[0] * t, a[1] * (1 - t) + b[1] * t]);
+}
+
+/**
+ * Offset an OPEN polyline along its left normal (-dy, dx).
+ * Miter joins fall back to bevels beyond miterLimit * abs(distance); butt ends.
+ * Consecutive duplicate points collapse. Empty/singleton inputs are copied.
+ * Reversals bevel; self-intersections are retained, not trimmed into polygons.
+ */
+function offsetPolyline(pts, distance, miterLimit = 4) {
+  if (!Number.isFinite(distance)) throw new TypeError('offsetPolyline: distance must be finite');
+  if (!Number.isFinite(miterLimit) || miterLimit < 1) throw new RangeError('offsetPolyline: miterLimit must be finite and at least 1');
+  const src = [];
+  for (const p of pts) {
+    finitePoint(p);
+    const prev = src[src.length - 1];
+    if (!prev || prev[0] !== p[0] || prev[1] !== p[1]) src.push([...p]);
+  }
+  if (src.length < 2 || distance === 0) return src;
+  const normals = [];
+  for (let i = 1; i < src.length; i++) {
+    const [dx, dy] = difference(src[i], src[i - 1]);
+    const scale = Math.max(Math.abs(dx), Math.abs(dy));
+    const ux = dx / scale; const uy = dy / scale;
+    const len = Math.hypot(ux, uy);
+    normals.push([-uy / len, ux / len]);
+  }
+  const out = [];
+  const append = (p, nx, ny, amount) => {
+    const v = [p[0] + nx * amount, p[1] + ny * amount];
+    if (!v.every(Number.isFinite)) throw new RangeError('offsetPolyline: offset overflow');
+    out.push(v);
+  };
+  append(src[0], ...normals[0], distance);
+  for (let i = 1; i < src.length - 1; i++) {
+    const a = normals[i - 1]; const b = normals[i];
+    const mx = a[0] + b[0]; const my = a[1] + b[1];
+    const len = Math.hypot(mx, my);
+    // |n0+n1| = 2*cos(turn/2), stable even near a reversal.
+    const ratio = len === 0 ? Infinity : 2 / len;
+    if (ratio <= miterLimit) {
+      append(src[i], mx / len, my / len, distance * ratio);
+    } else {
+      append(src[i], ...a, distance);
+      append(src[i], ...b, distance);
+    }
+  }
+  append(src[src.length - 1], ...normals[normals.length - 1], distance);
+  return out;
+}
 
 /** Arc length of a polyline. `close` counts the closing edge. */
 function lengthOf(pts, close = false) {
@@ -292,6 +428,7 @@ function ribbon(pts, widthAt) {
 }
 
 module.exports = {
+  closestPointOnSegment, segmentIntersection, offsetPolyline,
   lengthOf, bbox, centroid, pointInPoly,
   resample, chaikin, chain,
   ring, ribbon,

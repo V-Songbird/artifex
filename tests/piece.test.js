@@ -20,6 +20,18 @@ test('a minimal piece validates and gets defaults', () => {
   assert.deepEqual(p.build, []);
   assert.deepEqual(p.params, {});
   assert.deepEqual(p.state(), {});
+  assert.equal(p.preview, null, 'GPU preview is opt-in');
+});
+
+test('pixel preview requires an explicit bounded descriptor and a CPU draw', () => {
+  const preview = { kind: 'webgpu-pixels', wgsl: 'fn artifexPixel(p: vec2f) -> vec3f { return vec3f(p, 0); }', uniforms: () => [] };
+  assert.equal(validate({ ...minimal(), preview }).preview, preview);
+  assert.throws(() => validate({ ...minimal(), preview, outputs: ['raster', 'vector'] }), /raster-only/);
+  assert.throws(() => validate({ ...minimal(), preview, draw: undefined }), /draw.*function/);
+  for (const value of [false, [], 1, { ...preview, kind: 'auto' }, { ...preview, wgsl: '' },
+    { ...preview, wgsl: 'x'.repeat(65537) }, { ...preview, uniforms: [] }, { ...preview, shader: 'typo' }]) {
+    assert.throws(() => validate({ ...minimal(), preview: value }), /preview/);
+  }
 });
 
 test('an unknown key is refused and named', () => {

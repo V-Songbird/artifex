@@ -15,7 +15,7 @@ reference; every quantity on screen comes out of a mechanism you wrote.
 
 ## The one property everything rests on
 
-> **For a fixed piece, data, parameters and output configuration, the same seed
+> **For a fixed piece, data, parameters, output configuration and execution environment, the same seed
 > and playhead always produce the same frame — forwards, backwards, or after a
 > scrub.**
 
@@ -25,6 +25,12 @@ re-renderable at any size, and a plotter file trustworthy.
 
 Everything else here is negotiable. This is not.
 
+Reproducibility is scoped to the same JavaScript engine and rendering backend.
+Functions such as `sin`, `cos`, `exp` and `hypot`, Canvas rasterization, and
+encoding do not establish byte-identical results across engines or devices.
+Read [verification limits](../../docs/knowledge/verification-culture.md) before
+claiming portable output equality.
+
 ## Non-negotiables
 
 **1. The subject can be anything, and nothing in this library may assume
@@ -32,6 +38,11 @@ otherwise.** A city, a poster, a data field, a letterform, a creature, a
 pattern, something abstract nobody has named. If you find a default, a
 primitive or an example that only makes sense for one kind of art, that is a
 defect — report it. This rule outranks convenience, elegance and performance.
+
+This is subject neutrality, not a promise to support every medium. The piece
+contract has seeded drawing, declared parameters and an optional timeline; it
+does not define live interaction, network streams or an asset-loading lifecycle.
+See [subject neutrality](../../docs/knowledge/subject-neutrality.md).
 
 **2. Randomness is addressed, never sequential.** `core/rand.js`:
 `const R = rng(seed)`, then `R(entity, property, index)` hashes its arguments.
@@ -48,8 +59,10 @@ timeline.
 **4. A still is a legal piece.** `time: null`. Do not invent a fake reveal to
 satisfy a timeline.
 
-**5. Never cut in a way that weakens 1–4.** A second renderer, a wall clock, a
-sequential draw or a GPU path that decides a branch all cost more than they buy.
+**5. Never cut in a way that weakens 1–4.** A wall clock, sequential draw or GPU
+path must not decide reference geometry or export behavior. An explicitly
+authored approximate pixel preview may coexist with the required CPU reference;
+its float32 results are not portable output identity.
 
 ## Start here
 
@@ -87,6 +100,11 @@ that the intended check rejects each mutation. Runtime depends on the machine.
 
 `npm run page` builds `out/index.html` — every example, a seed field, a
 transport, PNG at 1x/4x/8x and SVG export, in one self-contained file.
+To render your own piece without editing the plugin, export it with
+`module.exports` from a `.cjs` file. From the user's project, run
+`npm --prefix "<library root>" run page -- "./my-piece.cjs"`.
+This writes `my-piece-page.html` beside the piece. Replace `<library root>`
+with the absolute library directory; relative piece paths start where npm was invoked.
 
 ## What the library gives you
 
@@ -99,7 +117,10 @@ require('./core/num.js')     // clamp, clamp01, lerp, unlerp, remap, smoothstep,
 require('./core/colour.js')  // rgb, hex, mix, luma, contrast, readableOn
 require('./core/path.js')    // poly, stroke, fill, clipPolyline, clipSegment, boxOf
 require('./core/geom.js')    // lengthOf, bbox, centroid, pointInPoly, resample,
-                             // chaikin, chain, ring, ribbon
+                             // chaikin, chain, ring, ribbon, closestPointOnSegment,
+                             // segmentIntersection, offsetPolyline
+require('./core/field.js')   // sampleGrid, gradient, curl, warp, threshold,
+                             // isolines, streamline, streamlines
 ```
 
 **`noise2` is value noise and `gradient2` is gradient noise.** The derivative of
@@ -108,6 +129,17 @@ whose gradients drive curls or hatch angles.
 
 These modules provide subject-independent arithmetic, path and colour operations.
 If a reusable operation needed across pieces is missing, report the gap.
+
+For segment query results and bounded open offsets, read the
+[geometry API](../../docs/apis/geometry.md). Intersections distinguish a single
+point from a collinear overlap. Offsets keep self-intersections and use limited
+miter joins with bevel fallback; they are not polygon boolean operations.
+
+For fields that end in drawing paths, read the [field API](../../docs/apis/fields.md).
+`isolines` returns raw segments and chained paths in grid coordinates;
+`streamline` walks scalar angles or vector directions with a fixed spatial step.
+`gradient` and `curl` differentiate a caller-supplied scalar field with a finite
+difference step in that field's coordinate units.
 
 **`mix` works in linear light.** `mix('#000','#fff',0.5)` is `#bcbcbc`, not
 `#808080`: the first represents half the light; averaging the encoded sRGB values
@@ -133,6 +165,26 @@ npm run seeds              # every example, nine seeds, one page
 npm run seeds drift 16 0.5 # one piece, sixteen seeds, at a playhead
 ```
 
+For a piece in the user's project, run these from that project, replacing
+`<library root>` with the absolute library directory:
+
+```shell
+npm --prefix "<library root>" run seeds -- "./my-piece.cjs" 9 0.5
+npm --prefix "<library root>" run seeds -- "./my-piece.cjs" 3 0.5 --param width
+```
+
+The first writes `my-piece-seeds.html` beside the piece. The second requires a
+declared `width` parameter and writes `my-piece-param-width.html` with a fixed
+seed. Use the piece's actual parameter name, or two names separated by a comma.
+In PowerShell, use `npm.cmd` to preserve the `--` separator when forwarding
+options such as `--param`.
+Literal `require(...)` imports of browser-compatible CommonJS helpers and JSON
+are bundled recursively. Node builtins, ESM and computed requires are unsupported.
+Use unshadowed direct calls outside template interpolation; this is a restricted
+CommonJS subset, not an arbitrary-module bundler.
+Loading the module executes trusted local code; it is not a sandbox. Keep the
+piece and its helpers in the user's project rather than modifying the plugin's examples.
+
 Automated checks cover mechanical properties; composition also requires visual
 review. The sheet uses seeds 1 through N so an identified seed can be reproduced.
 
@@ -153,13 +205,25 @@ the notes at the top of each say what it is in the set to prove.
 | `pattern.js` | one motif repeated by a wallpaper group — the structure is a group | a still | raster + vector |
 | `lsystem.js` | a grammar and a turtle — it computes a word, not coordinates | a still | raster + vector |
 | `attractor.js` | a chaotic orbit printed as a density — arithmetic only | a still | **raster only** |
+| `inversion.js` | three circle mirrors — closed-form reflections and a bounded depth-first word tree | a still | raster + vector |
 | `cover.js` | a front cover — the type is set first, the picture grows around it | a still | raster + vector |
 | `settle.js` | forces finding their own arrangement — state that evolves, still scrubbable | 144 frames | raster + vector |
+| `pixel-field.js` | seeded pixel noise, domain warp and advection; explicit optional WGSL preview | 240 frames | **raster only** |
 
 Subject-specific algorithms stay with their examples; core helpers must remain
-useful across subjects. Marching squares lives in `examples/contours.js`. The
-shared stroke font lives in `examples/stroke-font.js`, while segment chaining
-lives in `core/geom.js`.
+useful across subjects. Marching squares and flow walks live in `core/field.js`,
+used by `contours` and `drift`. The shared stroke font lives in
+`core/stroke-font.js`; `examples/stroke-font.js` remains a compatibility entry
+point exporting the same module. Segment chaining stays in `core/geom.js` and
+is used by `core/field.js` to join isoline segments.
+
+`inversion.js` reads the surface's `getTransform()` to stop circles below a
+1.4-pixel diameter. Larger PNG exports add smaller circles without moving shared
+geometry. `VectorSurface` and the benchmark null surface expose detached numeric
+`{a,b,c,d,e,f}` snapshots through `getTransform()`, without `DOMMatrix` methods.
+Ordinary SVG export uses identity scale and retains the design-resolution cutoff;
+surfaces without a reader use scale 1. The tree also stops after twelve reflections. See
+[output formats](../../docs/knowledge/output-formats.md) for that limit.
 
 ## The contract
 
@@ -167,7 +231,7 @@ lives in `core/geom.js`.
 validator and field documentation when changing a piece or the contract.
 
 Required: `name`, `size`, `draw`.
-Optional: `state`, `build`, `seed`, `time`, `outputs`, `params`.
+Optional: `state`, `build`, `seed`, `time`, `outputs`, `params`, `preview`.
 **Unknown keys are refused by name.** This catches misspelled or unsupported
 contract fields.
 
@@ -182,6 +246,7 @@ contract fields.
   time: null,                     // or { duration, hz, loop? }
   outputs: ['raster'],            // add 'vector' to claim plotter/print output
   params: {},                     // declared knobs, each of which must move the output
+  preview: null,                  // optional explicit webgpu-pixels descriptor
 }
 ```
 
@@ -215,6 +280,23 @@ frame helpers for drawing and export so they agree on the frame grid.
 The **design box never changes**. Aspect ratio, device scale and output medium
 are render-time choices — that is the whole reason one piece serves four
 outputs.
+
+For a costly opaque per-pixel field, an author may add
+`preview: { kind: 'webgpu-pixels', wgsl, uniforms }` to a raster-only piece.
+Read the exact [GPU pixel ABI](../../docs/apis/piece-api.md#optional-webgpu-pixel-preview)
+and `examples/pixel-field.js` first. WGSL defines
+`artifexPixel(position: vec2f) -> vec3f` in encoded sRGB, with fixed seed/time/size
+inputs and at most sixteen float uniforms. Keep `draw` as the CPU implementation;
+there is no automatic JavaScript translation or arbitrary GPU resource API.
+Use the resolved state seed and shared quantized clock in both implementations.
+
+The page starts on CPU, labels GPU output as approximate and falls back on
+unavailable or software adapters, insufficient device limits, initialization or
+render failure, timeout and loss. GPU preview is bounded to 4096 per axis and
+8,294,400 pixels. Exports, contact sheets and replay manifests remain CPU-based.
+Measure matching native CPU/GPU inputs and inspect local differences before
+claiming fidelity or a speedup; Node mocks and shader timings alone do not
+establish those claims. Shader arithmetic may differ across devices.
 
 ## The four outputs
 
@@ -250,7 +332,12 @@ missing half the picture.
 Macro composition must be invariant under resolution; only micro-detail
 bandwidth may rise with it.
 
-## Art direction, which is where the difficulty actually is
+## Art-direction preset: focal composition
+
+Use this optional preset when a focal relationship suits the piece. A tessellation,
+textile repeat or all-over field may deliberately give elements equal attention;
+review that intention without imposing a focal point. The following guidance
+does not add requirements to the piece contract.
 
 Review these compositional properties in rendered output:
 

@@ -34,8 +34,8 @@ const REPS = Number(process.env.BENCH_REPS || 40);
 const WARMUP = 8;
 
 /**
- * A null surface: the whole Canvas2D-shaped vocabulary, costing as close to
- * nothing as a method call can.
+ * A null surface: no painted geometry, with real transform state so adaptive
+ * pieces can make the same resolution decisions as on a drawing surface.
  *
  * WHY IT EXISTS. Timing `draw` against the vector surface measures the piece AND
  * the SVG serialiser together, so a change to either moves the number and
@@ -56,9 +56,21 @@ function nullSurface(size) {
     if (d.get || d.set) { g[k] = 0; continue; }          // a style property: a plain slot
     g[k] = noop;
   }
+  // Reuse the surface's transform rules without recording any drawing calls.
+  // A prototype-derived no-op getTransform would advertise a reader but return
+  // undefined, breaking any piece which uses it to choose a detail cutoff.
+  const transforms = new VectorSurface(size);
+  for (const name of ['save', 'restore', 'transform', 'setTransform', 'resetTransform', 'translate', 'scale', 'rotate']) {
+    g[name] = (...args) => { g.calls++; transforms[name](...args); };
+  }
+  g.getTransform = () => { g.calls++; return transforms.getTransform(); };
   g.measureText = () => ({ width: 0 });
   g.createLinearGradient = () => ({ addColorStop() {} });
   g.createRadialGradient = () => ({ addColorStop() {} });
+  // Pixel pieces still perform their complete CPU work on the null surface.
+  // Only presentation is discarded; returning no buffer would skip or break it.
+  g.createImageData = (width, height) => ({ width, height, data: new Uint8ClampedArray(width * height * 4) });
+  g.putImageData = noop;
   return g;
 }
 

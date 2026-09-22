@@ -16,6 +16,8 @@ module.exports = {
   pattern: require('./pattern.js'),
   lsystem: require('./lsystem.js'),
   attractor: require('./attractor.js'),
+  inversion: require('./inversion.js'),
   cover: require('./cover.js'),
   settle: require('./settle.js'),
+  'pixel-field': require('./pixel-field.js'),
 };

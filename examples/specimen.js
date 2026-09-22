@@ -14,7 +14,7 @@
 const { rng } = require('../core/rand.js');
 const { pick } = require('../core/num.js');
 const { readableOn, contrast } = require('../core/colour.js');
-const font = require('./stroke-font.js');
+const font = require('../core/stroke-font.js');
 
 const ROWS = ['ABCDEFGHIJKLM', 'NOPQRSTUVWXYZ', '0123456789&?!', ".,-:;'()*/"];
 

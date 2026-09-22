@@ -45,15 +45,49 @@ function clipSegment(a, b, box) {
   const dy = b[1] - a[1];
   let t0 = 0;
   let t1 = 1;
-  const edges = [[-dx, a[0] - x0], [dx, x1 - a[0]], [-dy, a[1] - y0], [dy, y1 - a[1]]];
-  for (const [p, q] of edges) {
+  const q0 = a[0] - x0;
+  const q1 = x1 - a[0];
+  const q2 = a[1] - y0;
+  const q3 = y1 - a[1];
+  {
+    const p = -dx; const q = q0;
     if (p === 0) {
       if (q < 0) return null;                  // parallel and outside
-      continue;
+    } else {
+      const r = q / p;
+      if (p < 0) { if (r > t1) return null; if (r > t0) t0 = r; }
+      else { if (r < t0) return null; if (r < t1) t1 = r; }
     }
-    const r = q / p;
-    if (p < 0) { if (r > t1) return null; if (r > t0) t0 = r; }
-    else { if (r < t0) return null; if (r < t1) t1 = r; }
+  }
+  {
+    const p = dx; const q = q1;
+    if (p === 0) {
+      if (q < 0) return null;                  // parallel and outside
+    } else {
+      const r = q / p;
+      if (p < 0) { if (r > t1) return null; if (r > t0) t0 = r; }
+      else { if (r < t0) return null; if (r < t1) t1 = r; }
+    }
+  }
+  {
+    const p = -dy; const q = q2;
+    if (p === 0) {
+      if (q < 0) return null;                  // parallel and outside
+    } else {
+      const r = q / p;
+      if (p < 0) { if (r > t1) return null; if (r > t0) t0 = r; }
+      else { if (r < t0) return null; if (r < t1) t1 = r; }
+    }
+  }
+  {
+    const p = dy; const q = q3;
+    if (p === 0) {
+      if (q < 0) return null;                  // parallel and outside
+    } else {
+      const r = q / p;
+      if (p < 0) { if (r > t1) return null; if (r > t0) t0 = r; }
+      else { if (r < t0) return null; if (r < t1) t1 = r; }
+    }
   }
   return [
     [a[0] + t0 * dx, a[1] + t0 * dy],
