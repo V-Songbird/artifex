@@ -125,6 +125,7 @@ require('./core/geom.js')    // lengthOf, bbox, centroid, pointInPoly, resample,
                              // segmentIntersection, offsetPolyline
 require('./core/field.js')   // sampleGrid, gradient, curl, warp, threshold,
                              // isolines, streamline, streamlines
+require('./core/time.js')    // span, ease, tween, shots, shotAt
 ```
 
 **`noise2` is value noise and `gradient2` is gradient noise.** The derivative of
@@ -202,7 +203,7 @@ the notes at the top of each say what it is in the set to prove.
 |---|---|---|---|
 | `drift.js` | organic, painterly — dabs, opacity, a flow field | 240 frames | **raster only** |
 | `specimen.js` | hard-edged, typographic — a stroke font, straight runs | a still | raster + vector |
-| `readout.js` | data-driven — a fixed dataset the seed may not touch; it sounds, the data choosing the pitch | 144 frames | raster + vector + sound |
+| `readout.js` | data-driven — a fixed dataset the seed may not touch; it sounds, the data choosing the pitch; picture and sound share one shot list | 168 frames | raster + vector + sound |
 | `partition.js` | recursive subdivision — area, not marks | a still | raster + vector |
 | `contours.js` | plotter-native — one pen, one weight, no fills | a still | raster + vector |
 | `packing.js` | closed forms grown until they touch — composition decided by refusal | a still | raster + vector |
@@ -271,6 +272,33 @@ draw(g, s, t, clock) {
 
 Use `clock.frame` for fixed-step lookups and `clock.hz` for the declared rate. Do
 not duplicate `duration` and `hz` as separate constants to recover a frame index.
+
+**Author motion with `core/time.js`**, not with hand-written clamps and curves:
+
+```js
+const { ease, tween, shots, shotAt } = require('./core/time.js');
+const { lerp } = require('./core/num.js');
+const SCORE = [['open', 2], ['close', 4]];   // fills a six-second timeline
+const lift = tween(0.5, 1.3, ease.out);      // a move, timed in seconds
+
+draw(g, s, t, clock) {
+  const shot = shotAt(shots(SCORE, clock), clock.frame);   // integers, not seconds
+  const y = lerp(400, 120, lift(clock.seconds));
+}
+```
+
+- **Cut on whole frames.** A cut summed in seconds can land a float either side
+  of a frame: `0.1 + 0.2` is not `0.3`. `shots` puts each cut on its nearest
+  frame once, and `shotAt` compares integers. Resolve the same list in `sound`
+  with its `timeline`, and the soundtrack cuts on the frame the picture does.
+- **A zero-length `span` is a cut**, 0 before its instant and 1 from it on.
+  `unlerp` answers 0 there, which for time is a change that never happens.
+- **`ease` curves hold their end values outside `[0, 1]`**, exactly. `back`
+  passes its mark and settles; `bump` goes out and comes back, an event such as
+  a blink. The table is frozen because every piece in a page shares it.
+- **A cut is a hard cut.** The module has no transitions.
+
+Read the [piece API](../../docs/apis/piece-api.md#authored-time) for the contracts.
 
 **Declared parameters arrive as `state.params.<name>`**, already validated
 against the range you declared. An unknown or out-of-range one is refused by
@@ -347,7 +375,8 @@ MP4 export renders it offline and muxes it with the frames; `renderSound` in
 
 - **Schedule each sound at the second its picture appears.** Frame `i` sits at
   `i / hz`. Find the frame with draw's own arithmetic rather than an estimate of
-  it, as `readout.js` does, and the two cannot drift.
+  it, as `readout.js` does, and the two cannot drift. Cut the sound with the
+  shot list the picture uses: `shots(list, timeline)`.
 - **One solved state feeds both.** Read positions, counts and timings from
   `state`; never re-derive them in `sound` from different constants.
 - **Noise comes from the seed.** Fill buffers from `rng(seed)`; an unseeded

@@ -23,8 +23,9 @@
 'use strict';
 
 const { rng, fbm, noise2 } = require('../core/rand.js');
-const { clamp01, lerp, pick } = require('../core/num.js');
+const { lerp, pick } = require('../core/num.js');
 const { streamline } = require('../core/field.js');
+const { span } = require('../core/time.js');
 
 const W = 1000;
 const H = 700;
@@ -146,7 +147,7 @@ module.exports = {
     }
 
     for (const st of s.strokes) {
-      const progress = clamp01((t - st.birth) / st.span);
+      const progress = span(st.birth, st.birth + st.span, t);
       if (progress <= 0) continue;
 
       const n = st.pts.length;

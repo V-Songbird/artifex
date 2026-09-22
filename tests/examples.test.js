@@ -767,6 +767,55 @@ test('readout: the soundtrack reads the data, and the seed only chooses its voic
   assert.notDeepEqual(late.at, a.at, 'a longer lead reaches each cell later');
 });
 
+test('readout: the reading keeps its pace, then rests on the finished reading', () => {
+  // Two shots on whole frames: six seconds of reading, then a second of rest.
+  // The reading's own last frame is the finished reading and the rest holds
+  // it, so the result stays on screen long enough to be read.
+  const p = validate(EXAMPLES.readout);
+  const heads = playheads(p);
+  assert.equal(heads.length, 168, 'seven seconds at 24 Hz');
+  const s = solve(p, p.seed).state;
+  const slots = s.cells.reduce((sum, c) => sum + c.digit, 0);
+  const at = (i) => record(EXAMPLES.readout, undefined, heads[i]);
+  const filled = (g) => g.ops.filter((o) => o.startsWith('fill:')).length;
+  const scanning = (g) => g.ops.includes(`stroke:${s.accent}:2`);
+
+  const before = at(142);
+  assert.ok(scanning(before) && filled(before) < slots, 'one frame before the end of the reading, the scan is still reading');
+  const done = at(143);
+  assert.equal(filled(done), slots, 'the reading ends on its 144th frame, with every slot filled');
+  assert.equal(scanning(done), false, 'and the scan gone');
+  for (const i of [144, 155, 167]) assert.equal(at(i).digest, done.digest, `rest frame ${i} holds the finished reading`);
+});
+
+test('readout: every digit is heard on the frame that first shows it', async () => {
+  // Picture and sound resolve the same shots, so the notes are checked against
+  // the drawing itself rather than against a copy of its arithmetic. A cell
+  // showing a slot sets one fill colour; each digit sounds as two oscillators,
+  // after the row's own low note on its first column.
+  const { renderSound } = require('../core/render.js');
+  const { fakeAudio } = require('./fake-media.js');
+  const p = validate(EXAMPLES.readout);
+  const solved = solve(p, p.seed);
+  const audio = fakeAudio();
+  await renderSound(p, solved, { OfflineAudioContext: audio.Context });
+  const osc = audio.record.oscillators;
+  const heard = [];
+  let i = 0;
+  for (const c of solved.state.cells) {
+    if (c.col === 0) i++;
+    // A zero fills no slot, so it is heard and never shown.
+    if (c.digit > 0) heard.push(Math.round(osc[i].at * p.time.hz));
+    i += 2;
+  }
+  assert.equal(i, osc.length, 'every oscillator belongs to a row or a digit');
+  const shown = playheads(p).map((t) => record(EXAMPLES.readout, undefined, t).ops.filter((o) => o.startsWith('fillStyle=')).length - 1);
+  assert.ok(shown[0] === 0 && shown[shown.length - 1] > 80, `the cells shown run from ${shown[0]} to ${shown[shown.length - 1]}`);
+  for (let f = 0; f < shown.length; f++) {
+    assert.equal(heard.filter((h) => h <= f).length, shown[f], `frame ${f}: the cells shown and the digits heard disagree`);
+  }
+});
+
 test('contours: chaining collapses the segments into few pen-down paths', () => {
   // A plotter lifts between paths, and lifting is the slow, ugly part. Stated
   // as a RATIO the piece publishes, so it is measured rather than assumed.
