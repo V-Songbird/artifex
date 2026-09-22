@@ -167,22 +167,28 @@ function inspectPiece(name) {
   return { name, stages, manifest, paintedPixels: painted, pixels: canvas.width * canvas.height };
 }
 
-// Serialized into the page. Requires the page to offer the MP4 film and hide the
-// WebM fallback, then exports one film through the page's own MP4 path -- the
-// first example that declares sound, else the first with a timeline -- and
-// decodes it: the first, middle and last frames must each look at least as much
-// like their own drawn frame as like a neighbour, and a declared soundtrack must
-// decode to sound as long as the film. A held frame draws the same picture as
-// its neighbour, so that tie is a match. The export's own verdict is read from
-// the file. The replay manifest is found in the film's bytes by this check's own
-// scan, not readMp4, so a fault shared by the writer and the reader cannot pass:
-// it must be the page's recipe with the frames drawn in place of the playhead.
-async function inspectFilm() {
+// Serialized into the page. The films to export: every example that declares
+// sound, so each soundtrack is decoded, else the first with a timeline.
+function filmNames() {
   const api = window.__artifex;
   const pieces = api.names.map((name) => [name, api.piece.validate(api.examples[name])]);
-  const chosen = pieces.find(([, p]) => p.sound) || pieces.find(([, p]) => p.time);
-  if (!chosen) return null;
-  const [name, p] = chosen;
+  const sounding = pieces.filter(([, p]) => p.sound);
+  return (sounding.length ? sounding : pieces.filter(([, p]) => p.time).slice(0, 1)).map(([name]) => name);
+}
+
+// Serialized into the page. Requires the page to offer the MP4 film and hide the
+// WebM fallback, then exports the named example's film through the page's own
+// MP4 path and decodes it: the first, middle and last frames must each look at
+// least as much like their own drawn frame as like a neighbour, and a declared
+// soundtrack must decode to sound as long as the film. A held frame draws the
+// same picture as its neighbour, so that tie is a match. The export's own
+// verdict is read from the file. The replay manifest is found in the film's
+// bytes by this check's own scan, not readMp4, so a fault shared by the writer
+// and the reader cannot pass: it must be the page's recipe with the frames drawn
+// in place of the playhead.
+async function inspectFilm(name) {
+  const api = window.__artifex;
+  const p = api.piece.validate(api.examples[name]);
   api.select(name);
   const offered = await api.filmFormat();
   const shown = (id) => document.getElementById(id).checkVisibility();
@@ -362,10 +368,13 @@ async function runBrowserCheck(options = {}) {
       phase = 'example ' + name;
       pieces.push(await evaluate(client, '(' + inspectPiece.toString() + ')(' + JSON.stringify(name) + ')'));
     }
-    phase = 'film export';
-    const film = await evaluate(client, '(' + inspectFilm.toString() + ')()');
+    const films = [];
+    for (const name of await evaluate(client, '(' + filmNames.toString() + ')()')) {
+      phase = 'film export ' + name;
+      films.push(await evaluate(client, '(' + inspectFilm.toString() + ')(' + JSON.stringify(name) + ')'));
+    }
     if (errors.length) throw new Error('browser: page errors:\n' + errors.join('\n'));
-    report = { browser: version.Browser, mode: options.headed ? 'headed' : 'headless', pieces, film, errors };
+    report = { browser: version.Browser, mode: options.headed ? 'headed' : 'headless', pieces, films, errors };
   } catch (error) {
     failure = new Error((signal.aborted ? signal.reason.message : error.message) + ' during ' + phase);
     if (/CDP connection closed|Edge exited/.test(failure.message) && browserLog) {
@@ -401,13 +410,13 @@ async function main() {
   if (options.help) { console.log(USAGE); return; }
   const report = await runBrowserCheck(options);
   console.log(JSON.stringify(report, null, 2));
-  const film = report.film
-    ? '; film ' + report.film.name + ' offered as MP4 with WebM hidden, exported ' + report.film.frames + ' frames' + (report.film.sound ? ' with sound' : '')
-      + ', decoded, and named the page\'s recipe'
+  const films = report.films.length
+    ? report.films.map((f) => '; film ' + f.name + ' offered as MP4 with WebM hidden, exported ' + f.frames + ' frames' + (f.sound ? ' with sound' : '')
+      + ', decoded, and named the page\'s recipe').join('')
     : '; no example has a timeline, so no film was exported';
-  console.log('browser: ' + report.pieces.length + ' examples passed' + film + '; owned browser, server and profile cleaned up');
+  console.log('browser: ' + report.pieces.length + ' examples passed' + films + '; owned browser, server and profile cleaned up');
 }
 
 if (require.main === module) main().catch((error) => { console.error(error.message); process.exitCode = 1; });
 
-module.exports = { parseArgs, findEdge, connectCDP, evaluate, servePage, inspectPiece, inspectFilm, runBrowserCheck };
+module.exports = { parseArgs, findEdge, connectCDP, evaluate, servePage, inspectPiece, filmNames, inspectFilm, runBrowserCheck };

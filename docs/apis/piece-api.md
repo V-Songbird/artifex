@@ -1,7 +1,7 @@
 ---
 type: api_spec
 summary: "Shows a runnable custom Artifex piece and the public validation, solving, rendering and soundtrack entry points."
-related_files: ["core/piece.js", "core/render.js", "core/time.js", "core/film.js", "core/webgpu-preview.js", "core/surface-vector.js", "examples/pixel-field.js", "examples/readout.js", "examples/drift.js", "tests/piece.test.js", "tests/render.test.js", "tests/time.test.js", "tests/film.test.js", "tests/webgpu-preview.test.js"]
+related_files: ["core/piece.js", "core/render.js", "core/time.js", "core/film.js", "core/webgpu-preview.js", "core/surface-vector.js", "examples/pixel-field.js", "examples/readout.js", "examples/drift.js", "examples/settle.js", "tests/piece.test.js", "tests/render.test.js", "tests/time.test.js", "tests/film.test.js", "tests/webgpu-preview.test.js"]
 ---
 
 # Piece API
@@ -107,7 +107,7 @@ sound(ctx, state, timeline) {
 },
 ```
 
-A second of sound is the second `clock.seconds` names in `draw`, so schedule each sound at the second its picture appears and derive both from the same solved state. Take noise from the seeded source rather than an unseeded generator, and schedule only on the context clock. A still cannot declare `sound`; validation refuses it by name. Web Audio rendering can differ between browsers, so byte-identical sound is scoped to one engine, like pixels. [`examples/readout.js`](../../examples/readout.js) sounds each digit on the frame that first shows it.
+A second of sound is the second `clock.seconds` names in `draw`, so schedule each sound at the second its picture appears and derive both from the same solved state. Take noise from the seeded source rather than an unseeded generator, and schedule only on the context clock. A still cannot declare `sound`; validation refuses it by name. Web Audio rendering can differ between browsers, so byte-identical sound is scoped to one engine, like pixels. [`examples/readout.js`](../../examples/readout.js) sounds each digit on the frame that first shows it. [`examples/settle.js`](../../examples/settle.js) sets every voice's detune, pan and level on every drawn frame from the snapshot that frame draws, ramping linearly between frames.
 
 See the [runtime skill](../../skills/artifex/SKILL.md) for authoring guidance and [output formats](../knowledge/output-formats.md) for delivery limits.
 
