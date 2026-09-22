@@ -13,10 +13,12 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 
 const { validate, solve, frameT, frameCount, frameDen, frameIndex } = require('../core/piece.js');
 const { renderVector, drawFrame, playheads } = require('../core/render.js');
 const { VectorSurface } = require('../core/surface-vector.js');
+const { nullSurface } = require('../tools/bench.js');
 const font = require('../examples/stroke-font.js');
 const EXAMPLES = require('../examples/index.js');
 
@@ -78,6 +80,11 @@ class Recorder {
   setTransform(a, b, c, d, e, f) { this._m = [a, b, c, d, e, f]; this.ops.push('setTransform'); }
 
   resetTransform() { this._m = [1, 0, 0, 1, 0, 0]; this.ops.push('resetTransform'); }
+
+  getTransform() {
+    const [a, b, c, d, e, f] = this._m;
+    return { a, b, c, d, e, f };
+  }
 
   translate(x, y) { this._mul([1, 0, 0, 1, x, y]); this.ops.push('translate'); }
 
@@ -216,7 +223,22 @@ class Recorder {
     return new RecordedGradient(this, `rg(${r(x0)},${r(y0)},${r(r0)},${r(x1)},${r(y1)},${r(r1)})`);
   }
 
-  get markCount() { return this.ops.filter((o) => /^(fill|stroke:|FR|SR)/.test(o)).length; }
+  createImageData(width, height) {
+    return { width, height, data: new Uint8ClampedArray(width * height * 4) };
+  }
+
+  putImageData(image, x, y) {
+    // ImageData is already in device pixels and ignores the current transform.
+    this._box[0] = Math.min(this._box[0], x);
+    this._box[1] = Math.min(this._box[1], y);
+    this._box[2] = Math.max(this._box[2], x + image.width);
+    this._box[3] = Math.max(this._box[3], y + image.height);
+    const hash = crypto.createHash('sha256');
+    hash.update(image.data);
+    this.ops.push(`PX${x},${y},${image.width},${image.height}:${hash.digest('hex')}`);
+  }
+
+  get markCount() { return this.ops.filter((o) => /^(fill|stroke:|FR|SR|PX)/.test(o)).length; }
 
   get digest() { return this.ops.join('|'); }
 }
@@ -239,9 +261,25 @@ const paint = (style) => (style instanceof RecordedGradient ? style.toString() :
 function record(raw, seed, t, params) {
   const p = validate(raw);
   const g = new Recorder();
-  drawFrame(g, p, solve(p, seed === undefined ? p.seed : seed, params), t === undefined ? 1 : t);
+  // Pixel-family invariants sample real bytes at 64 pixels wide. Every declared
+  // frame, seed and parameter pin still runs; native full-resolution equality
+  // and dedicated pixel checks cover the raster path separately.
+  const scale = p.preview ? Math.min(1, 64 / p.size.w) : 1;
+  drawFrame(g, p, solve(p, seed === undefined ? p.seed : seed, params), t === undefined ? 1 : t, { scale });
   return g;
 }
+
+test('the recorder measures raster bytes and device-space image bounds', () => {
+  const a = new Recorder(), b = new Recorder();
+  const image = a.createImageData(2, 1);
+  image.data.set([40, 70, 80, 255, 100, 120, 130, 255]);
+  a.scale(8, 8); a.putImageData(image, 3, 4);
+  image.data[0] = 41;
+  b.scale(8, 8); b.putImageData(image, 3, 4);
+  assert.notEqual(a.digest, b.digest, 'one changed pixel reaches the digest');
+  assert.deepEqual(a.bbox, [3, 4, 5, 5], 'putImageData ignores the transform');
+  assert.equal(a.markCount, 1);
+});
 
 // ---------------------------------------------------------------------------
 // The set
@@ -752,6 +790,115 @@ test('partition: detail falls away from the focus rather than filling the sheet'
 // Resolution
 // ---------------------------------------------------------------------------
 
+// Capture the unrounded design-space circles as well as the regular recorder
+// output. A background bounding box alone cannot prove detail is preserved.
+function inversionCircles(seed, gap, scale = 1) {
+  const p = validate(EXAMPLES.inversion);
+  const solved = solve(p, seed, { gap });
+  assert.equal(solved.stages.error, null);
+  const g = new Recorder();
+  const circles = [];
+  const arc = g.arc.bind(g);
+  g.arc = (x, y, radius, start, end) => {
+    assert.ok([x, y, radius].every(Number.isFinite) && radius > 0);
+    circles.push({ x, y, r: radius });
+    arc(x, y, radius, start, end);
+  };
+  drawFrame(g, p, solved, 0, { scale });
+  return { circles, solved, g };
+}
+
+test('inversion: reflected circles agree with independently inverted boundary points', () => {
+  for (const gap of [0.02, 0.10, 0.42]) {
+    const { circles, solved } = inversionCircles(19, gap);
+    const [source, mirror] = solved.state.mirrors;
+    // The first DFS edge reflects mirror zero in mirror one. Check boundary
+    // points against the result, rather than copying the circle formula here.
+    assert.deepEqual(circles[0], source);
+    const image = circles[1];
+    for (let i = 0; i < 16; i++) {
+      const angle = i * Math.PI / 8;
+      const x = source.x + source.r * Math.cos(angle) - mirror.x;
+      const y = source.y + source.r * Math.sin(angle) - mirror.y;
+      const factor = mirror.r ** 2 / (x * x + y * y);
+      const px = mirror.x + factor * x;
+      const py = mirror.y + factor * y;
+      assert.ok(Math.abs(Math.hypot(px - image.x, py - image.y) - image.r) < 1e-9);
+      // Reflect the point again: inversion is an involution.
+      const dx = px - mirror.x, dy = py - mirror.y;
+      const back = mirror.r ** 2 / (dx * dx + dy * dy);
+      assert.ok(Math.abs(dx * back - x) < 1e-9 && Math.abs(dy * back - y) < 1e-9);
+    }
+  }
+});
+
+test('inversion: disjoint mirrors contain all descendants and bound the word tree', () => {
+  for (const seed of [1, 2, 19]) {
+    for (const gap of [0.02, 0.10, 0.42]) {
+      const { circles, solved } = inversionCircles(seed, gap, 8);
+      const mirrors = solved.state.mirrors;
+      for (let i = 0; i < mirrors.length; i++) {
+        for (let j = i + 1; j < mirrors.length; j++) {
+          assert.ok(Math.hypot(mirrors[i].x - mirrors[j].x, mirrors[i].y - mirrors[j].y)
+            > mirrors[i].r + mirrors[j].r);
+        }
+      }
+      assert.ok(circles.length > 30 && circles.length <= 3 * (2 ** 13 - 1));
+      for (const c of circles) {
+        assert.ok(mirrors.some((m) => Math.hypot(c.x - m.x, c.y - m.y) + c.r <= m.r + 1e-8),
+          'every word stays in one of the three large disks');
+      }
+    }
+  }
+  // At a deliberately excessive scale the depth cap, not the pixel cutoff,
+  // must bound the tree. The harness stores no rendered ops for this case.
+  const p = validate(EXAMPLES.inversion);
+  const solved = solve(p);
+  let arcs = 0;
+  p.draw({ getTransform: () => ({ a: 1e30, b: 0, c: 0, d: 1e30 }),
+    fillRect() {}, beginPath() {}, stroke() {}, arc() { arcs++; } }, solved.state);
+  assert.equal(arcs, 3 * (2 ** 13 - 1));
+});
+
+test('inversion: higher output resolution adds only smaller circles without changing shared geometry', () => {
+  const a = inversionCircles(19, 0.10);
+  const b = inversionCircles(19, 0.10, 8);
+  assert.ok(b.circles.length > a.circles.length * 2, 'the cutoff must respond to output resolution');
+  assert.deepEqual(b.circles.filter((c) => c.r >= 0.7), a.circles,
+    'the common circles retain their exact geometry and DFS order');
+  assert.ok(a.circles.every((c) => c.r >= 0.7));
+  assert.ok(b.circles.every((c) => c.r >= 0.7 / 8));
+  const before = JSON.stringify(a.solved.state);
+  drawFrame(new Recorder(), validate(EXAMPLES.inversion), a.solved, 0, { scale: 8 });
+  assert.equal(JSON.stringify(a.solved.state), before, 'drawing must not mutate build state');
+  assert.equal(inversionCircles(19, 0.10, 8).g.digest, b.g.digest);
+  assert.equal(renderVector(EXAMPLES.inversion).marks, a.circles.length + 1,
+    'ordinary SVG export has identity scale plus its background');
+});
+
+test('inversion: vector and null transform readers preserve shared circles at higher output scale', () => {
+  const p = validate(EXAMPLES.inversion);
+  const solved = solve(p, 19, { gap: 0.10 });
+  const original = JSON.stringify(solved.state);
+  for (const create of [() => new VectorSurface(p.size), () => nullSurface(p.size)]) {
+    const capture = (scale) => {
+      const g = create();
+      const circles = [];
+      const arc = g.arc.bind(g);
+      g.arc = (x, y, r, start, end) => { circles.push({ x, y, r }); arc(x, y, r, start, end); };
+      drawFrame(g, p, solved, 0, { scale });
+      assert.deepEqual(g.getTransform(), { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }, 'drawFrame restores its scale');
+      return circles;
+    };
+    const standard = capture(1), print = capture(8);
+    assert.deepEqual(standard, inversionCircles(19, 0.10).circles);
+    assert.ok(print.length > standard.length * 2);
+    assert.deepEqual(print.filter((circle) => circle.r >= 0.7), standard);
+    assert.ok(print.every((circle) => circle.r >= 0.7 / 8));
+  }
+  assert.equal(JSON.stringify(solved.state), original);
+});
+
 test('N7 -- macro geometry is preserved from 1x to 8x', () => {
   // The design box is the piece; the resolution is a render-time choice. A
   // piece whose composition moves with the scale cannot be printed.
@@ -759,9 +906,10 @@ test('N7 -- macro geometry is preserved from 1x to 8x', () => {
     const p = validate(EXAMPLES[n]);
     const s = solve(p, p.seed);
     const t = p.time ? 1 : 0;
+    const sampleScale = p.preview ? Math.min(1, 64 / p.size.w) : 1;
     const box = (k) => {
       const g = new Recorder();
-      drawFrame(g, p, s, t, { scale: k });
+      drawFrame(g, p, s, t, { scale: k * sampleScale });
       return g.bbox;
     };
     const a = box(1);
@@ -770,7 +918,7 @@ test('N7 -- macro geometry is preserved from 1x to 8x', () => {
       assert.ok(Math.abs(b[i] - a[i] * 8) < 1e-6,
         `${n}: at 8x the composition moved (${a[i]} * 8 is not ${b[i]})`);
     }
-    assert.ok(a[2] - a[0] > p.size.w * 0.5 && a[3] - a[1] > p.size.h * 0.5,
+    assert.ok(a[2] - a[0] > p.size.w * sampleScale * 0.5 && a[3] - a[1] > p.size.h * sampleScale * 0.5,
       `${n} only covers ${(a[2] - a[0]).toFixed(0)} x ${(a[3] - a[1]).toFixed(0)} of its design box`);
   }
 });

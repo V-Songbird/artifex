@@ -20,9 +20,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
-const { bundle } = require('./build-page.js');
+const { bundle, checkParses } = require('./build-page.js');
 const EXAMPLES = require('../examples/index.js');
 const { validate } = require('../core/piece.js');
+const { isPiecePath, loadExternal } = require('./piece-input.js');
 
 function planSheet(p, count, paramNames = []) {
   if (!Number.isSafeInteger(count) || count < (paramNames.length ? 2 : 1)) {
@@ -93,13 +94,14 @@ function measureFrame(ctx, draw) {
   return { markCount, ...pixelBounds(ctx.getImageData(0, 0, width, height)) };
 }
 
-function page(names, count, t, paramNames = []) {
+function page(names, count, t, paramNames = [], external = null) {
   if (!Number.isFinite(t)) throw new Error('seeds: playhead must be a finite number');
+  const pieces = external ? Object.fromEntries([[external.piece.name, external.piece]]) : EXAMPLES;
   const plans = names.map((name) => {
-    if (!Object.hasOwn(EXAMPLES, name)) {
+    if (!Object.hasOwn(pieces, name)) {
       throw new Error(`no example called "${name}". Known: ${Object.keys(EXAMPLES).join(', ')}`);
     }
-    return planSheet(validate(EXAMPLES[name]), count, paramNames);
+    return planSheet(validate(pieces[name]), count, paramNames);
   });
   const json = (value) => JSON.stringify(value).replace(/</g, '\\u003c');
   return `<!doctype html>
@@ -137,7 +139,7 @@ function page(names, count, t, paramNames = []) {
 including backgrounds, as a percentage of the canvas. Build time excludes drawing.
 These diagnostics do not measure artistic quality.</p>
 <script>
-${bundle()}
+${bundle(external)}
 ${pixelBounds.toString()}
 ${measureFrame.toString()}
 (function () {
@@ -278,14 +280,18 @@ function parseArgs(args) {
 }
 
 function main() {
-  const { names, count, at, paramNames } = parseArgs(process.argv.slice(2));
-  const html = page(names, count, at, paramNames);
-  const out = path.join(ROOT, 'out');
+  const args = parseArgs(process.argv.slice(2));
+  const { count, at, paramNames } = args;
+  const external = args.names.length === 1 && isPiecePath(args.names[0]) ? loadExternal(args.names[0]) : null;
+  const names = external ? external.names : args.names;
+  const html = page(names, count, at, paramNames, external);
+  checkParses(html);
+  const out = external ? external.directory : path.join(ROOT, 'out');
   fs.mkdirSync(out, { recursive: true });
-  const suffix = paramNames.length ? 'param-' + paramNames.map(encodeURIComponent).join('-') : 'seeds';
-  const file = path.join(out, names.length === 1 ? `${names[0]}-${suffix}.html` : 'seeds.html');
+  const suffix = paramNames.length ? 'param-' + paramNames.map((key) => encodeURIComponent(key).replace(/\*/g, '%2A')).join('-') : 'seeds';
+  const file = path.join(out, names.length === 1 ? `${external ? external.stem : names[0]}-${suffix}.html` : 'seeds.html');
   fs.writeFileSync(file, html);
-  console.log(`${path.relative(ROOT, file)}  ${(Buffer.byteLength(html) / 1024).toFixed(1)} kB`);
+  console.log(`${external ? file : path.relative(ROOT, file)}  ${(Buffer.byteLength(html) / 1024).toFixed(1)} kB`);
   const mode = paramNames.length ? `${count} samples per axis (${count ** paramNames.length} cells), fixed seed` : `${count} seeds`;
   console.log(`${names.length} piece(s) x ${mode} at t=${at}. Open it and LOOK -- the checks cannot see this half.`);
 }

@@ -9,6 +9,7 @@
 //   ESCAPED    nothing failed. The suite does not cover this.
 //   MISNAMED   something failed, but not the test aimed at. Catching the right
 //              break for the wrong reason is the same bug one level up.
+//   INFRA     the process or TAP report is incomplete; no mutation verdict.
 //   ok         the expected test failed.
 //
 // It mutates TEXT in a copy, never a tracked file, and refuses a patch that is
@@ -18,12 +19,40 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { spawn } = require('node:child_process');
 
 const ROOT = path.join(__dirname, '..');
 
 /** Each mutation names the file, a UNIQUE substring, its replacement, and the test it must trip. */
 const MUTATIONS = [
+  {
+    why: 'pixel previews are accepted on pieces claiming vector output',
+    file: 'core/piece.js',
+    from: "  if (out.preview && out.outputs.includes('vector')) {",
+    to: '  if (false) {',
+    expect: 'pixel preview requires an explicit bounded descriptor and a CPU draw',
+  },
+  {
+    why: 'GPU uniforms discard the resolved seed',
+    file: 'core/webgpu-preview.js',
+    from: '  uints.set([width, height, solved.seed, clock.frame]);',
+    to: '  uints.set([width, height, 0, clock.frame]);',
+    expect: 'GPU uniforms preserve resolved seeds and the shared quantized frame clock',
+  },
+  {
+    why: 'an obsolete GPU frame is presented after a newer recipe was requested',
+    file: 'core/webgpu-preview.js',
+    from: '      if (disposed || ticket !== generation || !isCurrent()) return { stale: true };\n      const validated = now();',
+    to: '      if (false) return { stale: true };\n      const validated = now();',
+    expect: 'GPU preview discards stale initialization and stale queued frames',
+  },
+  {
+    why: 'the raster recorder ignores pixel bytes, so changed images have identical digests',
+    file: 'tests/examples.test.js',
+    from: '    hash.update(image.data);',
+    to: '    hash.update(new Uint8Array(0));',
+    expect: 'the recorder measures raster bytes and device-space image bounds',
+  },
   {
     why: 'unknown top-level keys are accepted',
     file: 'core/piece.js',
@@ -137,11 +166,11 @@ const MUTATIONS = [
     expect: 'the transform is baked into coordinates',
   },
   {
-    why: 'the arc-to-Bezier constant is wrong, so a circle is not a circle',
+    why: 'the affine-fallback Bezier constant is wrong, so a transformed ellipse loses radial accuracy',
     file: 'core/surface-vector.js',
     from: '    const alpha = (4 / 3) * Math.tan(step / 4);',
     to: '    const alpha = Math.tan(step / 4);',
-    expect: 'a full arc approximates a circle to better than 3e-4 of its radius',
+    expect: 'an arc under a NON-UNIFORM scale becomes a real ellipse',
   },
   {
     why: 'a style string reaches the document unescaped',
@@ -228,14 +257,14 @@ const MUTATIONS = [
   // --- the examples, which are the real specification -----------------------
   {
     why: 'THE CROSSBAR: a two-point straight run is filtered out of a glyph',
-    file: 'examples/stroke-font.js',
+    file: 'core/stroke-font.js',
     from: '    for (const run of glyph(ch)) {',
     to: '    for (const run of glyph(ch).filter((q) => q.length > 2)) {',
     expect: 'specimen: every run of every glyph survives being drawn',
   },
   {
     why: 'an unknown character quietly draws a different glyph',
-    file: 'examples/stroke-font.js',
+    file: 'core/stroke-font.js',
     from: "  if (src === undefined || src === '') return [];",
     to: "  if (src === undefined || src === '') return glyph('X');",
     expect: 'specimen: an unknown character is a gap, never a substituted glyph',
@@ -257,8 +286,8 @@ const MUTATIONS = [
   {
     why: 'contour segments are not chained, so a plotter lifts the pen thousands of times',
     file: 'examples/contours.js',
-    from: '      const traced = chain(segs).map((pts) => pts.map(([gx, gy]) => [',
-    to: '      const traced = segs.map((pts) => pts.map(([gx, gy]) => [',
+    from: '      const traced = lines.paths.map((pts) => pts.map(([gx, gy]) => [',
+    to: '      const traced = lines.segments.map((pts) => pts.map(([gx, gy]) => [',
     expect: 'contours: chaining collapses the segments into few pen-down paths',
   },
   {
@@ -527,6 +556,13 @@ const MUTATIONS = [
     to: '  return [0, 0, size.w, size.h];',
     expect: 'clipping keeps what is inside the design box and drops what is not',
   },
+  {
+    why: 'a clipped endpoint aliases a caller-owned point instead of returning a detached copy',
+    file: 'core/path.js',
+    from: '    [a[0] + t0 * dx, a[1] + t0 * dy],',
+    to: '    a,',
+    expect: 'clipSegment returns detached endpoint pairs without changing its inputs',
+  },
 
   // --- the instrument the documentation names and did not ship ---------------
   {
@@ -605,6 +641,69 @@ const MUTATIONS = [
 
   // --- geometry: the list three independent populations wrote ---------------
   {
+    why: 'closest projection is not clamped, so distance is measured to the supporting line',
+    file: 'core/geom.js',
+    from: 'Math.max(0, Math.min(1, projection))',
+    to: 'projection',
+    expect: 'closest point clamps to the segment and measures from the returned point',
+  },
+  {
+    why: 'nonbinary scaling destroys collinearity even for exact integer inputs',
+    file: 'core/geom.js',
+    from: '  const scale = 2 ** Math.min(1023, Math.floor(Math.log2(magnitude)));',
+    to: '  const scale = magnitude;',
+    expect: 'collinear overlap keeps both ends in the first segment direction',
+  },
+  {
+    why: 'parallel separated segments are reported as an overlap',
+    file: 'core/geom.js',
+    from: '    if (cross(qx, qy, rx, ry) !== 0) return null;',
+    to: "    if (cross(qx, qy, rx, ry) !== 0) return hit(a);",
+    expect: 'intersection separates parallel segments and detects an interior crossing',
+  },
+  {
+    why: 'collinear overlap discards its extent and returns only one point',
+    file: 'core/geom.js',
+    from: "    return { type: 'overlap', points: [[...start], [...end]] };",
+    to: '    return hit(start);',
+    expect: 'collinear overlap keeps both ends in the first segment direction',
+  },
+  {
+    why: 'endpoint exclusion loses T junctions where one segment ends inside another',
+    file: 'core/geom.js',
+    from: '  if (t < 0 || t > 1 || u < 0 || u > 1) return null;',
+    to: '  if (t <= 0 || t >= 1 || u <= 0 || u >= 1) return null;',
+    expect: 'touching segment ends and T junctions are single point intersections',
+  },
+  {
+    why: 'a zero-length segment hits every line even away from that line',
+    file: 'core/geom.js',
+    from: '    return cross(qx, qy, sx, sy) === 0 && within(a, c, d) ? hit(a) : null;',
+    to: '    return hit(a);',
+    expect: 'zero-length segments intersect only when their point belongs to the other segment',
+  },
+  {
+    why: 'the offset ignores its miter limit and grows a sharp-corner spike',
+    file: 'core/geom.js',
+    from: '    if (ratio <= miterLimit) {',
+    to: '    if (Number.isFinite(ratio)) {',
+    expect: 'offset miter limit bevels sharp corners and reversals instead of growing spikes',
+  },
+  {
+    why: 'repeated offset vertices create zero-length normals and nonfinite output',
+    file: 'core/geom.js',
+    from: '    if (!prev || prev[0] !== p[0] || prev[1] !== p[1]) src.push([...p]);',
+    to: '    src.push([...p]);',
+    expect: 'offset collapses repeated vertices and copies empty or directionless input',
+  },
+  {
+    why: 'offset takes the wrong normal and swaps left and right',
+    file: 'core/geom.js',
+    from: '    normals.push([-uy / len, ux / len]);',
+    to: '    normals.push([uy / len, -ux / len]);',
+    expect: 'open offsets use signed perpendicular distance, miter corners and butt ends',
+  },
+  {
     why: 'the centroid is the mean of the vertex list, so a crowded edge drags it',
     file: 'core/geom.js',
     from: '    const w = pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1];',
@@ -667,6 +766,160 @@ const MUTATIONS = [
     to: '    const r = 1;',
     expect: 'ring is a constructor, not a look: a constant radius is a circle',
   },
+  {
+    why: 'field samples are stored by column, so non-square scalar grids are transposed',
+    file: 'core/field.js',
+    from: 'values[j * (cols + 1) + i] = vector',
+    to: 'values[i * (rows + 1) + j] = vector',
+    expect: 'sampleGrid covers every vertex in row order in the requested domain',
+  },
+  {
+    why: 'the derivative omits its coordinate step, so changing epsilon changes its magnitude',
+    file: 'core/field.js',
+    from: '(finiteScalar(field(x + epsilon, y)) - finiteScalar(field(x - epsilon, y))) / (2 * epsilon)',
+    to: '(finiteScalar(field(x + epsilon, y)) - finiteScalar(field(x - epsilon, y))) / 2',
+    expect: 'gradient recovers analytic derivatives with independent axes and coordinate units',
+  },
+  {
+    why: 'curl loses its negative component, so the flow crosses its potential contours',
+    file: 'core/field.js',
+    from: '    return [dy, -dx];',
+    to: '    return [dy, dx];',
+    expect: 'curl is tangent to potential contours and has zero divergence',
+  },
+  {
+    why: 'domain warp ignores its signed amplitude on one axis',
+    file: 'core/field.js',
+    from: 'finiteScalar(x + dx * amount)',
+    to: 'finiteScalar(x + dx)',
+    expect: 'warp displaces the domain once and preserves scalar or vector results',
+  },
+  {
+    why: 'threshold discards samples exactly at the requested cut',
+    file: 'core/field.js',
+    from: 'finiteScalar(field(x, y)) >= level ? 1 : 0',
+    to: 'finiteScalar(field(x, y)) > level ? 1 : 0',
+    expect: 'threshold places equality on the high side without changing field coordinates',
+  },
+  {
+    why: 'isolines return disconnected cell segments as paths, multiplying pen lifts',
+    file: 'core/field.js',
+    from: 'return { segments, paths: chain(segments) };',
+    to: 'return { segments, paths: segments };',
+    expect: 'isolines interpolate a linear field and chain cell edges into one path per level',
+  },
+  {
+    why: 'one saddle orientation always chooses the same diagonal regardless of the centre',
+    file: 'core/field.js',
+    from: 'case 5:\n          if ((tl + tr + br + bl) / 4 > level)',
+    to: 'case 5:\n          if (true)',
+    expect: 'isolines resolve both saddle orientations using the centre value',
+  },
+  {
+    why: 'streamline steering takes a long turn when crossing the positive pi boundary',
+    file: 'core/field.js',
+    from: '    if (d > Math.PI) d -= Math.PI * 2;',
+    to: '    if (false) d -= Math.PI * 2;',
+    expect: 'streamline steering takes the short turn across both sides of pi',
+  },
+  {
+    why: 'a streamline appends points outside its requested drawing bounds',
+    file: 'core/field.js',
+    from: '    if (outside(x, y)) break;',
+    to: '    if (false) break;',
+    expect: 'streamline records bounded starts and stops before an outside point or zero vector',
+  },
+  {
+    why: 'streamline batches reset the physical step and ignore the caller option',
+    file: 'core/field.js',
+    from: 'return seeds.map((start) => streamline(field, start, opt));',
+    to: 'return seeds.map((start) => streamline(field, start, { ...opt, step: 1 }));',
+    expect: 'streamlines follow a constant vector with fixed physical step and independent seeds',
+  },
+  {
+    why: 'a full circle stops after its first SVG half-arc and loses half its circumference',
+    file: 'core/surface-vector.js',
+    from: '      for (let i = 1; i <= count; i++) {',
+    to: '      for (let i = 1; i <= 1; i++) {',
+    expect: 'a full arc is an exact circle serialized as two SVG arcs',
+  },
+  {
+    why: 'reflected elliptical arcs keep their original sweep and traverse the wrong side',
+    file: 'core/surface-vector.js',
+    from: 'const sweep = (d > 0) !== similarity.reflected ? 1 : 0;',
+    to: 'const sweep = d > 0 ? 1 : 0;',
+    expect: 'similarity arcs transform both ellipse axes and reverse reflected sweeps',
+  },
+  {
+    why: 'nonuniform and sheared transforms take the similarity shortcut and change the ellipse',
+    file: 'core/surface-vector.js',
+    from: 'if (Math.abs(x - y) > tolerance || Math.abs(a * c + b * d) > tolerance) return null;',
+    to: 'if (false) return null;',
+    expect: 'shear and singular transforms retain cubic arcs while roundoff rotations use SVG arcs',
+  },
+  {
+    why: 'opposite-direction whole turns collapse to an empty path instead of traversing the ellipse',
+    file: 'core/surface-vector.js',
+    from: 'if (d === 0 && a1 !== a0) d = ccw ? -TAU : TAU;',
+    to: 'if (false) d = ccw ? -TAU : TAU;',
+    expect: 'arc serialization preserves zero, full, multiple and nearly full turns',
+  },
+  {
+    why: 'an SVG arc leaves the logical current point at its start and bends the following quadratic',
+    file: 'core/surface-vector.js',
+    from: '        this._cur = point;',
+    to: '        this._cur = p0;',
+    expect: 'an SVG arc updates the current point for the following quadratic and closes its subpath',
+  },
+  {
+    why: 'the transform snapshot omits horizontal translation',
+    file: 'core/surface-vector.js',
+    from: '    return { a, b, c, d, e, f };',
+    to: '    return { a, b, c, d, e: 0, f };',
+    expect: 'vector and null surfaces report independently specified affine transform order',
+  },
+  {
+    why: 'getTransform reuses a stale mutable snapshot instead of creating an independent object',
+    file: 'core/surface-vector.js',
+    from: '    return { a, b, c, d, e, f };',
+    to: '    return this._snapshot || (this._snapshot = { a, b, c, d, e, f });',
+    expect: 'transform snapshots are detached numeric objects and survive later surface changes',
+  },
+  {
+    why: 'the benchmark advertises a no-op transform reader that returns undefined',
+    file: 'tools/bench.js',
+    from: '  g.getTransform = () => { g.calls++; return transforms.getTransform(); };',
+    to: '  g.getTransform = noop;',
+    expect: 'vector and null surfaces report independently specified affine transform order',
+  },
+  {
+    why: 'the benchmark transform changes survive save and restore',
+    file: 'tools/bench.js',
+    from: "['save', 'restore', 'transform', 'setTransform', 'resetTransform', 'translate', 'scale', 'rotate']",
+    to: "['transform', 'setTransform', 'resetTransform', 'translate', 'scale', 'rotate']",
+    expect: 'vector and null transform stacks restore nested snapshots after replacement and reset',
+  },
+  {
+    why: 'inversion ignores the portable transform reader and drops print-scale circle detail',
+    file: 'examples/inversion.js',
+    from: "    if (typeof g.getTransform === 'function') {",
+    to: '    if (false) {',
+    expect: 'inversion: vector and null transform readers preserve shared circles at higher output scale',
+  },
+  {
+    why: 'sparse vector arrays bypass validation because Array.every skips missing components',
+    file: 'core/field.js',
+    from: '!Number.isFinite(value[0]) || !Number.isFinite(value[1])',
+    to: '!value.every(Number.isFinite)',
+    expect: 'field vectors require both finite components even in sparse arrays',
+  },
+  {
+    why: 'positive ellipse radii round to zero in SVG and erase a still-visible thin axis',
+    file: 'core/surface-vector.js',
+    from: "    if (arcRx !== '0' && arcRy !== '0') {",
+    to: '    if (hasRadii) {',
+    expect: 'ellipses retain visible geometry when serialized radii round to zero',
+  },
 
 ];
 
@@ -694,22 +947,252 @@ function copyDir(src, dst, root = false) {
   return bytes;
 }
 
-/** Run the suite in `dir`, returning the names of the tests that failed. */
-function runSuite(dir) {
-  let out;
-  try {
-    out = execFileSync(process.execPath, ['--test', 'tests/*.test.js'], {
-      cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-    });
-  } catch (e) {
-    out = `${e.stdout || ''}${e.stderr || ''}`;
+/** Read Node's nested subtest scopes, excluding YAML diagnostic contents. */
+function tapScopes(lines) {
+  const root = { indent: 0, points: [], pending: null, plan: null };
+  const scopes = [root], nodes = [];
+  let diagnostic = null, previous = null;
+  const invalid = (reason) => ({ failure: `incomplete or inconsistent TAP: ${reason}` });
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    const indent = line.length - line.trimStart().length;
+    const text = line.trimStart();
+    if (diagnostic) {
+      if (indent === diagnostic.indent && text === '...') diagnostic = null;
+      else if (text && indent < diagnostic.indent) return invalid('unterminated diagnostic');
+      else if (indent === diagnostic.indent) {
+        const type = /^type: ['"]?(test|suite)['"]?$/.exec(text);
+        if (type) diagnostic.node.type = type[1];
+      }
+      continue;
+    }
+    if (!text) continue;
+    if (text === '---') {
+      if (!previous || indent !== previous.indent + 2) return invalid('diagnostic without a result');
+      diagnostic = { indent, node: previous };
+      previous = null;
+      continue;
+    }
+    previous = null;
+    const subtest = /^# Subtest: (.*)$/.exec(text);
+    const point = /^(not ok|ok) (\d+) - (.+?)(?: # (SKIP|TODO)\b.*)?$/.exec(text);
+    const plan = /^1\.\.(\d+)$/.exec(text);
+    if (!subtest && !point && !plan) {
+      if (text.startsWith('#')) continue;
+      return invalid('unexpected output outside diagnostics');
+    }
+    while (indent < scopes.at(-1).indent) {
+      const closed = scopes.pop();
+      if (closed.plan === null || closed.pending) return invalid('nested scope has no complete plan');
+    }
+    let scope = scopes.at(-1);
+    if (indent > scope.indent) {
+      if (indent !== scope.indent + 4 || !scope.pending) return invalid('nested scope has no parent');
+      scope = { indent, points: [], pending: null, plan: null };
+      scopes.push(scope);
+    }
+    if (scope.plan !== null) return invalid('results follow a closed plan');
+    if (subtest) {
+      if (scope.pending) return invalid('subtest has no result');
+      scope.pending = subtest[1];
+    } else if (point) {
+      if (scope.pending !== point[3] || Number(point[2]) !== scope.points.length + 1) {
+        return invalid('missing, renamed or misnumbered subtest result');
+      }
+      const node = { indent, name: point[3], ok: point[1] === 'ok', directive: point[4], type: 'test' };
+      nodes.push(node);
+      scope.points.push(node);
+      scope.pending = null;
+      previous = node;
+    } else {
+      if (scope.pending || Number(plan[1]) !== scope.points.length) return invalid('plan does not match its results');
+      scope.plan = i;
+    }
   }
-  return [...out.matchAll(/^not ok \d+ - (.+)$/gm)].map((m) => m[1].trim());
+  if (diagnostic || scopes.length !== 1 || root.pending || root.plan === null) return invalid('report was truncated');
+  return { nodes, planLine: root.plan };
 }
 
-function main() {
+/** Validate Node's complete TAP scopes and summary, not arbitrary TAP producers. */
+function suiteReport(stdout) {
+  stdout = stdout.replace(/\r\n/g, '\n');
+  const lines = stdout.split('\n');
+  if (lines[0] !== 'TAP version 13' || !/^# duration_ms [\d.]+\s*$/.test(lines.filter(Boolean).at(-1) || '')) {
+    return { failure: 'incomplete TAP header/footer' };
+  }
+  const tree = tapScopes(lines);
+  if (tree.failure) return tree;
+  const summary = {};
+  for (const key of ['tests', 'suites', 'pass', 'fail', 'cancelled', 'skipped', 'todo']) {
+    const pattern = new RegExp(`^# ${key} (\\d+)$`);
+    const matches = lines.flatMap((line, i) => {
+      const match = pattern.exec(line);
+      return match ? [{ value: Number(match[1]), line: i }] : [];
+    });
+    if (matches.length !== 1) return { failure: `missing or repeated TAP ${key} summary` };
+    if (matches[0].line <= tree.planLine) return { failure: 'TAP summary precedes its completed plan' };
+    summary[key] = matches[0].value;
+  }
+  const counts = { tests: 0, suites: 0, pass: 0, fail: 0, skipped: 0, todo: 0 };
+  for (const node of tree.nodes) {
+    if (node.type === 'suite') { counts.suites++; continue; }
+    counts.tests++;
+    const verdict = node.directive === 'SKIP' ? 'skipped' : node.directive === 'TODO' ? 'todo'
+      : node.ok ? 'pass' : 'fail';
+    counts[verdict]++;
+  }
+  const failed = tree.nodes.filter((node) => !node.ok && !node.directive).map((node) => node.name);
+  if (summary.tests < 1 || summary.pass + summary.fail < 1 || summary.cancelled !== 0
+      || Object.keys(counts).some((key) => counts[key] !== summary[key])
+      || (summary.fail > 0) !== (failed.length > 0)) {
+    return { failure: 'incomplete or inconsistent TAP test counts' };
+  }
+  return { failed, names: tree.nodes.map((node) => node.name), summary };
+}
+
+function suiteDeadline(value = process.env.ARTIFEX_NEGATIVE_TIMEOUT_MS) {
+  if (value === undefined) return 300000;
+  const timeout = Number(value);
+  if (!Number.isInteger(timeout) || timeout <= 0 || timeout > 2147483647) {
+    throw new RangeError('ARTIFEX_NEGATIVE_TIMEOUT_MS must be an integer from 1 to 2147483647');
+  }
+  return timeout;
+}
+
+/** Terminate only this child's Windows tree or its private POSIX process group. */
+function terminateSuite(child) {
+  if (process.platform !== 'win32') {
+    try { process.kill(-child.pid, 'SIGKILL'); return Promise.resolve(null); }
+    catch (error) { return Promise.resolve(error.code === 'ESRCH' ? null : error); }
+  }
+  return new Promise((resolve) => {
+    let detail = '';
+    const killer = spawn('taskkill.exe', ['/pid', String(child.pid), '/T', '/F'], {
+      windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000, killSignal: 'SIGKILL',
+    });
+    for (const stream of [killer.stdout, killer.stderr]) stream.on('data', (chunk) => {
+      detail = (detail + chunk.toString('utf8')).slice(-2000);
+    });
+    killer.once('error', resolve);
+    killer.once('close', (code) => resolve(code === 0 ? null : new Error(`owned tree termination exited ${code}: ${detail.trim()}`)));
+  });
+}
+
+/** Bounded output and lifetime; closing a timed-out coordinator must also stop its test workers. */
+function executeSuite(command, args, options) {
+  const { timeout, ...spawnOptions } = options;
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { ...spawnOptions, windowsHide: true, detached: process.platform !== 'win32' });
+    let stdout = '', stderr = '', bytes = 0, error, terminationError;
+    let settled = false, closed = false, terminating = false, teardownTimer;
+    let status = null, signal = null;
+    let termination = Promise.resolve();
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(teardownTimer);
+      resolve({ status, signal, error, terminationError, stdout, stderr, pid: child.pid });
+    };
+    const stop = (code, message) => {
+      if (terminating || settled) return;
+      terminating = true;
+      error = Object.assign(new Error(message), { code });
+      clearTimeout(timer);
+      // A failed OS tree-kill must return an infrastructure verdict, not wait
+      // forever for inherited pipes. Retain that failure instead of claiming cleanup.
+      teardownTimer = setTimeout(() => {
+        terminationError ||= new Error('owned subprocess did not close within the 10-second teardown limit');
+        try { child.kill('SIGKILL'); } catch (failure) { terminationError = failure; }
+        child.stdout.destroy();
+        child.stderr.destroy();
+        child.unref();
+        finish();
+      }, 10000);
+      termination = terminateSuite(child).then((failure) => {
+        terminationError = failure || undefined;
+        if (failure) {
+          try { child.kill('SIGKILL'); } catch (killError) { terminationError = killError; }
+        }
+        if (closed) finish();
+      });
+    };
+    const timer = setTimeout(() => stop('ETIMEDOUT', `suite exceeded its ${timeout}ms deadline`), timeout);
+    const collect = (stream, chunk) => {
+      bytes += Buffer.byteLength(chunk, 'utf8');
+      if (bytes > 1048576) { stop('ENOBUFS', 'suite output exceeded 1048576 bytes'); return; }
+      if (stream === 'stdout') stdout += chunk;
+      else stderr += chunk;
+    };
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => collect('stdout', chunk));
+    child.stderr.on('data', (chunk) => collect('stderr', chunk));
+    child.once('error', (failure) => { error ||= failure; });
+    child.once('close', (code, closeSignal) => {
+      closed = true;
+      status = code;
+      signal = closeSignal;
+      clearTimeout(timer);
+      termination.then(finish);
+    });
+  });
+}
+
+/** Keep process evidence even when no test runner starts or no TAP is emitted. */
+async function runSuite(dir, execute = executeSuite, timeout) {
+  const timeoutMs = suiteDeadline(timeout);
+  let result;
+  // A runner invoked from a regression test must start an independent suite.
+  // Inheriting child-v8 makes Node skip the requested files with exit 0.
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  try {
+    result = await execute(process.execPath, ['--test', '--test-reporter=tap', 'tests/*.test.js'], {
+      cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env, timeout: timeoutMs,
+    });
+  } catch (error) {
+    result = { error, status: null, signal: null, stdout: '', stderr: '' };
+  }
+  const { status, signal, error } = result;
+  const stdout = result.stdout || '', stderr = result.stderr || '';
+  const report = suiteReport(stdout);
+  let failure = null;
+  if (error) failure = `process launch/execution failed (${error.code || error.name}): ${error.message}`;
+  else if (signal) failure = `process terminated by ${signal}`;
+  else if (status !== 0 && status !== 1) failure = `unexpected process exit status: ${status}`;
+  else if (report.failure) failure = report.failure;
+  else if ((status === 0) !== (report.summary.fail === 0)) failure = 'process exit status contradicts TAP failures';
+  if (result.terminationError) failure = `${failure || 'process teardown failed'}; ${result.terminationError.message}`;
+  return { ...result, status, signal, error, stdout, stderr, timeoutMs, timedOut: error?.code === 'ETIMEDOUT', ...report, failure };
+}
+
+/** Encode accepted Node 22 TAP titles after rejecting ambiguous control escapes. */
+function tapName(name) {
+  return name.replace(/\\/g, '\\\\').replace(/#/g, '\\#');
+}
+
+function mutationVerdict(result, expected) {
+  if (result.failure) return 'infra';
+  // Node encodes a control character and its literal escape identically. Even
+  // one matching result cannot establish which source title actually failed.
+  if (/[\b\f\t\n\r\v]|\\[bfnrtv]/.test(expected)) return 'infra';
+  const encoded = tapName(expected);
+  if (!Array.isArray(result.names) || result.names.filter((name) => name === encoded).length > 1) return 'infra';
+  if (result.failed.length === 0) return 'escaped';
+  return result.failed.includes(encoded) ? 'caught' : 'misnamed';
+}
+
+function infrastructureDetail(result) {
+  const stderr = result.stderr.trim();
+  const failure = result.failure || 'ambiguous TAP failure attribution: use a unique test title without control characters or literal control escapes';
+  return `${failure}${stderr ? `\n                stderr: ${stderr.slice(-2000)}` : ''}`;
+}
+
+async function main() {
+  const timeoutMs = suiteDeadline();
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'artifex-negative-'));
-  let escaped = 0, misnamed = 0, passed = 0, invalid = 0;
+  let escaped = 0, misnamed = 0, passed = 0, invalid = 0, infrastructure = 0;
 
   try {
     // The control. If the suite is not green to begin with, nothing below means
@@ -719,11 +1202,15 @@ function main() {
     const per = (bytes / 1048576).toFixed(2);
     // Report copy volume because the same source is copied for every mutation.
     console.log(`copy     ${per} MB per mutation, ${((bytes * (MUTATIONS.length + 1)) / 1048576).toFixed(0)} MB in all`);
-    const already = runSuite(control);
-    if (already.length) {
+    const already = await runSuite(control, undefined, timeoutMs);
+    if (already.failure) {
+      console.error(`CONTROL INFRASTRUCTURE FAILURE.\n  ${infrastructureDetail(already)}`);
+      return 2;
+    }
+    if (already.failed.length) {
       console.error('CONTROL IS NOT GREEN. Fix the suite before running this.');
-      for (const t of already) console.error(`  ${t}`);
-      process.exit(2);
+      for (const t of already.failed) console.error(`  ${t}`);
+      return 2;
     }
     console.log(`control  ${MUTATIONS.length} mutations, suite green before any of them\n`);
 
@@ -738,13 +1225,17 @@ function main() {
       if (hits > 1) { console.log(`MUTATION AMBIG  ${m.why}\n                patch text matches ${hits} times in ${m.file}`); invalid++; continue; }
 
       fs.writeFileSync(file, src.replace(m.from, m.to));
-      const failed = runSuite(dir);
+      const result = await runSuite(dir, undefined, timeoutMs);
+      const verdict = mutationVerdict(result, m.expect);
 
-      if (failed.length === 0) {
+      if (verdict === 'infra') {
+        console.log(`INFRA           ${m.why}\n                ${infrastructureDetail(result)}`);
+        infrastructure++;
+      } else if (verdict === 'escaped') {
         console.log(`ESCAPED         ${m.why}\n                nothing failed; no check covers this`);
         escaped++;
-      } else if (!failed.includes(m.expect)) {
-        console.log(`MISNAMED        ${m.why}\n                expected: ${m.expect}\n                failed:   ${failed.join(' | ')}`);
+      } else if (verdict === 'misnamed') {
+        console.log(`MISNAMED        ${m.why}\n                expected: ${m.expect}\n                failed:   ${result.failed.join(' | ')}`);
         misnamed++;
       } else {
         console.log(`ok              ${m.why}`);
@@ -755,8 +1246,12 @@ function main() {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 
-  console.log(`\n${passed} caught  ${escaped} escaped  ${misnamed} misnamed  ${invalid} invalid`);
-  process.exit(escaped + misnamed + invalid === 0 ? 0 : 1);
+  console.log(`\n${passed} caught  ${escaped} escaped  ${misnamed} misnamed  ${invalid} invalid  ${infrastructure} infrastructure`);
+  return escaped + misnamed + invalid + infrastructure === 0 ? 0 : 1;
 }
 
-main();
+if (require.main === module) main().then((code) => { process.exitCode = code; }, (error) => {
+  console.error(error.message);
+  process.exitCode = 2;
+});
+module.exports = { runSuite, mutationVerdict };

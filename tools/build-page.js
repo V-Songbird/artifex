@@ -13,6 +13,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { loadExternal } = require('./piece-input.js');
 
 const ROOT = path.join(__dirname, '..');
 /**
@@ -186,11 +187,14 @@ function filmVerdict(expected, hz, times) {
   return v;
 }
 
-function html(bundle) {
+function html(bundle, options = {}) {
   // Counted, never written out: the word "Five" shipped in the delivered page
   // for as long as there were five examples, and stayed there when there were six.
-  const count = MODULES.filter((m) => m.startsWith('examples/')
-    && m !== 'examples/index.js' && m !== 'examples/stroke-font.js').length;
+  const count = options.count === undefined ? MODULES.filter((m) => m.startsWith('examples/')
+    && m !== 'examples/index.js' && m !== 'examples/stroke-font.js').length : options.count;
+  const description = options.count === undefined
+    ? count + " idioms that break each other's assumptions. The seed and the playhead are the only inputs."
+    : 'Adjust the seed, playhead and declared parameters of your piece.';
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -228,6 +232,10 @@ function html(bundle) {
   input[type=number] { font: inherit; width: 100px; background: #262932; color: var(--fg);
                        border: 1px solid var(--line); padding: 5px 7px; border-radius: 3px; }
   input[type=range] { width: 100%; accent-color: var(--accent); }
+  #previewMode { font: inherit; color: var(--fg); background: #262932; border: 1px solid #737681;
+                 border-radius: 3px; min-height: 32px; padding: 5px 7px; width: 100%; }
+  #previewMode:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  #previewStatus { color: var(--fg); }
   .facts { color: var(--dim); line-height: 1.7; font-size: 11px; }
   .facts b { color: var(--fg); font-weight: normal; }
   .meaning { color: var(--dim); font-size: 10px; line-height: 1.5; opacity: .75;
@@ -240,8 +248,7 @@ function html(bundle) {
 <div class="wrap">
   <aside>
     <h1>Artifex</h1>
-    <p class="sub">${count} idioms that break each other's assumptions. The seed
-    and the playhead are the only inputs.</p>
+    <p class="sub">${description}</p>
 
     <div class="pieces" id="pieces"></div>
 
@@ -262,6 +269,15 @@ function html(bundle) {
     <div class="group" id="paramsGroup" hidden>
       <div class="label">Declared parameters</div>
       <div id="params"></div>
+    </div>
+
+    <div class="group" id="previewGroup" hidden>
+      <label class="label" for="previewMode">Preview renderer</label>
+      <select id="previewMode" aria-describedby="previewStatus">
+        <option value="cpu">CPU reference</option>
+        <option value="gpu">GPU preview</option>
+      </select>
+      <div class="note" id="previewStatus" role="status" aria-live="polite">CPU reference. Exports always use CPU.</div>
     </div>
 
     <div class="group">
@@ -300,12 +316,66 @@ var __req = __require('');
 var piece = __req('core/piece.js');
 var render = __req('core/render.js');
 var vector = __req('core/surface-vector.js');
+var gpuPreview = __req('core/webgpu-preview.js');
 var EXAMPLES = __req('examples/index.js');
 
 var names = Object.keys(EXAMPLES);
-var current = null, currentName = null, solved = null, t = 0, playing = false, overrides = {}, raf = 0;
+var current = null, currentName = null, solved = null, t = 0, playing = false, overrides = {}, raf = 0, videoBusy = false;
 var c = document.getElementById('c'), ctx = c.getContext('2d');
 var facts = document.getElementById('facts'), err = document.getElementById('err');
+var previewMode = 'cpu', previewSession = null, previewPending = null, previewLoop = null;
+var frameRevision = 0, transportRevision = 0;
+var previewInfo = { mode: 'cpu', status: 'reference', presented: null };
+
+function previewStatus(message) {
+  var node = document.getElementById('previewStatus');
+  if (node.textContent !== message) node.textContent = message;
+}
+
+function makePreviewSession() {
+  var session = gpuPreview.createPreview({
+    gpu: typeof navigator === 'undefined' ? null : navigator.gpu,
+    createCanvas: function () { return document.createElement('canvas'); },
+    onLoss: function (message) { if (previewSession === session) previewFallback(message); },
+  });
+  return session;
+}
+
+function resetPreview() {
+  frameRevision++;
+  previewPending = null;
+  if (previewSession) previewSession.dispose();
+  previewSession = null;
+  previewMode = 'cpu';
+  document.getElementById('previewMode').value = 'cpu';
+  previewInfo = { mode: 'cpu', status: 'reference', presented: null };
+  previewStatus('CPU reference. Exports always use CPU.');
+}
+
+function previewFallback(message) {
+  resetPreview();
+  previewInfo.status = 'fallback';
+  previewInfo.reason = message;
+  previewStatus('CPU fallback: ' + message + '. Choose GPU preview to retry. Exports use CPU.');
+  frame();
+}
+
+function setPreview(mode) {
+  if (mode !== 'cpu' && mode !== 'gpu') throw new Error('preview renderer must be cpu or gpu');
+  if (mode === 'gpu' && (!current || !current.preview)) throw new Error('this piece has no GPU preview');
+  stop();
+  resetPreview();
+  previewMode = mode;
+  document.getElementById('previewMode').value = mode;
+  if (mode === 'gpu') {
+    previewInfo = { mode: 'gpu', status: 'preparing', presented: null };
+    previewStatus('Preparing GPU preview. Exports always use CPU.');
+  }
+  return frame();
+}
+
+document.getElementById('previewMode').onchange = function () { setPreview(this.value); };
+if (window.addEventListener) window.addEventListener('pagehide', resetPreview);
 
 function kindOf(p) {
   return (p.time ? Math.round(p.time.duration * p.time.hz) + ' frames' : 'a still')
@@ -323,12 +393,14 @@ names.forEach(function (n) {
 
 function select(name) {
   stop();
+  resetPreview();
   err.textContent = '';
   // The piece is never decorated. playheads() validates whatever it is handed
   // and a stowaway key is refused BY NAME -- which is the contract working, so
   // the name lives beside the piece rather than on it.
   current = piece.validate(EXAMPLES[name]);
   currentName = name;
+  document.getElementById('previewGroup').hidden = !current.preview;
   overrides = {};
   document.getElementById('seed').value = current.seed;
   c.width = current.size.w;
@@ -342,7 +414,7 @@ function select(name) {
   document.getElementById('svgnote').textContent = can
     ? 'Declared vector: any raster call would throw by name rather than vanish.'
     : 'This piece declares raster only, and means it. Asking for SVG is refused rather than answered with half a picture.';
-  document.getElementById('video').disabled = !current.time;
+  document.getElementById('video').disabled = !current.time || videoBusy;
   document.getElementById('videonote').textContent = current.time
     ? render.playheads(current).length + ' frames, encoded one at a time.'
     : 'A still has no frame list to walk, so there is no film to write.';
@@ -376,8 +448,9 @@ function buildParams() {
     why.textContent = d.meaning;
     var r = document.createElement('input');
     r.type = 'range';
-    r.min = d.min; r.max = d.max; r.value = at;
+    r.min = d.min; r.max = d.max;
     r.step = (d.max - d.min) / 200;
+    r.value = at;
     r.oninput = function () {
       overrides[k] = Number(r.value);
       val.textContent = Number(r.value).toFixed(2);
@@ -389,23 +462,90 @@ function buildParams() {
   });
 }
 
+function buildControls(ready) {
+  document.getElementById('previewMode').disabled = !ready;
+  document.getElementById('play').disabled = !ready || !current.time;
+  document.getElementById('t').disabled = !ready || !current.time;
+  document.getElementById('svg').disabled = !ready || current.outputs.indexOf('vector') < 0;
+  document.getElementById('video').disabled = !ready || !current.time || videoBusy;
+  Array.prototype.forEach.call(document.querySelectorAll('[data-png]'), function (b) { b.disabled = !ready; });
+}
+
+function failBuild(message) {
+  // A partial solve is diagnostic state, never a frame or an export recipe.
+  solved = null;
+  resetPreview();
+  err.textContent = message;
+  stop();
+  buildControls(false);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, c.width, c.height);
+  facts.innerHTML = '';
+  document.getElementById('tread').textContent = '';
+}
+
 function resolve() {
   var t0 = performance.now();
   try {
     solved = piece.solve(current, Number(document.getElementById('seed').value), overrides);
     err.textContent = '';
-  } catch (e) { err.textContent = String(e.message); return; }
+  } catch (e) { failBuild(String(e.message)); return; }
   if (solved.stages.error) {
     var s = solved.stages.error;
-    err.textContent = 'build stage "' + s.stage + '" (' + (s.at + 1) + ' of ' + s.of + ') threw: ' + s.message;
+    failBuild('build stage "' + s.stage + '" (' + (s.at + 1) + ' of ' + s.of + ') threw: ' + s.message);
     return;
   }
   solved.__ms = performance.now() - t0;
+  if (previewMode === 'gpu') {
+    ctx.clearRect(0, 0, c.width, c.height);
+    previewInfo.presented = null;
+  }
+  buildControls(true);
   frame();
 }
 
 function frame() {
   if (!solved) return;
+  var revision = ++frameRevision;
+  if (previewMode === 'gpu') {
+    previewPending = { p: current, s: solved, t: t, revision: revision, width: c.width, height: c.height };
+    previewInfo.requested = { seed: solved.seed, t: piece.frameT(current, t), params: Object.assign({}, solved.state.params) };
+    if (!playing) {
+      ctx.clearRect(0, 0, c.width, c.height);
+      previewInfo.presented = null;
+      toUrl();
+    }
+    if (previewLoop) return previewLoop;
+    // One in-flight frame plus a replaceable latest request. Playback waits
+    // for this loop so slow GPUs cannot be invalidated on every animation tick.
+    previewLoop = (async function () {
+      while (previewPending && previewMode === 'gpu') {
+        var request = previewPending;
+        previewPending = null;
+        if (!previewSession) previewSession = makePreviewSession();
+        var active = previewSession;
+        try {
+          var result = await active.draw(request.p, request.s, request.t, request.width, request.height, {
+            isCurrent: function () { return previewMode === 'gpu' && previewSession === active && request.revision === frameRevision; },
+            present: function (image) {
+              ctx.setTransform(1, 0, 0, 1, 0, 0);
+              ctx.drawImage(image, 0, 0);
+            },
+          });
+          if (!result.stale && previewSession === active && request.revision === frameRevision) {
+            previewInfo = { mode: 'gpu', status: 'active', presented: {
+              seed: request.s.seed, t: result.t, params: Object.assign({}, request.s.state.params),
+            }, timing: result };
+            previewStatus('GPU preview is approximate. Exports always use CPU.');
+            showFrame(result.t, result.totalMs, 'preview');
+          }
+        } catch (e) {
+          if (previewSession === active) previewFallback(String(e.message || e));
+        }
+      }
+    })().finally(function () { previewLoop = null; });
+    return previewLoop;
+  }
   var t0 = performance.now();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, c.width, c.height);
@@ -413,13 +553,18 @@ function frame() {
   try { qt = render.drawFrame(ctx, current, solved, t); }
   catch (e) { err.textContent = String(e.message); stop(); return; }
   var ms = performance.now() - t0;
+  previewInfo.presented = { seed: solved.seed, t: qt, params: Object.assign({}, solved.state.params) };
+  showFrame(qt, ms, 'draw');
+}
+
+function showFrame(qt, ms, timingLabel) {
   document.getElementById('tread').textContent = current.time ? qt.toFixed(3) + ' of 1' : 'a still';
   facts.innerHTML = [
     'declared <b>' + current.outputs.join(' + ') + '</b>',
     'design box <b>' + current.size.w + ' \\u00d7 ' + current.size.h + '</b>',
     'seed <b>' + solved.seed + '</b>',
     'build <b>' + solved.__ms.toFixed(1) + ' ms</b> in <b>' + solved.stages.of + '</b> stage(s)',
-    'draw <b>' + ms.toFixed(1) + ' ms</b>',
+    timingLabel + ' <b>' + ms.toFixed(1) + ' ms</b>',
     current.time ? 'frames <b>' + render.playheads(current).length + '</b>' : 'no timeline',
   ].join('<br>');
   if (!playing) toUrl();
@@ -427,6 +572,7 @@ function frame() {
 
 function stop() {
   playing = false;
+  transportRevision++;
   cancelAnimationFrame(raf);
   var b = document.getElementById('play');
   b.classList.remove('on');
@@ -455,7 +601,10 @@ function toUrl() {
   Object.keys(overrides).forEach(function (k) {
     q.push('p.' + encodeURIComponent(k) + '=' + encodeURIComponent(overrides[k]));
   });
-  history.replaceState(null, '', '?' + q.join('&'));
+  // Sandboxed documents and data URLs can refuse address-bar updates. The
+  // recipe is optional persistence; a refusal must not interrupt the controls.
+  try { history.replaceState(null, '', '?' + q.join('&')); }
+  catch (e) { /* address-bar synchronization is best effort */ }
 }
 
 // Read it back. Every value is checked against the piece that is actually here
@@ -485,11 +634,13 @@ function fromUrl() {
 }
 
 document.getElementById('play').onclick = function () {
+  if (!solved || !current.time) return;
   if (playing) return stop();
   playing = true;
   this.classList.add('on');
   this.textContent = 'pause';
   var dur = current.time.duration * 1000;
+  var transport = ++transportRevision;
   var t0 = performance.now() - t * dur;
   (function step(now) {
     if (!playing) return;
@@ -497,8 +648,9 @@ document.getElementById('play').onclick = function () {
     // the playhead to the drawn-frame grid, so no mark ever sees this number.
     t = ((now - t0) % dur) / dur;
     document.getElementById('t').value = t * 1000;
-    frame();
-    raf = requestAnimationFrame(step);
+    var pending = frame();
+    function next() { if (playing && transport === transportRevision) raf = requestAnimationFrame(step); }
+    if (pending && pending.then) pending.then(next); else next();
   })(performance.now());
 };
 
@@ -512,17 +664,20 @@ document.getElementById('reroll').onclick = function () {
 
 Array.prototype.forEach.call(document.querySelectorAll('[data-png]'), function (b) {
   b.onclick = function () {
+    if (!solved) return;
     // The raster backend, entire: an offscreen canvas at any scale. Not capped.
     var k = Number(b.dataset.png);
+    var filename = currentName + '-' + solved.seed + '@' + k + 'x.png';
     var o = document.createElement('canvas');
     o.width = Math.round(current.size.w * k);
     o.height = Math.round(current.size.h * k);
     render.drawFrame(o.getContext('2d'), current, solved, t, { scale: k });
-    o.toBlob(function (blob) { save(blob, currentName + '-' + solved.seed + '@' + k + 'x.png'); });
+    o.toBlob(function (blob) { save(blob, filename); });
   };
 });
 
 document.getElementById('svg').onclick = function () {
+  if (!solved) return;
   var g = new vector.VectorSurface(current.size);
   render.drawFrame(g, current, solved, t);
   save(new Blob([g.toSVG()], { type: 'image/svg+xml' }), currentName + '-' + solved.seed + '.svg');
@@ -547,6 +702,7 @@ async function exportVideo() {
   // Held here, because the export runs for the length of the film and nothing
   // stops anyone choosing another piece while it does.
   var p = current, s = solved, name = currentName;
+  if (!s) throw new Error(err.textContent || 'the piece has no successful build to export');
   if (!p || !p.time) throw new Error('this piece is a still: there is no frame list to walk');
   if (typeof MediaStreamTrackGenerator !== 'function') {
     throw new Error('this browser has no MediaStreamTrackGenerator, and the frame-exact export needs it: a canvas captureStream is paced by the compositor and silently drops most of the film');
@@ -626,21 +782,31 @@ async function exportVideo() {
 }
 
 document.getElementById('video').onclick = function () {
+  if (!solved || videoBusy) return;
   var b = this;
+  var request = solved;
   var note = document.getElementById('videonote');
   b.disabled = true;
+  videoBusy = true;
   err.textContent = '';
-  note.textContent = 'encoding ' + render.playheads(current).length + ' frames...';
+  var pendingNote = 'encoding ' + render.playheads(current).length + ' frames...';
+  note.textContent = pendingNote;
   exportVideo().then(function (r) {
     save(r.blob, r.name);
+    if (solved !== request) return;
     note.textContent = r.frames + ' of ' + r.expected + ' frames, ' + r.seconds.toFixed(2) + ' s, '
       + Math.round(r.bytes / 1024) + ' kB. Gap between frames: median ' + r.medianGapMs.toFixed(1)
       + ' ms, p95 ' + r.p95GapMs.toFixed(1) + ' ms, max ' + r.maxGapMs.toFixed(1) + ' ms. Render '
       + r.renderMs.toFixed(0) + ' ms, encode ' + r.encodeMs.toFixed(0) + ' ms.';
   }).catch(function (e) {
+    if (solved !== request) return;
     note.textContent = '';
     err.textContent = String(e.message || e);
-  }).finally(function () { b.disabled = !current.time; });
+  }).finally(function () {
+    videoBusy = false;
+    b.disabled = !solved || !current.time;
+    if (solved !== request && note.textContent === pendingNote) note.textContent = '';
+  });
 };
 
 function save(blob, name) {
@@ -663,16 +829,19 @@ window.__artifex = {
   piece: piece,
   render: render,
   vector: vector,
+  gpu: gpuPreview,
+  setPreview: setPreview,
   video: exportVideo,
   examples: EXAMPLES,
   setSeed: function (s) { document.getElementById('seed').value = s; resolve(); },
-  setT: function (v) { stop(); t = v; frame(); },
+  setT: function (v) { stop(); t = v; document.getElementById('t').value = v * 1000; frame(); },
   read: function () {
     return {
       name: currentName, seed: solved && solved.seed, t: t,
       outputs: current.outputs, size: current.size,
       frames: render.playheads(current).length,
       error: err.textContent || null,
+      preview: previewInfo,
     };
   },
   // Stop the build after a named stage and describe what it had made. read()
@@ -759,15 +928,16 @@ function checkParses(page) {
 }
 
 function main() {
-  checkResolvable(MODULES);
-  const bundle = MODULES.map(wrap).join('\n');
-  const page = html(bundle);
+  const args = process.argv.slice(2);
+  if (args.length > 1 || (args[0] && args[0].startsWith('--'))) throw new Error('usage: page [path/to/piece.cjs]');
+  const external = args.length ? loadExternal(args[0]) : null;
+  const page = html(bundle(external), external ? { count: 1 } : {});
   checkParses(page);
-  const out = path.join(ROOT, 'out');
+  const out = external ? external.directory : path.join(ROOT, 'out');
   fs.mkdirSync(out, { recursive: true });
-  const file = path.join(out, 'index.html');
+  const file = path.join(out, external ? external.stem + '-page.html' : 'index.html');
   fs.writeFileSync(file, page);
-  console.log(`${path.relative(ROOT, file)}  ${(Buffer.byteLength(page) / 1024).toFixed(1)} kB  ${MODULES.length} modules, no dependencies`);
+  console.log(`${external ? file : path.relative(ROOT, file)}  ${(Buffer.byteLength(page) / 1024).toFixed(1)} kB  ${MODULES.length + (external ? external.moduleCount : 0)} modules, no dependencies`);
 }
 
 // Requirable, so the resolution check can be tested. Without this the only
@@ -775,9 +945,9 @@ function main() {
 if (require.main === module) main();
 
 /** The module runtime plus every bundled module, for any page that wants them. */
-function bundle() {
+function bundle(external = null) {
   checkResolvable(MODULES);
-  return [RUNTIME].concat(MODULES.map(wrap)).join(String.fromCharCode(10));
+  return [RUNTIME].concat(MODULES.map(wrap), external ? [external.source] : []).join(String.fromCharCode(10));
 }
 
 module.exports = { modules, checkResolvable, checkParses, bundle, html, webmBlockTimes, filmVerdict, MODULES };

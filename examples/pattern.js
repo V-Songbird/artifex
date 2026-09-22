@@ -33,7 +33,7 @@
 
 const { rng, noise2 } = require('../core/rand.js');
 const { clamp01, pick, smoothstep } = require('../core/num.js');
-const { ring } = require('../core/geom.js');
+const { ring, offsetPolyline, segmentIntersection } = require('../core/geom.js');
 const { stroke, fill, clipPolyline, boxOf } = require('../core/path.js');
 const { mix } = require('../core/colour.js');
 
@@ -221,19 +221,45 @@ const BAND = 0.038;   // half-width of a doubled arm, in cell widths
 function arm(a, b, bow) {
   const dx = b[0] - a[0];
   const dy = b[1] - a[1];
-  const line = (off) => {
-    const pts = [];
-    for (let i = 0; i < SAMPLES; i++) {
-      const s = i / (SAMPLES - 1);
-      const swell = Math.sin(Math.PI * s) * bow + off;
-      pts.push([a[0] + dx * s - dy * swell, a[1] + dy * s + dx * swell]);
-    }
-    return pts;
-  };
+  const solo = [];
+  for (let i = 0; i < SAMPLES; i++) {
+    const s = i / (SAMPLES - 1);
+    const swell = Math.sin(Math.PI * s) * bow;
+    solo.push([a[0] + dx * s - dy * swell, a[1] + dy * s + dx * swell]);
+  }
   // The band is the PAIR, not the centre line thickened: a set that is
   // symmetric about the arm stays symmetric under a reflection, so a doubled
   // arm is still an exact image of its neighbour.
-  return { solo: line(0), band: [line(BAND), line(-BAND)] };
+  // Constant perpendicular distance from each sampled segment, before the
+  // lattice transform. Keep the established width proportional to chord length.
+  const width = BAND * Math.hypot(dx, dy);
+  return { solo, band: [offsetPolyline(solo, width), offsetPolyline(solo, -width)] };
+}
+
+/** Pin a bead to the nearest visible crossing within a fifth of a cell. */
+function accentCrossing(node, paths, radius) {
+  const segs = [];
+  for (const path of paths) {
+    if (path.tier !== 2) continue;
+    for (let i = 1; i < path.pts.length; i++) {
+      const a = path.pts[i - 1]; const b = path.pts[i];
+      if (Math.max(a[0], b[0]) < node.x - radius || Math.min(a[0], b[0]) > node.x + radius
+        || Math.max(a[1], b[1]) < node.y - radius || Math.min(a[1], b[1]) > node.y + radius) continue;
+      segs.push({ a, b, path });
+    }
+  }
+  let point = [node.x, node.y]; let nearest = radius;
+  for (let i = 0; i < segs.length; i++) {
+    for (let j = i + 1; j < segs.length; j++) {
+      const a = segs[i]; const b = segs[j];
+      if (a.path === b.path) continue;
+      const hit = segmentIntersection(a.a, a.b, b.a, b.b);
+      if (!hit || hit.type !== 'point') continue;
+      const d = Math.hypot(hit.point[0] - node.x, hit.point[1] - node.y);
+      if (d < nearest) { nearest = d; point = hit.point; }
+    }
+  }
+  return point;
 }
 
 module.exports = {
@@ -388,12 +414,16 @@ module.exports = {
       // FIVE EXCELLENT MARKS BEAT FIFTY EQUIVALENT ONES. The one warm pen is
       // spent on the six hottest nodes and nowhere else, so it reads as a
       // decision rather than as a third texture.
-      s.accents = s.nodes
+      const hot = s.nodes
         .filter((n) => n.tier === 2 && n.x > M + size * 0.2 && n.x < W - M - size * 0.2
           && n.y > M + size * 0.2 && n.y < H - M - size * 0.2)
         .sort((a, b) => b.heat - a.heat || a.j - b.j || a.i - b.i)
-        .slice(0, 6)
-        .map((n) => ring(n.x, n.y, 18, (ang) => size * (0.048 + 0.012 * noise2(R, Math.cos(ang) + n.i, Math.sin(ang) + n.j, 'bead'))));
+        .slice(0, 6);
+      // Keep the chosen hot nodes and palette; move each bead onto nearby ink
+      // intersections. A node without a local crossing keeps its old anchor.
+      s.accentCentres = hot.map((n) => accentCrossing(n, s.paths, size * 0.2));
+      s.accents = hot.map((n, i) => ring(...s.accentCentres[i], 18,
+        (ang) => size * (0.048 + 0.012 * noise2(R, Math.cos(ang) + n.i, Math.sin(ang) + n.j, 'bead'))));
     }],
   ],
 

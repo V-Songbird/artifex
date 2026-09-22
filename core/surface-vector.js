@@ -11,8 +11,9 @@
 // saying what to do instead.
 //
 // THE ONE LIMIT WORTH STATING. Coordinates are baked into the current transform,
-// which is exact for lines and Béziers (affine-invariant) and for arcs (they are
-// converted to Béziers in user space first). Stroke WIDTH is scaled by
+// which is exact for lines and Béziers (affine-invariant). Elliptical arcs use
+// SVG A commands under similarities; other transforms keep cubic approximation.
+// Stroke WIDTH is scaled by
 // sqrt(|det|), so under a NON-UNIFORM scale a stroke that Canvas2D would draw
 // anisotropically comes out uniform. Plotters and print do not want anisotropic
 // strokes, so this is the right trade here -- but it is a difference, not a
@@ -95,6 +96,17 @@ function scaleOf(m) {
   return Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2]));
 }
 
+/** Similarities preserve perpendicular equal-length axes, including reflection. */
+function similarityOf(m) {
+  const largest = Math.max(Math.abs(m[0]), Math.abs(m[1]), Math.abs(m[2]), Math.abs(m[3]));
+  if (!(largest > 0) || !Number.isFinite(largest)) return null;
+  const a = m[0] / largest, b = m[1] / largest, c = m[2] / largest, d = m[3] / largest;
+  const x = a * a + b * b, y = c * c + d * d;
+  const tolerance = 32 * Number.EPSILON * Math.max(x, y);
+  if (Math.abs(x - y) > tolerance || Math.abs(a * c + b * d) > tolerance) return null;
+  return { scale: largest * Math.sqrt(x), reflected: a * d - b * c < 0 };
+}
+
 class Gradient {
   constructor(kind, coords) { this.kind = kind; this.coords = coords; this.stops = []; }
   addColorStop(offset, color) {
@@ -171,6 +183,12 @@ class VectorSurface {
   translate(x, y) { return this.transform(1, 0, 0, 1, x, y); }
   scale(x, y) { return this.transform(x, 0, 0, y === undefined ? x : y, 0, 0); }
   rotate(a) { const c = Math.cos(a), s = Math.sin(a); return this.transform(c, s, -s, c, 0, 0); }
+
+  /** Independent numeric Canvas-shaped snapshot, without DOMMatrix methods. */
+  getTransform() {
+    const [a, b, c, d, e, f] = this._st.m;
+    return { a, b, c, d, e, f };
+  }
 
   // ---- path --------------------------------------------------------------
 
@@ -249,13 +267,16 @@ class VectorSurface {
   }
 
   ellipse(cx, cy, rx, ry, rot, a0, a1, ccw = false) {
-    // Flattened to cubics IN USER SPACE, then transformed. Béziers are
-    // affine-invariant, so the result is exact under any transform -- including
-    // the non-uniform and sheared ones an SVG arc command cannot express.
+    // Similarities need only transformed radii, axis rotation and sweep. Other
+    // affine transforms retain user-space cubics; the approximation transforms
+    // exactly, although the cubic itself is not an exact ellipse.
     let d = a1 - a0;
     const TAU = Math.PI * 2;
     if (ccw) { if (d > 0) d -= TAU * Math.ceil(d / TAU); if (d <= -TAU) d = -TAU; }
     else { if (d < 0) d += TAU * Math.ceil(-d / TAU); if (d >= TAU) d = TAU; }
+    // Distinct angles an integer turn apart still trace the circumference.
+    // Only identical input angles describe an empty sweep.
+    if (d === 0 && a1 !== a0) d = ccw ? -TAU : TAU;
 
     const cr = Math.cos(rot), sr = Math.sin(rot);
     const P = (th) => {
@@ -270,6 +291,35 @@ class VectorSurface {
     const p0 = P(a0);
     if (!this._cur) this.moveTo(p0[0], p0[1]); else this.lineTo(p0[0], p0[1]);
     if (d === 0) return this;
+
+    const m = this._st.m;
+    const similarity = similarityOf(m);
+    const hasRadii = similarity && rx > 0 && ry > 0;
+    const arcRx = hasRadii ? n(rx * similarity.scale) : '0';
+    const arcRy = hasRadii ? n(ry * similarity.scale) : '0';
+    // A positive input radius can disappear at SVG serialization precision.
+    // Keep cubics when either emitted radius is zero, preserving the visible axis.
+    if (arcRx !== '0' && arcRy !== '0') {
+      const rotation = Math.atan2(m[1] * cr + m[3] * sr, m[0] * cr + m[2] * sr) * 180 / Math.PI;
+      const sweep = (d > 0) !== similarity.reflected ? 1 : 0;
+      // SVG omits an arc with coincident endpoints. Split whole circles and
+      // nearly whole turns whose endpoints coincide at serialization precision.
+      let count = Math.abs(d) === TAU ? 2 : 1;
+      if (count === 1 && Math.abs(d) > Math.PI) {
+        const start = apply(m, ...p0).map(n);
+        const end = apply(m, ...P(a0 + d)).map(n);
+        if (start[0] === end[0] && start[1] === end[1]) count = 2;
+      }
+      const large = Math.abs(d / count) > Math.PI ? 1 : 0;
+      const command = `A${arcRx} ${arcRy} ${n(rotation)} ${large} ${sweep} `;
+      for (let i = 1; i <= count; i++) {
+        const point = i === count && Math.abs(d) === TAU ? p0 : P(a0 + d * (i / count));
+        const [x, y] = apply(m, ...point);
+        this._path.push(`${command}${n(x)} ${n(y)}`);
+        this._cur = point;
+      }
+      return this;
+    }
 
     const segs = Math.max(1, Math.ceil(Math.abs(d) / (Math.PI / 2)));
     const step = d / segs;

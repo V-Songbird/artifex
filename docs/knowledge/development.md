@@ -1,7 +1,7 @@
 ---
 type: knowledge
 summary: "Describes Artifex's source layout, development commands, plugin metadata, and the limits of its checks."
-related_files: ["package.json", ".nvmrc", "core/piece.js", "tests/negative.js", "tests/contact-sheet.test.js", "tools/contact-sheet.js", "tools/lint-unread.js", "tools/build-page.js", "plugin.json", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json", "skills/artifex/SKILL.md", ".github/workflows/check.yml"]
+related_files: ["package.json", ".nvmrc", "core/piece.js", "core/webgpu-preview.js", "examples/pixel-field.js", "tests/webgpu-preview.test.js", "tests/page-preview.test.js", "tests/pixel-field.test.js", "core/field.js", "core/stroke-font.js", "examples/stroke-font.js", "tests/field.test.js", "tests/negative.js", "tests/negative-runner.test.js", "tests/contact-sheet.test.js", "tests/external-piece.test.js", "tests/page-build-errors.test.js", "tests/check-browser.test.js", "tools/piece-input.js", "tools/check-browser.js", "tools/contact-sheet.js", "tools/lint-unread.js", "tools/build-page.js", "plugin.json", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json", "skills/artifex/SKILL.md", ".github/workflows/check.yml"]
 ---
 
 # Developing Artifex
@@ -17,6 +17,7 @@ Artifex has no dependency installation or source compilation step. Use the Node 
 | `npm run lint` | Checks unread declarations and contract keys. |
 | `npm run negative` | Mutates isolated copies and checks which named test rejects each mutation. |
 | `npm run page` | Builds the self-contained `out/index.html`. |
+| `npm run browser` | Checks the built page in installed Edge using native CDP; run `npm run page` first. |
 | `npm run examples` | Writes registered vector examples as SVG files under `out/`. |
 | `npm run seeds -- drift 16 0.5` | Writes a contact sheet for a registered example. |
 | `npm run seeds -- drift 5 0.5 --param reach` | Writes a five-value parameter strip at the piece's fixed seed. |
@@ -30,6 +31,20 @@ The benchmark uses a null surface to measure drawing calls without SVG emission.
 `npm run bench` writes or replaces `out/bench.json`. `BENCH_REPS` controls its sample count and defaults to 40. Preserve a baseline elsewhere before running a comparison you need to retain.
 
 For a focused contract check, run `node --test tests/piece.test.js`. Generated pages, artwork, contact sheets, and benchmark results go under `out/`.
+
+## External pieces
+
+`npm run page -- ./piece.cjs` and `npm run seeds -- ./piece.cjs 9 0.5` accept a CommonJS module exporting one piece. From another project, use `npm --prefix "/path/to/artifex" run page -- "./piece.cjs"` or the equivalent `run seeds --` command, replacing the library path. These npm commands resolve relative input paths against npm's original invocation directory (`INIT_CWD`); direct Node commands use their current directory. Quote paths containing spaces.
+
+External outputs are written beside the resolved source module: `piece-page.html`, `piece-seeds.html`, or `piece-param-width-height.html` for `--param width,height`. Output stems come from the source filename, replacing filesystem-reserved characters. Parameter-name suffixes are URL-encoded, including `*` as `%2A`, so names cannot introduce Windows wildcard characters or path separators. Existing files with the same generated name are replaced. The registered-example defaults still write under the library's `out/`; `examples` and `bench` still operate only on the example registry.
+
+The loader supports a restricted CommonJS subset: direct literal `require('...')` or `require("...")` calls, including relative helpers, absolute library imports and JSON data. Helpers must be browser-compatible `.js` or `.cjs` modules. It is not a general CommonJS bundler. Node builtins, native modules, ESM syntax, require aliases and computed require paths are rejected. Shadowed/local functions named `require` and require calls inside template interpolation are unsupported; keep imports as ordinary calls outside templates.
+
+Inline script-end text in ordinary quoted strings is escaped without changing its value. Any template literal containing literal `</script` text is rejected, whether tagged or untagged; use ordinary quoted strings or JSON for that data. This conservative rule avoids changing raw template strings while trying to infer their tag. Templates without that marker remain supported. Emitted scripts are parsed before writing, and malformed JSON errors identify the data file and retain the original parse cause. The generated HTML includes its module sources and needs no filesystem access when opened. Piece loading uses Node `require()` and executes trusted local code; this is not sandboxing.
+
+In PowerShell, use `npm.cmd` when forwarding options such as `--param`; a PowerShell npm shim may consume the `--` separator before npm sees it. For example: `npm.cmd --prefix "/path/to/artifex" run seeds -- "./piece.cjs" 3 0.5 --param width`.
+
+Parameter strips and grids use the same `--param` option and fixed-seed rules for external pieces. Run `node --test tests/external-piece.test.js tests/contact-sheet.test.js` for module loading, nested dependencies, invocation paths, filenames, error cases and sweep contracts. Inspect the generated page and sheet in a browser to verify native rendering.
 
 ## Contact-sheet sweeps and metrics
 
@@ -53,29 +68,63 @@ Run `node --test tests/contact-sheet.test.js` for argument, sampling, determinis
 | --- | --- |
 | [`core/piece.js`](../../core/piece.js) | `FIELDS`, validation, build stages, frame grid, and replay metadata. |
 | [`core/render.js`](../../core/render.js) | Drawing a frame, rendering SVG, and enumerating playheads. |
+| [`core/webgpu-preview.js`](../../core/webgpu-preview.js) | Optional bounded opaque-pixel GPU preview; explicit ABI, async lifetime and capability fallback. |
 | [`core/surface-vector.js`](../../core/surface-vector.js) | Canvas2D-shaped vector surface and SVG serialization. |
 | [`core/rand.js`](../../core/rand.js) | Addressed randomness and noise fields. |
+| [`core/field.js`](../../core/field.js) | Grid sampling, derivatives and composition, isolines and streamlines; see the [field API](../apis/fields.md). |
+| [`core/stroke-font.js`](../../core/stroke-font.js) | Shared polyline stroke font; [`examples/stroke-font.js`](../../examples/stroke-font.js) remains a compatibility entry point. |
 | [`core/geom.js`](../../core/geom.js), [`core/path.js`](../../core/path.js) | Geometry and path operations. |
 | [`core/num.js`](../../core/num.js), [`core/colour.js`](../../core/colour.js) | Numeric and colour operations. |
 | [`examples/index.js`](../../examples/index.js) | Examples available to the bundled tools. |
 | [`tools/build-page.js`](../../tools/build-page.js) | Browser bundle, transport, inspection interface, and exports. |
+| [`tools/piece-input.js`](../../tools/piece-input.js) | External CommonJS piece loading, caller-directory resolution and dependency bundling. |
+| [`tools/check-browser.js`](../../tools/check-browser.js) | Installed Edge smoke checks and the owned browser/server lifecycle. |
 | [`tests`](../../tests) | Contract, geometry, rendering, examples, and mutation coverage. |
 
 Core helpers must remain useful across subjects. Keep algorithms specific to an example with that example. When the public contract changes, reconcile the [piece API](../apis/piece-api.md) and [runtime skill](../../skills/artifex/SKILL.md) with `FIELDS`.
 
+`examples/pixel-field.js` is the authored CPU/WGSL reference for optional pixel
+previews. Run `node --test tests/piece.test.js tests/webgpu-preview.test.js tests/page-preview.test.js tests/pixel-field.test.js`
+for its contract, lifecycle, recipe freshness and CPU pixel checks. GPU tests in
+Node use controlled devices; actual shader output, native device loss, canvas
+copies and CPU/GPU timing require installed Edge with usable WebGPU. Ordinary
+`npm run browser` keeps the CPU path and does not establish GPU availability.
+The backend's reported allocation proxy is not measured GPU memory.
+
+The example Recorder hashes real ImageData bytes. Generic seed, parameter and
+timeline checks render opted-in pixel examples at up to 64 pixels wide; the scale
+invariant compares that diagnostic size with eight times the size. Dedicated
+pixel tests cover raster values and scale behavior. The benchmark null surface
+allocates real pixel buffers and runs CPU computation while discarding upload;
+it cannot measure browser presentation or GPU speedup.
+
+The [geometry API](../apis/geometry.md) defines segment intersection and closest-point results, bounded open-polyline offsets, and their numerical limits. `pattern` consumes offsets and intersections; `packing` uses segment distance to keep interior dots clear of its outlines. Run `node --test tests/geom.test.js tests/geometry-consumers.test.js` for those contracts and consumers.
+
 The page builder discovers JavaScript modules in `core/` and `examples/`, then bundles them with a CommonJS loader. Its module-resolution and script-parsing checks catch structural build failures. Template-string content needs correct escaping before it becomes browser JavaScript.
+
+Address-bar synchronization is best effort: documents that reject `history.replaceState` still support selection, playback and exports, but cannot update shareable recipe URLs.
+
+When building a selected piece fails, the page preserves the original build diagnostic and clears its canvas and measurements. Playback and exports are disabled until a valid rebuild or selection succeeds; `read().error` retains the diagnostic and `manifest()` returns `null`. Direct video requests reject with that diagnostic instead of exporting partial state. Run `node --test tests/page-build-errors.test.js` for this error/recovery contract.
 
 ## What verification establishes
 
 The Node suite checks selected contract, geometry, replay, frame-grid, SVG, and example properties. Its browser-facing tests use controlled surfaces and script inspection. They do not launch a browser or establish visual quality.
 
+`npm run browser` requires Node 22 or later and an installed Microsoft Edge. It uses native `fetch` and `WebSocket`, with no package dependency or browser download. It serves the built HTML snapshot on an OS-assigned loopback port and launches Edge with a unique temporary profile. Existing browser sessions and profiles are left alone. `--edge PATH` or `EDGE_PATH` selects another Edge installation; `--timeout-ms 60000` sets the startup/navigation/evaluation deadline (100–300000 ms), and `--headed` shows the browser. Pass options after `npm run browser --`. Cleanup has a separate bounded grace period and failures exit nonzero with diagnostics.
+
+The browser command selects every registered example, checks `read()`, each declared stage through `inspect()`, and `manifest()`, confirms the HTTP recipe URL, and draws into a separate native canvas with `willReadFrequently: true`. It reports nontransparent pixel counts, including backgrounds. Page exceptions, console errors, failed checks and timeouts fail the command. This smoke check does not verify composition, cross-browser or physical-device behavior, or exported video timing. The ordinary Node suite and current CI do not require Edge.
+
 For browser or export changes, inspect actual rendered output and saved files. Check exported video frame counts and spacing from the encoded file. Automated numerical checks do not establish composition, layering, or usability.
 
-The mutation suite copies `core/`, `examples/`, `tests/`, `tools/`, and `package.json` into temporary directories. Its control run must pass before mutation results are useful. It distinguishes an escaped mutation from one rejected by the wrong test.
+The mutation suite copies `core/`, `examples/`, `tests/`, `tools/`, and `package.json` into temporary directories. Its control requires exit 0 and a complete, nonempty Node TAP report. A mutation is caught only when a completed exit-1 test run reports its named assertion; a completed passing run is escaped, and a different failed assertion is misnamed. Launch errors, signals, unexpected exit codes, and incomplete or inconsistent TAP are infrastructure failures, including when some failures were printed before the process stopped. The runner keeps process metadata and both output streams, reports infrastructure failures separately, and exits unsuccessfully. Run `node --test tests/negative-runner.test.js` for bounded process and report regression checks.
+
+Expected mutation titles must be unique among all TAP results and exclude control characters and literal control escapes such as `\n`. Node 22 can encode distinct original titles identically. The runner reports ambiguous attribution as an infrastructure failure rather than claiming that the intended assertion failed.
+
+Each test-suite subprocess has a five-minute deadline. Set `ARTIFEX_NEGATIVE_TIMEOUT_MS` to an integer from 1 to 2147483647 to override it; zero does not disable the limit. On timeout the runner reports infrastructure failure, terminates only its owned Windows process tree or POSIX process group, and allows up to ten additional seconds for teardown. Failed termination remains an infrastructure error. Combined stdout and stderr are capped at 1 MiB. Mutation subprocesses run sequentially. The runner always attempts cleanup of its own temporary copy before reporting its exit code.
 
 ## Continuous integration
 
-The [Check workflow](../../.github/workflows/check.yml) uses the Node version in `.nvmrc` on Linux and Windows. It rejects tracked ignored files, runs `npm run check`, and builds the standalone page.
+The [Check workflow](../../.github/workflows/check.yml) uses the Node version in `.nvmrc` on Linux and Windows. It rejects tracked ignored files, runs `npm run check`, builds the standalone page and runs `npm run negative`. Each matrix job has a 120-minute cap; each mutation-suite subprocess also retains the finite runner deadline described above.
 
 Submit changes through a pull request targeting `main`. The branch rules require the Linux and Windows checks, resolved review conversations, and a linear history. Deletion and force pushes are blocked.
 

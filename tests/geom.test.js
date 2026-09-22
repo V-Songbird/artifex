@@ -11,6 +11,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const {
+  closestPointOnSegment, segmentIntersection, offsetPolyline,
   lengthOf, bbox, centroid, pointInPoly,
   resample, chaikin, chain,
   ring, ribbon,
@@ -23,6 +24,147 @@ function grab(fn) {
   try { fn(); } catch (e) { return e; }
   throw new Error('expected a throw, and none happened');
 }
+
+test('closest point clamps to the segment and measures from the returned point', () => {
+  const a = [2, 3]; const b = [8, 11];
+  for (const [p, t, point, distance] of [
+    [[1, 10], 0.5, [5, 7], 5],
+    [[-1, -1], 0, a, 5],
+    [[11, 15], 1, b, 5],
+  ]) {
+    const got = closestPointOnSegment(p, a, b);
+    assert.ok(near(got.t, t));
+    assert.ok(got.point.every((v, i) => near(v, point[i])));
+    assert.ok(near(got.distance, distance));
+    assert.equal(got.distance, Math.hypot(p[0] - got.point[0], p[1] - got.point[1]));
+  }
+  assert.deepEqual(closestPointOnSegment([8, 11], a, a), { point: a, t: 0, distance: 10 });
+});
+
+test('intersection separates parallel segments and detects an interior crossing', () => {
+  assert.equal(segmentIntersection([0, 0], [4, 4], [0, 1], [4, 5]), null);
+  assert.equal(segmentIntersection([0, 0], [1, 1], [2, 0], [2, 3]), null);
+  assert.deepEqual(segmentIntersection([0, 0], [4, 4], [0, 4], [4, 0]),
+    { type: 'point', point: [2, 2] });
+  // A shallow crossing must not disappear behind a fixed parallel tolerance.
+  assert.deepEqual(segmentIntersection([0, 0], [1, 1e-12], [0, 1e-12], [1, 0]),
+    { type: 'point', point: [0.5, 5e-13] });
+});
+
+test('collinear overlap keeps both ends in the first segment direction', () => {
+  assert.deepEqual(segmentIntersection([0, 0], [6, 3], [8, 4], [2, 1]),
+    { type: 'overlap', points: [[2, 1], [6, 3]] });
+  assert.deepEqual(segmentIntersection([6, 3], [0, 0], [8, 4], [2, 1]),
+    { type: 'overlap', points: [[6, 3], [2, 1]] });
+  assert.deepEqual(segmentIntersection([2, 8], [2, 0], [2, 3], [2, 6]),
+    { type: 'overlap', points: [[2, 6], [2, 3]] });
+  assert.deepEqual(segmentIntersection([1, 1], [3, 3], [3, 3], [1, 1]),
+    { type: 'overlap', points: [[1, 1], [3, 3]] });
+  assert.equal(segmentIntersection([0, 0], [1, 1], [2, 2], [3, 3]), null);
+  for (const d of [[6, 18], [12, 36]]) {
+    assert.deepEqual(segmentIntersection([0, 0], [3, 9], [1, 3], d),
+      { type: 'overlap', points: [[1, 3], [3, 9]] });
+    assert.deepEqual(segmentIntersection([3, 9], [0, 0], d, [1, 3]),
+      { type: 'overlap', points: [[3, 9], [1, 3]] });
+  }
+});
+
+test('touching segment ends and T junctions are single point intersections', () => {
+  const cases = [
+    [[0, 0], [2, 0], [2, 0], [2, 3], [2, 0]],
+    [[0, 0], [2, 0], [2, 0], [4, 0], [2, 0]],
+    [[0, 0], [4, 0], [2, 0], [2, 3], [2, 0]],
+  ];
+  for (const [a, b, c, d, point] of cases) {
+    for (const args of [[a, b, c, d], [b, a, c, d], [c, d, a, b], [d, c, b, a]]) {
+      assert.deepEqual(segmentIntersection(...args), { type: 'point', point });
+    }
+  }
+});
+
+test('zero-length segments intersect only when their point belongs to the other segment', () => {
+  const p = [2, 2]; const point = { type: 'point', point: p };
+  assert.deepEqual(segmentIntersection(p, p, [0, 0], [4, 4]), point);
+  assert.deepEqual(segmentIntersection([0, 0], [4, 4], p, p), point);
+  assert.deepEqual(segmentIntersection(p, p, p, p), point);
+  assert.equal(segmentIntersection(p, p, [3, 3], [3, 3]), null);
+  assert.equal(segmentIntersection([2, 1], [2, 1], [0, 0], [4, 4]), null);
+  assert.equal(segmentIntersection([5, 5], [5, 5], [0, 0], [4, 4]), null);
+});
+
+test('segment geometry works at small and large scales without squared-length overflow', () => {
+  for (const scale of [1e-150, 1e150]) {
+    const pt = (x, y) => [x * scale, y * scale];
+    const closest = closestPointOnSegment(pt(2, 3), pt(0, 0), pt(4, 0));
+    assert.equal(closest.t, 0.5);
+    assert.ok(near(closest.distance / scale, 3));
+    const hit = segmentIntersection(pt(0, 0), pt(4, 4), pt(0, 4), pt(4, 0));
+    assert.equal(hit.type, 'point');
+    assert.ok(near(hit.point[0] / scale, 2) && near(hit.point[1] / scale, 2));
+  }
+  const huge = segmentIntersection([0, 0], [Number.MAX_VALUE, 0],
+    [Number.MAX_VALUE / 2, -1], [Number.MAX_VALUE / 2, 1]);
+  assert.equal(huge.type, 'point');
+  assert.ok(near(huge.point[0] / Number.MAX_VALUE, 0.5));
+  assert.equal(huge.point[1], 0);
+  const tiny = Number.MIN_VALUE;
+  assert.ok(near(closestPointOnSegment([0.25, 1e308], [0, 0], [0.5, 0]).t, 0.5),
+    'a huge perpendicular distance must not overflow a representable projection');
+  assert.equal(closestPointOnSegment([tiny, 0], [0, 0], [tiny, tiny]).t, 0.5);
+  const offset = offsetPolyline([[0, 0], [tiny, tiny]], 1);
+  assert.ok(near(Math.hypot(...offset[0]), 1), 'a subnormal segment still has a unit normal');
+});
+
+test('open offsets use signed perpendicular distance, miter corners and butt ends', () => {
+  const src = [[0, 0], [10, 0], [10, 10]];
+  const left = offsetPolyline(src, 2);
+  const right = offsetPolyline(src, -2);
+  for (const [got, expected] of [[left, [[0, 2], [8, 2], [8, 10]]],
+    [right, [[0, -2], [12, -2], [12, 10]]]]) {
+    got.forEach((p, i) => p.forEach((v, j) => assert.ok(near(v, expected[i][j]))));
+  }
+  const reverse = offsetPolyline([...src].reverse(), -2).reverse();
+  left.forEach((p, i) => p.forEach((v, j) => assert.ok(near(v, reverse[i][j]))));
+  assert.deepEqual(offsetPolyline([[0, 0], [5, 0], [10, 0]], 1), [[0, 1], [5, 1], [10, 1]]);
+});
+
+test('offset miter limit bevels sharp corners and reversals instead of growing spikes', () => {
+  const sharp = [[0, 0], [10, 0], [0, 1]];
+  const out = offsetPolyline(sharp, 2, 2);
+  assert.equal(out.length, 4, 'the over-limit corner needs two bevel points');
+  for (const p of out.slice(1, -1)) assert.ok(near(Math.hypot(p[0] - 10, p[1]), 2));
+  assert.equal(offsetPolyline(sharp, 2, 30).length, 3, 'a larger limit permits the miter');
+  assert.deepEqual(offsetPolyline([[0, 0], [10, 0], [0, 0]], 1),
+    [[0, 1], [10, 1], [10, -1], [0, -1]]);
+  assert.equal(offsetPolyline([[0, 0], [1, 0], [1, 1]], 1, 1).length, 4);
+});
+
+test('offset collapses repeated vertices and copies empty or directionless input', () => {
+  assert.deepEqual(offsetPolyline([], 2), []);
+  const src = [[3, 4], [3, 4]];
+  const result = offsetPolyline(src, 2);
+  assert.deepEqual(result, [[3, 4]]);
+  result[0][0] = 99;
+  assert.deepEqual(src, [[3, 4], [3, 4]]);
+  assert.deepEqual(offsetPolyline([[0, 0], [0, 0], [4, 0], [4, 0]], 1), [[0, 1], [4, 1]]);
+  assert.deepEqual(offsetPolyline([[0, 0], [0, 0], [4, 0]], 0), [[0, 0], [4, 0]]);
+  const frozen = Object.freeze([Object.freeze([0, 0]), Object.freeze([5, 0])]);
+  assert.doesNotThrow(() => offsetPolyline(frozen, 1));
+});
+
+test('geometry rejects nonfinite coordinates and overflow rather than leaking NaN', () => {
+  for (const p of [[NaN, 0], [0, Infinity], [1], Array(2), 'point']) {
+    assert.throws(() => closestPointOnSegment(p, [0, 0], [1, 0]), /finite/);
+    assert.throws(() => segmentIntersection([0, 0], [1, 1], p, [2, 2]), /finite/);
+    assert.throws(() => offsetPolyline([[0, 0], p], 1), /finite/);
+  }
+  assert.throws(() => closestPointOnSegment([0, 0], [-1e308, 0], [1e308, 0]), /overflow/);
+  assert.throws(() => segmentIntersection([-1e308, 0], [1e308, 0], [0, 0], [1, 1]), /overflow/);
+  assert.throws(() => offsetPolyline([[0, 0], [1, 0]], Infinity), /finite/);
+  for (const limit of [0, 0.9, NaN, Infinity]) {
+    assert.throws(() => offsetPolyline([[0, 0], [1, 0]], 1, limit), /miterLimit/);
+  }
+});
 
 // ---------------------------------------------------------------------------
 // measurement

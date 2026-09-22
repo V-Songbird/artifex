@@ -12,14 +12,13 @@
 // polylines before anything is drawn, and the piece publishes both counts so the
 // ratio can be checked rather than assumed.
 //
-// Marching squares lives here, not in core/, for the same reason the stroke font
-// does: one example reaches it. N4.
+// Field sampling and tracing share core/field.js with drift's flow paths.
 
 'use strict';
 
 const { rng, fbm } = require('../core/rand.js');
 const { stroke, clipPolyline, boxOf } = require('../core/path.js');
-const { chain } = require('../core/geom.js');
+const { sampleGrid, isolines } = require('../core/field.js');
 
 const W = 1000;
 const H = 700;
@@ -61,19 +60,14 @@ module.exports = {
         sign: R('well', 'sign', i) < 0.5 ? -1 : 1,
       }));
 
-      const f = new Float64Array((COLS + 1) * (ROWS + 1));
-      for (let j = 0; j <= ROWS; j++) {
-        for (let i = 0; i <= COLS; i++) {
-          const u = i / COLS;
-          const v = j / ROWS;
-          let h = fbm(R, u * 2.6, v * 2.6, 5, 'relief') * s.params.relief;
-          for (const w of s.wells) {
-            const d = Math.hypot(u - w.x, (v - w.y) * (H / W));
-            h += w.sign * Math.exp(-(d * d) / (2 * w.r * w.r)) * 0.85;
-          }
-          f[j * (COLS + 1) + i] = h;
+      const f = sampleGrid((u, v) => {
+        let h = fbm(R, u * 2.6, v * 2.6, 5, 'relief') * s.params.relief;
+        for (const w of s.wells) {
+          const d = Math.hypot(u - w.x, (v - w.y) * (H / W));
+          h += w.sign * Math.exp(-(d * d) / (2 * w.r * w.r)) * 0.85;
         }
-      }
+        return h;
+      }, COLS, ROWS);
       s.field = f;
       let lo = Infinity;
       let hi = -Infinity;
@@ -83,13 +77,14 @@ module.exports = {
 
     ['trace the isolines', (s) => {
       const [lo, hi] = s.range;
-      const segs = [];
+      const levels = [];
       for (let k = 1; k < LEVELS; k++) {
         const level = lo + (hi - lo) * (k / LEVELS);
-        marchingSquares(s.field, COLS, ROWS, level, segs);
+        levels.push(level);
       }
-      s.segments = segs.length;
-      const traced = chain(segs).map((pts) => pts.map(([gx, gy]) => [
+      const lines = isolines(s.field, COLS, ROWS, levels);
+      s.segments = lines.segments.length;
+      const traced = lines.paths.map((pts) => pts.map(([gx, gy]) => [
         M + (gx / COLS) * (W - 2 * M),
         M + (gy / ROWS) * (H - 2 * M),
       ]));
@@ -120,51 +115,3 @@ module.exports = {
     for (const pts of s.paths) stroke(g, pts);
   },
 };
-
-/**
- * Marching squares. Appends segments in GRID coordinates to `out`.
- * Corner bits: tl=8, tr=4, br=2, bl=1. The two ambiguous cases are resolved by
- * the cell centre, not by a fixed choice -- a fixed choice puts a visible
- * diagonal bias across the whole sheet.
- */
-function marchingSquares(f, cols, rows, level, out) {
-  const at = (i, j) => f[j * (cols + 1) + i];
-  for (let j = 0; j < rows; j++) {
-    for (let i = 0; i < cols; i++) {
-      const tl = at(i, j);
-      const tr = at(i + 1, j);
-      const br = at(i + 1, j + 1);
-      const bl = at(i, j + 1);
-      let c = 0;
-      if (tl > level) c |= 8;
-      if (tr > level) c |= 4;
-      if (br > level) c |= 2;
-      if (bl > level) c |= 1;
-      if (c === 0 || c === 15) continue;
-
-      const T = [i + (level - tl) / (tr - tl), j];
-      const R = [i + 1, j + (level - tr) / (br - tr)];
-      const B = [i + (level - bl) / (br - bl), j + 1];
-      const L = [i, j + (level - tl) / (bl - tl)];
-
-      switch (c) {
-        case 1: case 14: out.push([L, B]); break;
-        case 2: case 13: out.push([B, R]); break;
-        case 3: case 12: out.push([L, R]); break;
-        case 4: case 11: out.push([T, R]); break;
-        case 6: case 9: out.push([T, B]); break;
-        case 7: case 8: out.push([L, T]); break;
-        case 5:
-          if ((tl + tr + br + bl) / 4 > level) { out.push([L, T]); out.push([B, R]); }
-          else { out.push([T, R]); out.push([L, B]); }
-          break;
-        case 10:
-          if ((tl + tr + br + bl) / 4 > level) { out.push([T, R]); out.push([L, B]); }
-          else { out.push([L, T]); out.push([B, R]); }
-          break;
-        default: break;
-      }
-    }
-  }
-  return out;
-}

@@ -150,6 +150,26 @@ const FIELDS = {
        + 'value at both ends of [0,1]. `meaning` says what the knob does to the '
        + 'PICTURE, in one line, for a reader that cannot see the source.',
   },
+
+  preview: {
+    required: false,
+    default: () => null,
+    check: (v) => {
+      if (v === null) { return null; }
+      if (!v || typeof v !== 'object' || Array.isArray(v)) return 'must be null or { kind, wgsl, uniforms }';
+      const extra = Object.keys(v).filter((key) => !['kind', 'wgsl', 'uniforms'].includes(key));
+      if (extra.length) return `unknown key(s) in preview: ${extra.join(', ')}`;
+      if (v.kind !== 'webgpu-pixels') return 'preview.kind must be webgpu-pixels';
+      if (typeof v.wgsl !== 'string' || !v.wgsl.trim() || v.wgsl.length > 65536) {
+        return 'preview.wgsl must be non-empty WGSL with at most 65536 characters';
+      }
+      if (typeof v.uniforms !== 'function') return 'preview.uniforms must be a function (state, t, clock)';
+      return null;
+    },
+    doc: 'Optional approximate opaque WebGPU pixel preview for raster-only pieces. '
+       + 'An explicit shader and up to 16 float uniforms; draw remains the CPU '
+       + 'reference and every export uses it. This never translates JavaScript.',
+  },
 };
 
 const OUTPUTS = ['raster', 'vector'];
@@ -186,6 +206,9 @@ function validate(piece) {
     const why = f.check(piece[name]);
     if (why) throw new PieceError(`${name}: ${why}`);
     out[name] = piece[name];
+  }
+  if (out.preview && out.outputs.includes('vector')) {
+    throw new PieceError('preview: webgpu-pixels requires raster-only outputs');
   }
   return out;
 }

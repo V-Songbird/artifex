@@ -24,6 +24,7 @@
 
 const { rng, fbm, noise2 } = require('../core/rand.js');
 const { clamp01, lerp, pick } = require('../core/num.js');
+const { streamline } = require('../core/field.js');
 
 const W = 1000;
 const H = 700;
@@ -111,32 +112,16 @@ module.exports = {
       const turn = s.params.turn;
       const reach = s.params.reach;
       for (const st of s.strokes) {
-        const pts = [];
-        let x = st.x0;
-        let y = st.y0;
         // MORPHOLOGICAL: the form itself. One field, read by every stroke, which
         // is what makes them look like one weather rather than many accidents.
-        let heading = fbm(R, x / 430 + st.lane, y / 430, 3, 'flow') * Math.PI * 4;
+        const direction = (x, y) => fbm(R, x / 430 + st.lane, y / 430, 3, 'flow') * Math.PI * 4;
         const steps = Math.round(46 + st.pace * 64);
         const step = (reach * st.reach / steps) * (0.7 + st.pace * 0.6);
-        for (let k = 0; k < steps; k++) {
-          pts.push([x, y]);
-          // TURN TOWARDS THE FIELD, do not integrate it. Adding (f - 0.5) to the
-          // heading every step is a random walk in ANGLE: over a short stroke f
-          // barely changes, so the increment is near-constant and every stroke
-          // becomes an arc of a circle. Steering towards a target angle with
-          // inertia gives a stroke that follows the weather and still has a hand
-          // in it. The difference is the whole look of the piece.
-          const target = fbm(R, x / 430 + st.lane, y / 430, 3, 'flow') * Math.PI * 4;
-          let d = (target - heading) % (Math.PI * 2);
-          if (d > Math.PI) d -= Math.PI * 2;
-          if (d < -Math.PI) d += Math.PI * 2;
-          heading += d * turn;
-          x += Math.cos(heading) * step;
-          y += Math.sin(heading) * step;
-          if (x < -80 || x > W + 80 || y < -80 || y > H + 80) break;
-        }
-        st.pts = pts;
+        // Turn TOWARDS the field with inertia; adding the field to the heading
+        // each step would make nearly constant regions draw circular arcs.
+        st.pts = streamline(direction, [st.x0, st.y0], {
+          steps, step, turn, bounds: [-80, -80, W + 80, H + 80],
+        });
       }
     }],
   ],
@@ -214,4 +199,3 @@ module.exports = {
     g.globalAlpha = 1;
   },
 };
-

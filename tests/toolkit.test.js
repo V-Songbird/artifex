@@ -242,6 +242,29 @@ test('clipping keeps what is inside the design box and drops what is not', () =>
   assert.deepEqual(clipPolyline([[-50, 50], [50, 50]], box), [[[0, 50], [50, 50]]], 'cut at the edge');
 });
 
+test('clipSegment returns detached endpoint pairs without changing its inputs', () => {
+  const box = Object.freeze([0, 0, 10, 10]);
+  for (const [start, end, expected] of [
+    [[2, 3], [8, 9], [[2, 3], [8, 9]]],
+    [[5, 5], [5, 5], [[5, 5], [5, 5]]],
+    [[-5, 5], [15, 5], [[0, 5], [10, 5]]],
+  ]) {
+    const a = Object.freeze([...start]), b = Object.freeze([...end]);
+    const result = clipSegment(a, b, box);
+    assert.deepEqual(result, expected);
+    for (const point of result) {
+      assert.notStrictEqual(point, a);
+      assert.notStrictEqual(point, b);
+    }
+    assert.notStrictEqual(result[0], result[1], 'even a zero-length segment gets independent endpoint arrays');
+    result[0][0] += 1;
+    result[1][1] += 1;
+    assert.deepEqual(a, start);
+    assert.deepEqual(b, end);
+    assert.deepEqual(box, [0, 0, 10, 10]);
+  }
+});
+
 test('a line that leaves the box and comes back returns as TWO runs', () => {
   // One polyline would draw a stroke straight across the picture that the piece
   // never asked for, and a plotter would draw it too.

@@ -40,7 +40,7 @@
 const { rng } = require('../core/rand.js');
 const { clamp01, pick } = require('../core/num.js');
 const { mix } = require('../core/colour.js');
-const font = require('./stroke-font.js');
+const font = require('../core/stroke-font.js');
 
 const W = 900;
 const H = 900;
