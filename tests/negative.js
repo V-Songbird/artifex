@@ -402,6 +402,13 @@ const MUTATIONS = [
     expect: 'a film with every frame and uneven spacing is refused, and so is one missing a frame',
   },
   {
+    why: 'a complete single-frame film is rejected for having no spacing interval',
+    file: 'tools/build-page.js',
+    from: '  if (expected === 1) return v;',
+    to: '',
+    expect: 'a single-frame film needs exactly one frame and no spacing interval',
+  },
+  {
     why: 'one long freeze is let through, because it moves neither the median nor the p95',
     file: 'tools/build-page.js',
     from: ' || v.maxGapMs > budget * 3) {',

@@ -886,6 +886,30 @@ test('a film is read from the blocks its FILE holds, by walking it rather than s
   assert.deepEqual(webmBlockTimes(new Uint8Array(0)), []);
 });
 
+test('a single-frame film needs exactly one frame and no spacing interval', () => {
+  const { filmVerdict } = require('../tools/build-page.js');
+  assert.throws(() => filmVerdict(1, 30, []), /holds 0 of 1 frames/);
+  assert.throws(() => filmVerdict(1, 30, [0, 33]), /holds 2 of 1 frames/);
+  assert.throws(() => filmVerdict(2, 30, [0]), /holds 1 of 2 frames/);
+  assert.throws(() => filmVerdict(2, 30, [0, 1000]), /spacing is uneven/);
+
+  for (const hz of [1, 30]) {
+    const p = validate({
+      name: 'one-frame-film', size: { w: 64, h: 64 },
+      time: { duration: 1 / hz, hz }, draw() {},
+    });
+    const heads = playheads(p);
+    assert.deepEqual(heads, [0], 'a valid timeline can contain one frame');
+    const v = filmVerdict(heads.length, hz, [125]);
+    assert.equal(v.frames, 1);
+    assert.equal(v.expected, 1);
+    assert.equal(v.seconds, 1 / hz, 'the report includes one declared frame interval');
+    assert.equal(v.medianGapMs, 0);
+    assert.equal(v.p95GapMs, 0);
+    assert.equal(v.maxGapMs, 0);
+  }
+});
+
 test('a film with every frame and uneven spacing is refused, and so is one missing a frame', () => {
   // Frames written, frames received and duration ALL passed on a film that
   // played in bursts. Spacing was the one thing nobody measured.
