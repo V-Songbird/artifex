@@ -1,7 +1,7 @@
 ---
 type: knowledge
 summary: "Describes Artifex's source layout, development commands, plugin metadata, and the limits of its checks."
-related_files: ["package.json", ".nvmrc", "core/piece.js", "core/webgpu-preview.js", "examples/pixel-field.js", "tests/webgpu-preview.test.js", "tests/page-preview.test.js", "tests/pixel-field.test.js", "core/field.js", "core/stroke-font.js", "examples/stroke-font.js", "tests/field.test.js", "tests/negative.js", "tests/negative-runner.test.js", "tests/contact-sheet.test.js", "tests/external-piece.test.js", "tests/page-build-errors.test.js", "tests/check-browser.test.js", "tools/piece-input.js", "tools/check-browser.js", "tools/contact-sheet.js", "tools/lint-unread.js", "tools/build-page.js", "plugin.json", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json", "skills/artifex/SKILL.md", ".github/workflows/check.yml"]
+related_files: ["package.json", ".nvmrc", "core/piece.js", "core/webgpu-preview.js", "examples/pixel-field.js", "tests/webgpu-preview.test.js", "tests/page-preview.test.js", "tests/pixel-field.test.js", "core/field.js", "core/time.js", "core/stroke-font.js", "examples/stroke-font.js", "tests/field.test.js", "tests/time.test.js", "tests/negative.js", "tests/negative-runner.test.js", "tests/contact-sheet.test.js", "tests/external-piece.test.js", "tests/page-build-errors.test.js", "tests/check-browser.test.js", "tools/piece-input.js", "tools/check-browser.js", "tools/contact-sheet.js", "tools/lint-unread.js", "tools/build-page.js", "plugin.json", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json", "skills/artifex/SKILL.md", ".github/workflows/check.yml"]
 ---
 
 # Developing Artifex
@@ -73,6 +73,7 @@ Run `node --test tests/contact-sheet.test.js` for argument, sampling, determinis
 | [`core/surface-vector.js`](../../core/surface-vector.js) | Canvas2D-shaped vector surface and SVG serialization. |
 | [`core/rand.js`](../../core/rand.js) | Addressed randomness and noise fields. |
 | [`core/field.js`](../../core/field.js) | Grid sampling, derivatives and composition, isolines and streamlines; see the [field API](../apis/fields.md). |
+| [`core/time.js`](../../core/time.js) | Spans, named rate curves, tweens and shot lists cut on whole frames; see [authored time](../apis/piece-api.md#authored-time). |
 | [`core/stroke-font.js`](../../core/stroke-font.js) | Shared polyline stroke font; [`examples/stroke-font.js`](../../examples/stroke-font.js) remains a compatibility entry point. |
 | [`core/geom.js`](../../core/geom.js), [`core/path.js`](../../core/path.js) | Geometry and path operations. |
 | [`core/num.js`](../../core/num.js), [`core/colour.js`](../../core/colour.js) | Numeric and colour operations. |
@@ -101,6 +102,8 @@ it cannot measure browser presentation or GPU speedup.
 
 The [geometry API](../apis/geometry.md) defines segment intersection and closest-point results, bounded open-polyline offsets, and their numerical limits. `pattern` consumes offsets and intersections; `packing` uses segment distance to keep interior dots clear of its outlines. Run `node --test tests/geom.test.js tests/geometry-consumers.test.js` for those contracts and consumers.
 
+[Authored time](../apis/piece-api.md#authored-time) defines spans, rate curves, tweens and shot lists cut on whole frames. `drift` times its strokes with `span`; `readout` cuts a reading and a rest and schedules its notes from the same shots. Run `node --test tests/time.test.js` for those contracts; `tests/examples.test.js` checks that readout's notes and pictures agree on every frame.
+
 The page builder discovers JavaScript modules in `core/` and `examples/`, then bundles them with a CommonJS loader. Its module-resolution and script-parsing checks catch structural build failures. Template-string content needs correct escaping before it becomes browser JavaScript.
 
 Address-bar synchronization is best effort: documents that reject `history.replaceState` still support selection, playback and exports, but cannot update shareable recipe URLs.
@@ -115,7 +118,7 @@ The Node suite checks selected contract, geometry, replay, frame-grid, SVG, and 
 
 `npm run browser` requires Node 22 or later and an installed Microsoft Edge. It uses native `fetch` and `WebSocket`, with no package dependency or browser download. It serves the built HTML snapshot on an OS-assigned loopback port and launches Edge with a unique temporary profile. Existing browser sessions and profiles are left alone. `--edge PATH` or `EDGE_PATH` selects another Edge installation; `--timeout-ms 60000` sets the startup/navigation/evaluation deadline (100–300000 ms), and `--headed` shows the browser. Pass options after `npm run browser --`. Cleanup has a separate bounded grace period and failures exit nonzero with diagnostics.
 
-The browser command selects every registered example, checks `read()`, each declared stage through `inspect()`, and `manifest()`, confirms the HTTP recipe URL, and draws into a separate native canvas with `willReadFrequently: true`. It reports nontransparent pixel counts, including backgrounds. It then exports one film through `__artifex.film()` -- the first example that declares sound, else the first with a timeline -- decodes it in the page, requires the first, middle and last decoded frames to resemble their own drawn frames more than their neighbours, and requires a declared soundtrack to decode to sound as long as the film. Page exceptions, console errors, failed checks and timeouts fail the command. This smoke check does not verify composition, cross-browser or physical-device behavior, WebM timing, or how a film plays on another device. The ordinary Node suite and current CI do not require Edge.
+The browser command selects every registered example, checks `read()`, each declared stage through `inspect()`, and `manifest()`, confirms the HTTP recipe URL, and draws into a separate native canvas with `willReadFrequently: true`. It reports nontransparent pixel counts, including backgrounds. It then exports one film through `__artifex.film()` -- the first example that declares sound, else the first with a timeline -- decodes it in the page, requires the first, middle and last decoded frames to resemble their own drawn frames at least as closely as their neighbours (a held frame ties with an identical neighbour), and requires a declared soundtrack to decode to sound as long as the film. Page exceptions, console errors, failed checks and timeouts fail the command. This smoke check does not verify composition, cross-browser or physical-device behavior, WebM timing, or how a film plays on another device. The ordinary Node suite and current CI do not require Edge.
 
 For browser or export changes, inspect actual rendered output and saved files. Check exported video frame counts and spacing from the encoded file. Automated numerical checks do not establish composition, layering, or usability.
 

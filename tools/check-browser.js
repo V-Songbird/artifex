@@ -169,9 +169,11 @@ function inspectPiece(name) {
 
 // Serialized into the page. Exports one film through the page's own MP4 path --
 // the first example that declares sound, else the first with a timeline -- then
-// decodes it: the first, middle and last frames must each look most like their
-// own drawn frame rather than a neighbour, and a declared soundtrack must decode
-// to sound as long as the film. The export's own verdict is read from the file.
+// decodes it: the first, middle and last frames must each look at least as much
+// like their own drawn frame as like a neighbour, and a declared soundtrack must
+// decode to sound as long as the film. A held frame draws the same picture as
+// its neighbour, so that tie is a match. The export's own verdict is read from
+// the file.
 async function inspectFilm() {
   const api = window.__artifex;
   const pieces = api.names.map((name) => [name, api.piece.validate(api.examples[name])]);
@@ -213,9 +215,10 @@ async function inspectFilm() {
     await new Promise((resolve) => setTimeout(resolve, 60));
     const got = pixels(video);
     const scores = [i - 1, i, i + 1].filter((j) => j >= 0 && j < heads.length).map((j) => [j, psnr(got, drawn(j))]);
+    const own = scores.find(([j]) => j === i)[1];
     const best = scores.slice().sort((a, b) => b[1] - a[1])[0];
-    if (best[0] !== i) throw new Error(name + ': decoded frame ' + i + ' looks most like drawn frame ' + best[0]);
-    frames.push({ frame: i, psnrDb: +best[1].toFixed(1) });
+    if (best[1] > own) throw new Error(name + ': decoded frame ' + i + ' looks most like drawn frame ' + best[0]);
+    frames.push({ frame: i, psnrDb: +own.toFixed(1) });
   }
   URL.revokeObjectURL(video.src);
   let sound = null;

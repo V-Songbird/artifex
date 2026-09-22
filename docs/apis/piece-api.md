@@ -1,7 +1,7 @@
 ---
 type: api_spec
 summary: "Shows a runnable custom Artifex piece and the public validation, solving, rendering and soundtrack entry points."
-related_files: ["core/piece.js", "core/render.js", "core/film.js", "core/webgpu-preview.js", "core/surface-vector.js", "examples/pixel-field.js", "examples/readout.js", "tests/piece.test.js", "tests/render.test.js", "tests/film.test.js", "tests/webgpu-preview.test.js"]
+related_files: ["core/piece.js", "core/render.js", "core/time.js", "core/film.js", "core/webgpu-preview.js", "core/surface-vector.js", "examples/pixel-field.js", "examples/readout.js", "examples/drift.js", "tests/piece.test.js", "tests/render.test.js", "tests/time.test.js", "tests/film.test.js", "tests/webgpu-preview.test.js"]
 ---
 
 # Piece API
@@ -46,6 +46,49 @@ Parameters declare `{ min, max, value, meaning }`. Validated values reach drawin
 For more than one frame, a looping timeline uses `i/n` and a non-looping timeline uses `i/(n-1)`. A single-frame timeline uses playhead zero. The same helpers define both drawing and export grids.
 
 For fixed source, input data, parameters, output configuration, and execution environment, repeated seed/playhead pairs should produce the same frame. Use addressed randomness from [`core/rand.js`](../../core/rand.js); do not make drawing depend on prior calls or wall-clock time.
+
+## Authored time
+
+[`core/time.js`](../../core/time.js) shapes motion over the playhead without knowing what moves.
+
+| Helper | Contract |
+| --- | --- |
+| `span(a, b, x)` | Where `x` sits in the window `[a, b]`, as `[0, 1]`, held at both ends. The three values share one unit: playhead, seconds or frames. A zero-length window is a cut: `0` before `a`, `1` from `a` on. A window with `b < a` or a non-finite value throws. |
+| `ease.<name>(u)` | A rate curve: how far a move has got after `u` of its time. `linear`; cubic `in`, `out` and `inOut`; `smooth`, the smoothstep; `back`, which passes its mark by about 10% and settles; and `bump`, which rises to `1` at the middle and returns to `0`. Outside `(0, 1)` each returns its end value exactly. The table is frozen. |
+| `tween(a, b, rate)` | The function `x => rate(span(a, b, x))`, so a timed move is one value that `draw` and `sound` can both read. Any function of `[0, 1]` can be the rate. |
+| `shots(list, timeline)` | Resolves `[[name, seconds], ...]` onto the whole frames of a `clock` or a sound `timeline`. Returns frozen `{ name, index, start, end }` objects; `end` is exclusive. |
+| `shotAt(film, frame)` | The resolved shot that holds a whole frame, found by integer comparison. |
+
+Each cut lands on the frame nearest its time, `round(hz * elapsed)`, and shots are compared as integers. A boundary summed in seconds can land a float either side of a frame: `0.1 + 0.2` is not `0.3`. The frame at `start` is the cut into a shot. The list must fill the timeline exactly, and each shot must hold at least one frame. A still has no shots. Each violation throws `RangeError` by name. Names may repeat, so a piece can cut back to an earlier shot. Resolve the same list with `clock` in `draw` and with `timeline` in `sound`, and picture and sound cut on the same frame.
+
+Within a shot, `span(shot.start, shot.end - 1, clock.frame)` runs from `0` on its first frame to `1` on its last. `(clock.frame - shot.start) / (shot.end - shot.start)` is the fraction of the shot's time instead; it reaches `1` only at the next cut. A cut is always a hard cut: the module has no transitions.
+
+```js
+const { ease, tween, shots, shotAt } = require('./core/time.js');
+
+const SCORE = [['wide', 2], ['close', 1.5]];   // fills the 3.5-second timeline
+const rise = tween(0.25, 1.25, ease.out);      // timed in seconds
+
+const piece = {
+  name: 'two-shots',
+  size: { w: 400, h: 300 },
+  outputs: ['raster', 'vector'],
+  time: { duration: 3.5, hz: 24 },
+  draw(g, state, t, clock) {
+    const shot = shotAt(shots(SCORE, clock), clock.frame);
+    g.fillStyle = '#f4f1e8';
+    g.fillRect(0, 0, 400, 300);
+    g.translate(200, 150);
+    if (shot.name === 'close') g.scale(2, 2);   // the cut changes the framing
+    g.fillStyle = '#1b1b1b';
+    g.beginPath();
+    g.arc(0, 60 - 120 * rise(clock.seconds), 20, 0, Math.PI * 2);
+    g.fill();
+  },
+};
+```
+
+[`examples/readout.js`](../../examples/readout.js) cuts a reading and a one-second rest on whole frames, and schedules its notes from the same shots. [`examples/drift.js`](../../examples/drift.js) times each stroke with `span`. Run `node --test tests/time.test.js` for the span, rate, tween and shot contracts.
 
 ## Soundtrack
 

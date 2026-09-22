@@ -17,6 +17,9 @@
 // shows it: the pitch comes from the digit, so the data decides the melody; the
 // voice comes from the sheet, so the seed decides only how it is played. The
 // same split, read a fourth way, and the same check can fail.
+//
+// And it is cut like a film: the reading, then a rest on the finished reading,
+// on whole frames that picture and sound resolve from one shot list.
 
 'use strict';
 
@@ -24,6 +27,7 @@ const { rng } = require('../core/rand.js');
 const { clamp, pick } = require('../core/num.js');
 const { mix } = require('../core/colour.js');
 const { stroke } = require('../core/path.js');
+const { span, shots, shotAt } = require('../core/time.js');
 
 const DIGITS = (
   '1415926535' + '8979323846' + '2643383279' + '5028841971' + '6939937510'
@@ -62,11 +66,16 @@ const VOICES = [
 ];
 const hertz = (note) => 440 * 2 ** ((note - 69) / 12);
 
+// Six seconds of reading, then a second's rest on the finished reading, so the
+// whole of it stays on screen long enough to be read and the last notes ring.
+// The timeline is their sum; `shots` refuses a list that does not fill it.
+const SCORE = [['read', 6], ['rest', 1]];
+
 module.exports = {
   name: 'readout',
   size: { w: W, h: H },
   outputs: ['raster', 'vector'],
-  time: { duration: 6, hz: 24 },
+  time: { duration: 7, hz: 24 },
   seed: 31,
   params: {
     lead: { min: 0.5, max: 6, value: 2.2,
@@ -102,9 +111,9 @@ module.exports = {
     }],
   ],
 
-  draw(g, s, t) {
+  draw(g, s, _t, clock) {
     const lead = s.params.lead;
-    const scan = t * (s.cells.length + lead);
+    const scan = scanAt(s, shots(SCORE, clock), clock.frame);
 
     g.fillStyle = PAPER;
     g.fillRect(0, 0, W, H);
@@ -192,8 +201,7 @@ module.exports = {
     out.connect(air);
     air.connect(ctx.destination);
     const voice = VOICES[ACCENTS.indexOf(s.accent)];
-    const den = timeline.loop ? timeline.frames : timeline.frames - 1;
-    const scanAt = (i) => (i / den) * (s.cells.length + s.params.lead);
+    const film = shots(SCORE, timeline);
     const note = (at, pitch, decay, gain, pan, overtone) => {
       const env = ctx.createGain();
       env.gain.setValueAtTime(0, at);
@@ -218,7 +226,7 @@ module.exports = {
     };
     let frame = 0;
     for (const c of s.cells) {
-      while (frame < timeline.frames && Math.floor((scanAt(frame) - c.k) * 2.4) < 1) frame++;
+      while (frame < timeline.frames && Math.floor((scanAt(s, film, frame) - c.k) * 2.4) < 1) frame++;
       if (frame >= timeline.frames) break;
       const at = frame / timeline.hz;
       // The scan wraps to a new row here, and the row is marked an octave down.
@@ -229,6 +237,16 @@ module.exports = {
     }
   },
 };
+
+/**
+ * How far the scan has read on a frame. The reading runs over its own frames,
+ * first to last, so its last frame shows the finished reading; the rest holds it.
+ */
+function scanAt(s, film, frame) {
+  const shot = shotAt(film, frame);
+  const u = shot.name === 'read' ? span(shot.start, shot.end - 1, frame) : 1;
+  return u * (s.cells.length + s.params.lead);
+}
 
 function slotPitch() { return (CELL_H - 14) / SLOTS; }
 
