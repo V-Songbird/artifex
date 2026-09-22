@@ -2,7 +2,7 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "artifex",
   "version": "0.1.0",
-  "description": "Programmatic art for AI agents: write one piece, render it to a page, a video, a print or a plotter, and check it with tests that can fail.",
+  "description": "Programmatic art for AI agents: write one piece, render it to a page, a film with its own soundtrack, a print or a plotter, and check it with tests that can fail.",
   "license": "MIT",
   "author": {
     "name": "Victor Villegas",

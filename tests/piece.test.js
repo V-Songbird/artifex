@@ -240,3 +240,13 @@ test('seed zero is a seed', () => {
   assert.equal(p.seed, 0);
   assert.equal(solve(p).seed, 0);
 });
+
+test('a soundtrack is a function or nothing, and a still cannot have one', () => {
+  assert.equal(validate(minimal()).sound, null, 'no sound unless a piece declares it');
+  const timed = { ...minimal(), time: { duration: 1, hz: 10 } };
+  assert.equal(typeof validate({ ...timed, sound() {} }).sound, 'function');
+  assert.match(grab(() => validate({ ...timed, sound: 'chime.wav' })).message, /^sound: must be null or a function/);
+  const e = grab(() => validate({ ...minimal(), sound() {} }));
+  assert.ok(e instanceof PieceError);
+  assert.match(e.message, /sound: a soundtrack needs a timeline/);
+});

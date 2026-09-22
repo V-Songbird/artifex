@@ -89,4 +89,30 @@ function playheads(piece) {
   return Array.from({ length: n }, (_, i) => i / den);
 }
 
-module.exports = { drawFrame, renderVector, playheads };
+/**
+ * Render a validated piece's soundtrack offline, sample-exact against its frames.
+ *
+ * The soundtrack lasts `frames / hz` seconds: the frame grid, not the declared
+ * duration, because a film holds whole frames and a soundtrack one frame longer
+ * or shorter ends out of step with its picture. Resolves to the rendered
+ * AudioBuffer, or to null when the piece declares no sound.
+ *
+ * `opt.OfflineAudioContext` defaults to the global one. Node has none, so a
+ * caller outside a browser hands one in. `opt.sampleRate` defaults to 48000 and
+ * `opt.channels` to 2.
+ */
+async function renderSound(piece, solved, opt = {}) {
+  if (!piece.sound) return null;
+  const Context = opt.OfflineAudioContext || globalThis.OfflineAudioContext;
+  if (typeof Context !== 'function') {
+    throw new Error('render: this environment has no OfflineAudioContext, so the soundtrack cannot be rendered');
+  }
+  const rate = opt.sampleRate || 48000;
+  const frames = frameCount(piece);
+  const duration = frames / piece.time.hz;
+  const ctx = new Context(opt.channels || 2, Math.round(duration * rate), rate);
+  piece.sound(ctx, solved.state, { duration, frames, hz: piece.time.hz, loop: !!piece.time.loop });
+  return ctx.startRendering();
+}
+
+module.exports = { drawFrame, renderVector, playheads, renderSound };

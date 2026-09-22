@@ -167,6 +167,76 @@ function inspectPiece(name) {
   return { name, stages, manifest, paintedPixels: painted, pixels: canvas.width * canvas.height };
 }
 
+// Serialized into the page. Exports one film through the page's own MP4 path --
+// the first example that declares sound, else the first with a timeline -- then
+// decodes it: the first, middle and last frames must each look most like their
+// own drawn frame rather than a neighbour, and a declared soundtrack must decode
+// to sound as long as the film. The export's own verdict is read from the file.
+async function inspectFilm() {
+  const api = window.__artifex;
+  const pieces = api.names.map((name) => [name, api.piece.validate(api.examples[name])]);
+  const chosen = pieces.find(([, p]) => p.sound) || pieces.find(([, p]) => p.time);
+  if (!chosen) return null;
+  const [name, p] = chosen;
+  api.select(name);
+  const report = await api.film();
+  const solved = api.piece.solve(p, api.read().seed);
+  const heads = api.render.playheads(p);
+  const video = document.createElement('video');
+  video.muted = true;
+  video.src = URL.createObjectURL(report.blob);
+  await new Promise((resolve, reject) => {
+    video.onloadeddata = resolve;
+    video.onerror = () => reject(new Error(name + ': the exported film does not decode'));
+  });
+  const w = 240, h = Math.max(2, Math.round((240 * report.height) / report.width));
+  const small = document.createElement('canvas');
+  small.width = w; small.height = h;
+  const sg = small.getContext('2d', { willReadFrequently: true });
+  const full = document.createElement('canvas');
+  full.width = report.width; full.height = report.height;
+  const fg = full.getContext('2d', { willReadFrequently: true });
+  const pixels = (source) => { sg.clearRect(0, 0, w, h); sg.drawImage(source, 0, 0, w, h); return sg.getImageData(0, 0, w, h).data; };
+  const drawn = (i) => { fg.clearRect(0, 0, full.width, full.height); api.render.drawFrame(fg, p, solved, heads[i]); return pixels(full); };
+  const psnr = (a, b) => {
+    let se = 0;
+    for (let k = 0; k < a.length; k += 4) for (let c = 0; c < 3; c++) se += (a[k + c] - b[k + c]) ** 2;
+    return se ? 10 * Math.log10((255 * 255 * a.length * 0.75) / se) : 99;
+  };
+  const frames = [];
+  for (const i of [0, Math.floor(heads.length / 2), heads.length - 1]) {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(name + ': seeking the film to frame ' + i + ' timed out')), 10000);
+      video.onseeked = () => { clearTimeout(timer); resolve(); };
+      video.currentTime = (i + 0.5) / p.time.hz;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const got = pixels(video);
+    const scores = [i - 1, i, i + 1].filter((j) => j >= 0 && j < heads.length).map((j) => [j, psnr(got, drawn(j))]);
+    const best = scores.slice().sort((a, b) => b[1] - a[1])[0];
+    if (best[0] !== i) throw new Error(name + ': decoded frame ' + i + ' looks most like drawn frame ' + best[0]);
+    frames.push({ frame: i, psnrDb: +best[1].toFixed(1) });
+  }
+  URL.revokeObjectURL(video.src);
+  let sound = null;
+  if (p.sound) {
+    const decoded = await new OfflineAudioContext(2, 1, 48000).decodeAudioData(await report.blob.arrayBuffer());
+    let peak = 0;
+    for (let c = 0; c < decoded.numberOfChannels; c++) {
+      for (const v of decoded.getChannelData(c)) peak = Math.max(peak, Math.abs(v));
+    }
+    if (!(peak > 0.01)) throw new Error(name + ': the soundtrack decodes to silence');
+    if (Math.abs(decoded.duration - report.seconds) > 0.05) {
+      throw new Error(name + ': the soundtrack decodes to ' + decoded.duration.toFixed(3) + ' s against a ' + report.seconds.toFixed(3) + ' s film');
+    }
+    sound = { seconds: +decoded.duration.toFixed(3), peak: +peak.toFixed(3) };
+  }
+  return {
+    name, codec: report.codec, frames: report.frames, seconds: report.seconds, width: report.width, height: report.height,
+    bytes: report.bytes, colour: report.colour, realtime: report.realtime, decoded: frames, sound,
+  };
+}
+
 async function stopBrowser(child, exited) {
   if (!child || child.exitCode !== null || child.signalCode !== null || !child.pid) return;
   // This exact child belongs to the unique profile created below. Never kill by
@@ -267,8 +337,10 @@ async function runBrowserCheck(options = {}) {
       phase = 'example ' + name;
       pieces.push(await evaluate(client, '(' + inspectPiece.toString() + ')(' + JSON.stringify(name) + ')'));
     }
+    phase = 'film export';
+    const film = await evaluate(client, '(' + inspectFilm.toString() + ')()');
     if (errors.length) throw new Error('browser: page errors:\n' + errors.join('\n'));
-    report = { browser: version.Browser, mode: options.headed ? 'headed' : 'headless', pieces, errors };
+    report = { browser: version.Browser, mode: options.headed ? 'headed' : 'headless', pieces, film, errors };
   } catch (error) {
     failure = new Error((signal.aborted ? signal.reason.message : error.message) + ' during ' + phase);
     if (/CDP connection closed|Edge exited/.test(failure.message) && browserLog) {
@@ -304,9 +376,12 @@ async function main() {
   if (options.help) { console.log(USAGE); return; }
   const report = await runBrowserCheck(options);
   console.log(JSON.stringify(report, null, 2));
-  console.log('browser: ' + report.pieces.length + ' examples passed; owned browser, server and profile cleaned up');
+  const film = report.film
+    ? '; film ' + report.film.name + ' exported ' + report.film.frames + ' frames' + (report.film.sound ? ' with sound' : '') + ' and decoded'
+    : '; no example has a timeline, so no film was exported';
+  console.log('browser: ' + report.pieces.length + ' examples passed' + film + '; owned browser, server and profile cleaned up');
 }
 
 if (require.main === module) main().catch((error) => { console.error(error.message); process.exitCode = 1; });
 
-module.exports = { parseArgs, findEdge, connectCDP, evaluate, servePage, inspectPiece, runBrowserCheck };
+module.exports = { parseArgs, findEdge, connectCDP, evaluate, servePage, inspectPiece, inspectFilm, runBrowserCheck };

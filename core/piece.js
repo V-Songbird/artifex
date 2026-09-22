@@ -151,6 +151,19 @@ const FIELDS = {
        + 'PICTURE, in one line, for a reader that cannot see the source.',
   },
 
+  sound: {
+    required: false,
+    default: () => null,
+    check: (v) => (v === null || typeof v === 'function'
+      ? null
+      : 'must be null or a function (ctx, state, timeline)'),
+    doc: 'sound(ctx, state, timeline) builds a Web Audio graph on an '
+       + 'OfflineAudioContext exactly as long as the film. Pure in (seed, state): '
+       + 'schedule on the context clock, take noise from the seeded source, never '
+       + 'an unseeded generator or a wall clock. A second of sound is the second clock.seconds '
+       + 'names, so picture and sound come from one solved state.',
+  },
+
   preview: {
     required: false,
     default: () => null,
@@ -209,6 +222,10 @@ function validate(piece) {
   }
   if (out.preview && out.outputs.includes('vector')) {
     throw new PieceError('preview: webgpu-pixels requires raster-only outputs');
+  }
+  // A soundtrack is as long as the film, and a still has no film.
+  if (out.sound && !out.time) {
+    throw new PieceError('sound: a soundtrack needs a timeline; declare time: { duration, hz }');
   }
   return out;
 }

@@ -158,8 +158,13 @@ function webmBlockTimes(bytes) {
  *
  * The three bounds sit outside everything a good film measured: median 33.3 to
  * 33.6 ms against a 33.33 ms budget, p95 37.6, and one max of 65.3.
+ *
+ * `pace.worstLagMs` is how far the write loop fell behind its own schedule. A
+ * recorder stamps frames by the wall clock, so a piece that draws slower than
+ * its frame rate cannot be recorded at all. That is a different fault from a
+ * lost picture, with a different fix, and the message names it.
  */
-function filmVerdict(expected, hz, times) {
+function filmVerdict(expected, hz, times, pace) {
   const budget = 1000 / hz;
   const gaps = times.slice(1).map((ms, i) => ms - times[i]).sort((a, b) => a - b);
   const at = (q) => (gaps.length ? gaps[Math.min(gaps.length - 1, Math.floor(q * gaps.length))] : 0);
@@ -168,7 +173,13 @@ function filmVerdict(expected, hz, times) {
     seconds: times.length ? (times[times.length - 1] - times[0] + budget) / 1000 : 0,
     budgetMs: budget, medianGapMs: at(0.5), p95GapMs: at(0.95), maxGapMs: at(1),
   };
+  const slow = pace && pace.worstLagMs > budget
+    ? ` The export fell ${pace.worstLagMs.toFixed(0)} ms behind its schedule against a ${budget.toFixed(1)} ms frame budget: `
+      + 'this piece draws slower than real time, and a recorder that stamps frames by the wall clock cannot keep them. '
+      + 'Export MP4 instead, which encodes every frame at its own time. Nothing was saved.'
+    : null;
   if (v.frames !== expected) {
+    if (slow) throw new Error(`the file holds ${v.frames} of ${expected} frames.${slow}`);
     // WHERE it went is the first thing anyone needs, and the gaps already say:
     // a picture lost mid-film leaves a hole twice the budget wide, and one lost
     // at either end leaves none.
@@ -181,8 +192,10 @@ function filmVerdict(expected, hz, times) {
   // zero, but only accept it after checking the exact declared frame count.
   if (expected === 1) return v;
   if (Math.abs(v.medianGapMs - budget) > budget * 0.1 || v.p95GapMs > budget * 1.5 || v.maxGapMs > budget * 3) {
-    throw new Error(`the frame spacing is uneven: median ${v.medianGapMs.toFixed(1)} ms, p95 ${v.p95GapMs.toFixed(1)} ms, `
-      + `max ${v.maxGapMs.toFixed(1)} ms against a budget of ${budget.toFixed(1)} ms. Every frame is there and the film would still judder. Nothing was saved.`);
+    const spacing = `the frame spacing is uneven: median ${v.medianGapMs.toFixed(1)} ms, p95 ${v.p95GapMs.toFixed(1)} ms, `
+      + `max ${v.maxGapMs.toFixed(1)} ms against a budget of ${budget.toFixed(1)} ms.`;
+    if (slow) throw new Error(spacing + slow);
+    throw new Error(`${spacing} Every frame is there and the film would still judder. Nothing was saved.`);
   }
   return v;
 }
@@ -289,6 +302,11 @@ function html(bundle, options = {}) {
       </div>
       <div class="row"><button id="svg">SVG</button></div>
       <div class="note" id="svgnote"></div>
+      <div class="row" style="margin-top:10px">
+        <button id="film1" data-film="1">MP4 1x</button>
+        <button id="film2" data-film="2">MP4 2x</button>
+      </div>
+      <div class="note" id="filmnote"></div>
       <div class="row" style="margin-top:10px"><button id="video">WebM video</button></div>
       <div class="note" id="videonote"></div>
     </div>
@@ -317,10 +335,12 @@ var piece = __req('core/piece.js');
 var render = __req('core/render.js');
 var vector = __req('core/surface-vector.js');
 var gpuPreview = __req('core/webgpu-preview.js');
+var film = __req('core/film.js');
 var EXAMPLES = __req('examples/index.js');
 
 var names = Object.keys(EXAMPLES);
-var current = null, currentName = null, solved = null, t = 0, playing = false, overrides = {}, raf = 0, videoBusy = false;
+var current = null, currentName = null, solved = null, t = 0, playing = false, overrides = {}, raf = 0, videoBusy = false, filmBusy = false;
+var filmButtons = [document.getElementById('film1'), document.getElementById('film2')];
 var c = document.getElementById('c'), ctx = c.getContext('2d');
 var facts = document.getElementById('facts'), err = document.getElementById('err');
 var previewMode = 'cpu', previewSession = null, previewPending = null, previewLoop = null;
@@ -416,8 +436,13 @@ function select(name) {
     : 'This piece declares raster only, and means it. Asking for SVG is refused rather than answered with half a picture.';
   document.getElementById('video').disabled = !current.time || videoBusy;
   document.getElementById('videonote').textContent = current.time
-    ? render.playheads(current).length + ' frames, encoded one at a time.'
+    ? render.playheads(current).length + ' frames, recorded in real time: a piece slower than its frame rate cannot be recorded this way.'
     : 'A still has no frame list to walk, so there is no film to write.';
+  Array.prototype.forEach.call(filmButtons, function (b) { b.disabled = !current.time || filmBusy; });
+  document.getElementById('filmnote').textContent = current.time
+    ? render.playheads(current).length + ' frames, each encoded at its own time however long it takes to draw'
+      + (current.sound ? ', with the soundtrack the piece declares.' : '.')
+    : '';
   Array.prototype.forEach.call(box.children, function (b) { b.classList.toggle('on', b.dataset.name === name); });
   buildParams();
   resolve();
@@ -468,6 +493,7 @@ function buildControls(ready) {
   document.getElementById('t').disabled = !ready || !current.time;
   document.getElementById('svg').disabled = !ready || current.outputs.indexOf('vector') < 0;
   document.getElementById('video').disabled = !ready || !current.time || videoBusy;
+  Array.prototype.forEach.call(filmButtons, function (b) { b.disabled = !ready || !current.time || filmBusy; });
   Array.prototype.forEach.call(document.querySelectorAll('[data-png]'), function (b) { b.disabled = !ready; });
 }
 
@@ -745,7 +771,7 @@ async function exportVideo() {
     f.close();
   }
 
-  var t0 = performance.now(), renderMs = 0, encodeMs = 0;
+  var t0 = performance.now(), renderMs = 0, encodeMs = 0, worstLagMs = 0;
   try {
     for (var i = 0; i < heads.length; i++) {
       // Paced to the piece's own rate: MediaRecorder stamps blocks by the wall
@@ -759,6 +785,9 @@ async function exportVideo() {
       await encodeFrame(i);
       renderMs += b - a;
       encodeMs += performance.now() - b;
+      // How late this frame left against its slot: the one number that tells a
+      // slow piece from a lost picture.
+      worstLagMs = Math.max(worstLagMs, performance.now() - due);
     }
     // Drain recorded data until every frame is present before stopping the
     // recorder. Encoder latency varies with the host; the two-second deadline
@@ -772,14 +801,82 @@ async function exportVideo() {
   }
 
   var blob = new Blob(chunks, { type: 'video/webm' });
-  var report = filmVerdict(heads.length, hz, webmBlockTimes(new Uint8Array(await blob.arrayBuffer())));
+  var report = filmVerdict(heads.length, hz, webmBlockTimes(new Uint8Array(await blob.arrayBuffer())), { worstLagMs: worstLagMs });
   report.bytes = blob.size;
   report.renderMs = renderMs;
   report.encodeMs = encodeMs;
+  report.worstLagMs = worstLagMs;
   report.name = name + '-' + s.seed + '.webm';
   report.blob = blob;
   return report;
 }
+
+// THE FRAME-EXACT MP4. core/film.js draws every frame into its own canvas and
+// hands it to the encoder with its own timestamp, so nothing here is paced and
+// a piece slower than its frame rate still exports every frame. The browser's
+// encoders are passed in rather than read inside the module, which is what lets
+// the same path run in Node against controlled stand-ins.
+async function exportFilm(opts) {
+  var p = current, s = solved, name = currentName;
+  var scale = opts && opts.scale ? Number(opts.scale) : 1;
+  if (!s) throw new Error(err.textContent || 'the piece has no successful build to export');
+  if (!p || !p.time) throw new Error('this piece is a still: there is no frame list to walk');
+  var mc = typeof MessageChannel === 'function' ? new MessageChannel() : null;
+  var result = await film.exportFilm(p, s, {
+    VideoEncoder: typeof VideoEncoder === 'function' ? VideoEncoder : undefined,
+    VideoFrame: typeof VideoFrame === 'function' ? VideoFrame : undefined,
+    AudioEncoder: typeof AudioEncoder === 'function' ? AudioEncoder : undefined,
+    AudioData: typeof AudioData === 'function' ? AudioData : undefined,
+    OfflineAudioContext: typeof OfflineAudioContext === 'function' ? OfflineAudioContext : undefined,
+    createCanvas: function (w, h) { var o = document.createElement('canvas'); o.width = w; o.height = h; return o; },
+    now: function () { return performance.now(); },
+    // A macrotask, not a timer: a timer is clamped to a second in a hidden page.
+    pause: mc ? function () {
+      return new Promise(function (r) { mc.port1.onmessage = function () { r(); }; mc.port2.postMessage(0); });
+    } : undefined,
+  }, { scale: scale, onProgress: opts && opts.onProgress });
+  var report = result.report;
+  report.name = name + '-' + s.seed + (scale !== 1 ? '@' + scale + 'x' : '') + '.mp4';
+  report.blob = new Blob([result.bytes], { type: 'video/mp4' });
+  return report;
+}
+
+filmButtons.forEach(function (button) {
+  button.onclick = function () {
+    if (!solved || filmBusy) return;
+    var request = solved;
+    var note = document.getElementById('filmnote');
+    var total = render.playheads(current).length;
+    filmBusy = true;
+    filmButtons.forEach(function (b) { b.disabled = true; });
+    err.textContent = '';
+    note.textContent = 'drawing and encoding ' + total + ' frames...';
+    var lastNote = note.textContent;
+    exportFilm({
+      scale: Number(button.dataset.film),
+      onProgress: function (done) {
+        if (solved === request && note.textContent === lastNote) {
+          note.textContent = 'frame ' + done + ' of ' + total;
+          lastNote = note.textContent;
+        }
+      },
+    }).then(function (r) {
+      save(r.blob, r.name);
+      if (solved !== request) return;
+      note.textContent = r.frames + ' frames, ' + r.width + ' \\u00d7 ' + r.height + ', ' + r.seconds.toFixed(2) + ' s, '
+        + Math.round(r.bytes / 1024) + ' kB' + (r.sound ? ', with sound' : '') + '. Drawn in ' + r.drawMs + ' ms, '
+        + r.totalMs + ' ms in all (' + r.realtime + 'x real time).';
+    }).catch(function (e) {
+      if (solved !== request) return;
+      note.textContent = '';
+      err.textContent = String(e.message || e);
+    }).finally(function () {
+      filmBusy = false;
+      filmButtons.forEach(function (b) { b.disabled = !solved || !current.time; });
+      if (solved !== request && note.textContent === lastNote) note.textContent = '';
+    });
+  };
+});
 
 document.getElementById('video').onclick = function () {
   if (!solved || videoBusy) return;
@@ -832,6 +929,7 @@ window.__artifex = {
   gpu: gpuPreview,
   setPreview: setPreview,
   video: exportVideo,
+  film: exportFilm,
   examples: EXAMPLES,
   setSeed: function (s) { document.getElementById('seed').value = s; resolve(); },
   setT: function (v) { stop(); t = v; document.getElementById('t').value = v * 1000; frame(); },

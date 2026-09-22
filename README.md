@@ -1,8 +1,8 @@
 # Artifex
 
-Artifex is a JavaScript library and agent skill for making art from code. A piece can produce a page, PNG, WebM, or supported SVG.
+Artifex is a JavaScript library and agent skill for making art from code. A piece can produce a page, PNG, an MP4 film with its own soundtrack, WebM, or supported SVG.
 
-Use it for seeded compositions, animation, and vector artwork. It does not generate images from text or judge artistic quality.
+Use it for seeded compositions, animation with sound, and vector artwork. It does not generate images from text or judge artistic quality.
 
 ## Quick start
 
@@ -109,7 +109,7 @@ Arbitrary drawing code must uphold that requirement; cross-browser pixel equalit
 ## Output limits
 
 SVG requires a piece that declares vector support and uses supported drawing operations. Raster-only pieces are valid.
-WebM export requires an animated piece and compatible browser APIs. See [format behavior and export checks](docs/knowledge/output-formats.md).
+MP4 export requires an animated piece and a browser with WebCodecs H.264 encoding; a piece that declares sound also needs AAC encoding. It keeps every frame however slowly the piece draws. WebM export records in real time, so it needs frames cheaper than their frame budget, and carries no sound. See [format behavior and export checks](docs/knowledge/output-formats.md).
 
 ## Troubleshooting
 
