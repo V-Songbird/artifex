@@ -147,7 +147,10 @@ module.exports = {
     }
 
     for (const st of s.strokes) {
-      const progress = span(st.birth, st.birth + st.span, t);
+      // The window closes by the end of the film, so the last frame shows every
+      // stroke finished. A late stroke still starts when it would have, and its
+      // pen travels a little faster to arrive in time.
+      const progress = span(st.birth, Math.min(st.birth + st.span, 1), t);
       if (progress <= 0) continue;
 
       const n = st.pts.length;

@@ -277,6 +277,13 @@ const MUTATIONS = [
     expect: 'drift: THE LINE ARRIVES -- a pen travels, it does not fade up',
   },
   {
+    why: 'a late stroke runs past the end of the film, so the last frame shows it unfinished',
+    file: 'examples/drift.js',
+    from: '      const progress = span(st.birth, Math.min(st.birth + st.span, 1), t);',
+    to: '      const progress = span(st.birth, st.birth + st.span, t);',
+    expect: 'drift: every stroke is finished on the last frame',
+  },
+  {
     why: 'the subdivision is uniform, so every cell gets the same attention',
     file: 'examples/partition.js',
     from: 'const keep = d < maxDepth && w > 15 && h > 15 && (want * 0.95 + grain * 0.32) > 0.44;',

@@ -703,6 +703,25 @@ test('drift: the five causes are addressed separately', () => {
     + 'five scales produces recognisable algorithmic self-similarity.');
 });
 
+test('drift: every stroke is finished on the last frame', () => {
+  // The last frame is the finished picture. A late stroke whose window runs past
+  // the end of the film stops short there, its tip still showing. Drawn at a
+  // moment past the end, when every window has closed, the same state must look
+  // exactly like the last frame.
+  const p = validate(EXAMPLES.drift);
+  const heads = playheads(p);
+  // Digests compared as booleans: a failed equality would print both frames.
+  const drawn = (state, t) => { const g = new Recorder(); p.draw(g, state, t); return g.digest; };
+  // The declared seed and four more, each with strokes arriving on the last frame.
+  for (const seed of [p.seed, 5, 9, 11, 14]) {
+    const { state } = solve(p, seed);
+    const last = drawn(state, heads[heads.length - 1]);
+    assert.ok(last === drawn(state, 2), `seed ${seed}: a stroke is unfinished on the last frame`);
+    assert.ok(last !== drawn(state, heads[heads.length - 2]),
+      `seed ${seed}: no stroke arrives on the last frame, so none here could arrive late`);
+  }
+});
+
 test('specimen: every run of every glyph survives being drawn', () => {
   // THE CROSSBAR. A curvature-based resampler dropped a two-point straight run,
   // the T lost its crossbar and the E lost two of three bars, and the page read
