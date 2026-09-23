@@ -251,6 +251,17 @@ Ordinary SVG export uses identity scale and retains the design-resolution cutoff
 surfaces without a reader use scale 1. The tree also stops after twelve reflections. See
 [output formats](../../docs/knowledge/output-formats.md) for that limit.
 
+## Named styles
+
+When someone asks for a style by name, open the [style catalog](styles/catalog.md)
+and that style's guide before writing code: papercraft, 3D render, CAD
+drawing, pixel art, embroidery, sticker, voxel, doodle, Kandinsky or impasto.
+Each guide says what makes the style read as itself, then gives its recipe,
+palette and pitfalls. Start from the style's reference module in `styles/` and
+replace the demo subject with yours. A technique that misses the signature
+reads as a different style: flat-shaded facets read as papercraft, isometric
+textured cubes as voxels, dense bright fills on a dark ground as embroidery.
+
 ## The contract
 
 `core/piece.js` defines the authoritative contract through `FIELDS`. Consult its

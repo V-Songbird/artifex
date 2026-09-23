@@ -62,3 +62,6 @@ docs/rescued-examples/
 
 # Workstation editor project and local Claude preferences
 .idea/
+
+# Pages the gallery tools write beside the style references
+skills/artifex/styles/*.html
