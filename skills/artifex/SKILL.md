@@ -463,9 +463,10 @@ produced one beautiful seed. Render nine and look at all of them.
 - **A clock read after the drawing calls return measures their submission.**
   A browser canvas defers rasterization; force it, for example with a one-pixel
   `getImageData`, before timing a frame.
-- **A film without a colour tag shifts every colour.** A canvas frame may be
-  encoded full range, and an untagged file is decoded as limited range. The MP4
-  export writes the encoder's report; carry it through any re-encode.
+- **A film whose colour tag disagrees with its samples shifts every colour.**
+  Limited-range video read as full range lifts black to grey and dims white. The
+  MP4 export converts every frame to limited-range BT.709 and tags it so; keep
+  that range and tag through any re-encode.
 - **A declared parameter must affect the output.** Sweep each parameter at min,
   value and max: cyclic parameters may produce the same output at both endpoints.
   Check that the build or draw actually reads its validated value.

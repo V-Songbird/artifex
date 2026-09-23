@@ -9,20 +9,20 @@ const assert = require('node:assert/strict');
 
 const { validate, solve } = require('../core/piece.js');
 const { playheads } = require('../core/render.js');
-const { exportFilm, muxMp4, readMp4, filmCheck, avcCodecs, aacConfig } = require('../core/film.js');
+const { exportFilm, muxMp4, readMp4, filmCheck, avcCodecs, aacConfig, rgbaToNV12 } = require('../core/film.js');
 const { nullSurface } = require('../tools/bench.js');
 const { fakeAudio, fakeCodecs, opusHead } = require('./fake-media.js');
 
-const SPACE = { primaries: 'bt709', transfer: 'iec61966-2-1', matrix: 'bt709', fullRange: true };
+const BT709 = { primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false };
 const AVCC = Uint8Array.of(1, 0x64, 0, 0x1f, 0xff, 0xe1, 0, 0);
 
 /** `n` Opus packets of one 20 ms fullband CELT frame each. */
 const celt = (n) => Array.from({ length: n }, (_, i) => Uint8Array.of(0xfc, i & 255));
 
-function film({ frames = 48, delta = 1000, timescale = 24000, keys = [0, 24], colour = SPACE, audio = 94, opus = null, width = 64, height = 48 } = {}) {
+function film({ frames = 48, delta = 1000, timescale = 24000, keys = [0, 24], audio = 94, opus = null, width = 64, height = 48 } = {}) {
   return muxMp4({
     video: {
-      width, height, timescale, delta, avcC: AVCC, colour,
+      width, height, timescale, delta, avcC: AVCC,
       samples: Array.from({ length: frames }, (_, i) => ({ data: Uint8Array.of(i, 1, 2, 3), key: keys.includes(i) })),
     },
     audio: opus ? { codec: 'opus', head: opus.head || opusHead(), samples: opus.packets } : audio ? {
@@ -42,14 +42,28 @@ const GRID = { frames: 48, hz: 24, width: 64, height: 48, sound: true };
 
 function env(options = {}) {
   const codecs = fakeCodecs(options);
+  const contexts = [];
+  const pixel = options.pixel || [255, 0, 0, 255];
   let clock = 0;
   return {
     codecs,
+    contexts,
     env: {
       VideoEncoder: codecs.VideoEncoder, VideoFrame: codecs.VideoFrame,
       AudioEncoder: codecs.AudioEncoder, AudioData: codecs.AudioData,
       OfflineAudioContext: fakeAudio().Context,
-      createCanvas: (w, h) => ({ width: w, height: h, getContext: () => nullSurface({ w, h }) }),
+      // A 2D surface whose every pixel reads back as `pixel`, and no WebGL2, so
+      // the CPU conversion runs.
+      createCanvas: (w, h) => ({
+        width: w, height: h,
+        getContext(type, attributes) {
+          if (type !== '2d') return null;
+          contexts.push(attributes);
+          const g = nullSurface({ w, h });
+          g.getImageData = (x, y, gw, gh) => ({ data: Uint8ClampedArray.from({ length: gw * gh * 4 }, (_, i) => pixel[i & 3]) });
+          return g;
+        },
+      }),
       // Every reading moves the clock on, as if each frame took 250 ms to draw.
       now: () => (clock += options.step === undefined ? 250 : options.step),
       pause: async () => {},
@@ -81,7 +95,7 @@ test('a film is written and read back: every sample, its duration, its keyframes
   assert.equal(video.samples, 48);
   assert.deepEqual(video.deltas, [[48, 1000]]);
   assert.deepEqual(video.keys, [1, 25]);
-  assert.deepEqual(video.colour, { primaries: 1, transfer: 13, matrix: 1, fullRange: true });
+  assert.deepEqual(video.colour, { primaries: 1, transfer: 1, matrix: 1, fullRange: false });
   assert.equal(video.inside, true, 'every sample lies inside the media data');
   assert.equal(audio.codec, 'mp4a');
   assert.equal(audio.duration, 94 * 1024);
@@ -102,7 +116,6 @@ test('the film check refuses a file that disagrees with its frame grid, and says
   assert.match(grab(() => filmCheck(GRID, readMp4(film({ delta: 1100 })))).message, /a frame lasts 1100 ticks/);
   assert.match(grab(() => filmCheck(GRID, readMp4(film({ width: 66 })))).message, /66 x 48/);
   assert.match(grab(() => filmCheck(GRID, readMp4(film({ keys: [5] })))).message, /first frame is not a keyframe/);
-  assert.match(grab(() => filmCheck(GRID, readMp4(film({ colour: null })))).message, /no colour tag/);
   assert.match(grab(() => filmCheck(GRID, readMp4(film({ audio: 0 })))).message, /no playable soundtrack/);
   assert.match(grab(() => filmCheck(GRID, readMp4(film({ audio: 80 })))).message, /soundtrack lasts 1\.707 s against a 2\.000 s film/);
   assert.match(grab(() => filmCheck({ ...GRID, sound: false }, readMp4(film()))).message, /declares no sound/);
@@ -113,6 +126,54 @@ test('the film check refuses a file that disagrees with its frame grid, and says
   const stco = bytes.findIndex((_, i) => bytes[i] === 0x73 && bytes[i + 1] === 0x74 && bytes[i + 2] === 0x63 && bytes[i + 3] === 0x6f);
   new DataView(bytes.buffer).setUint32(stco + 12, bytes.length + 10);
   assert.match(grab(() => filmCheck(GRID, readMp4(bytes))).message, /outside the media data/);
+});
+
+test('every film is tagged limited-range BT.709, and the check refuses any other tag', () => {
+  const bytes = film();
+  assert.deepEqual(boxBytes(bytes, 'colr'), [0, 0, 0, 19, 0x63, 0x6f, 0x6c, 0x72, 0x6e, 0x63, 0x6c, 0x78, 0, 1, 0, 1, 0, 1, 0]);
+  assert.equal(filmCheck(GRID, readMp4(bytes)).frames, 48);
+  const at = bytes.findIndex((_, i) => String.fromCharCode(...bytes.subarray(i, i + 4)) === 'colr');
+  const tagged = (edit) => {
+    const copy = bytes.slice();
+    edit(new DataView(copy.buffer), copy);
+    return grab(() => filmCheck(GRID, readMp4(copy))).message;
+  };
+  assert.match(tagged((v, b) => { b[at + 14] = 0x80; }), /tagged primaries 1, transfer 1, matrix 1, full range/);
+  assert.match(tagged((v) => v.setUint16(at + 10, 13)), /transfer 13,/, 'sRGB transfer is not BT.709');
+  assert.match(tagged((v) => v.setUint16(at + 8, 6)), /primaries 6,/);
+  assert.match(tagged((v) => v.setUint16(at + 12, 6)), /matrix 6,/);
+  assert.match(tagged((v, b) => { b[at + 3] = 0x78; }), /no colour tag/);
+});
+
+test('drawn pixels become BT.709 limited-range NV12: luma per pixel, chroma per 2x2 block, translucency over black', () => {
+  // A 2x2 block of one colour gives four equal luma samples and one chroma pair.
+  const block = (rgba) => Uint8ClampedArray.from({ length: 16 }, (_, i) => rgba[i & 3]);
+  const bars = {
+    black: [[0, 0, 0], [16, 128, 128]], white: [[255, 255, 255], [235, 128, 128]], grey: [[128, 128, 128], [126, 128, 128]],
+    red: [[255, 0, 0], [63, 102, 240]], green: [[0, 255, 0], [173, 42, 26]], blue: [[0, 0, 255], [32, 240, 118]],
+    yellow: [[255, 255, 0], [219, 16, 138]], cyan: [[0, 255, 255], [188, 154, 16]], magenta: [[255, 0, 255], [78, 214, 230]],
+  };
+  for (const [name, [rgb, want]] of Object.entries(bars)) {
+    const out = rgbaToNV12(block([...rgb, 255]), 2, 2);
+    assert.deepEqual([...out], [want[0], want[0], want[0], want[0], want[1], want[2]], name);
+  }
+  // The chroma pair comes from the block's average: red and blue make purple.
+  const mixed = Uint8ClampedArray.of(255, 0, 0, 255, 0, 0, 255, 255, 0, 0, 255, 255, 255, 0, 0, 255);
+  assert.deepEqual([...rgbaToNV12(mixed, 2, 2)], [63, 32, 32, 63, 171, 179]);
+  // Half-transparent white over black is mid grey.
+  assert.deepEqual([...rgbaToNV12(block([255, 255, 255, 128]), 2, 2)], [126, 126, 126, 126, 128, 128]);
+  // Four blocks keep their rows and columns, black, white / red, blue, with
+  // each block's U and V side by side.
+  const quad = new Uint8ClampedArray(64);
+  const put = (x, y, rgb) => quad.set([...rgb, 255], (y * 4 + x) * 4);
+  for (let y = 0; y < 4; y++) {
+    for (let x = 0; x < 4; x++) put(x, y, y < 2 ? (x < 2 ? [0, 0, 0] : [255, 255, 255]) : (x < 2 ? [255, 0, 0] : [0, 0, 255]));
+  }
+  assert.deepEqual([...rgbaToNV12(quad, 4, 4)], [
+    16, 16, 235, 235, 16, 16, 235, 235, 63, 63, 32, 32, 63, 63, 32, 32,
+    128, 128, 128, 128,
+    102, 240, 240, 118,
+  ]);
 });
 
 test('the dOps box is the OpusHead in big-endian, with its pre-skip and channel mapping kept', () => {
@@ -172,12 +233,24 @@ test('every drawn frame is encoded once, at its own timestamp, however slowly it
   assert.equal(readMp4(bytes).tracks[0].samples, n);
 });
 
-test('the film carries the colour space its encoder reported, and refuses to guess one', async () => {
+test('every frame reaches the encoder as BT.709 limited-range NV12, whatever the encoder reports', async () => {
   const { p, solved } = piece();
-  const narrow = { primaries: 'smpte170m', transfer: 'smpte170m', matrix: 'smpte170m', fullRange: false };
-  const tagged = await exportFilm(p, solved, env({ colorSpace: narrow }).env);
-  assert.deepEqual(readMp4(tagged.bytes).tracks[0].colour, { primaries: 6, transfer: 6, matrix: 6, fullRange: false });
-  await assert.rejects(exportFilm(p, solved, env({ colorSpace: null }).env), /no colour tag/);
+  // This stand-in encoder reports full-range sRGB; the film does not take its word.
+  const { env: e, codecs, contexts } = env({ pixel: [255, 0, 0, 255] });
+  const { bytes, report } = await exportFilm(p, solved, e);
+  const frames = codecs.log.frames;
+  assert.equal(frames.length, playheads(p).length);
+  assert.ok(frames.every((f) => f.format === 'NV12'), 'the encoder is handed video colour, not a canvas to convert');
+  assert.ok(frames.every((f) => JSON.stringify(f.colorSpace) === JSON.stringify(BT709)), 'every frame says BT.709 limited range');
+  const n = 64 * 48;
+  assert.equal(frames[0].data.length, n * 1.5);
+  assert.deepEqual([...frames[0].data.subarray(n - 2, n + 2)], [63, 63, 102, 240], 'red, in BT.709 limited range');
+  assert.deepEqual(readMp4(bytes).tracks[0].colour, { primaries: 1, transfer: 1, matrix: 1, fullRange: false });
+  assert.equal(report.conversion, 'cpu', 'no WebGL2 here, so the CPU converts');
+  assert.deepEqual(contexts, [{ willReadFrequently: true }], 'a canvas read back every frame is kept in memory from the first');
+  const quiet = await exportFilm(p, solved, env({ colorSpace: null }).env);
+  assert.deepEqual(readMp4(quiet.bytes).tracks[0].colour, { primaries: 1, transfer: 1, matrix: 1, fullRange: false },
+    'an encoder that reports no colour space still makes a tagged film');
 });
 
 test('a piece with sound gets a soundtrack exactly as long as its film, or no film at all', async () => {

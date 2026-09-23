@@ -11,11 +11,12 @@
 // sample durations, the colour tag, the soundtrack's length -- and checked
 // against the frame grid before anyone is handed a film.
 //
-// THE COLOUR TAG IS NOT DECORATION. The encoder reports the colour space it
-// encoded a canvas frame in, and for a canvas that is full range. A decoder that
-// is not told so assumes limited range: near-black goes to black, near-white to
-// white, and a saturated colour moves by a dozen levels. The film carries what
-// the encoder reported, in a `colr` box.
+// EVERY FILM IS LIMITED-RANGE BT.709. An encoder handed a canvas converts it to
+// video colour its own way, and the range it picks can change from one export
+// to the next. Platforms that re-encode an upload may ignore a full-range tag
+// and shift every colour. So each drawn frame is converted to BT.709
+// limited-range NV12 before the encoder sees it, the `colr` box says so, and
+// the check refuses a film tagged anything else.
 //
 // The browser's encoders arrive through `env`, so the whole path runs in Node
 // against controlled stand-ins. Nothing here knows what a piece depicts.
@@ -59,21 +60,11 @@ function runs(values) {
   return out;
 }
 
-// ISO/IEC 23091-2 code points for the colour spaces a WebCodecs encoder reports.
-const PRIMARIES = { bt709: 1, bt470bg: 5, smpte170m: 6, bt2020: 9, smpte432: 12 };
-const TRANSFER = { bt709: 1, smpte170m: 6, linear: 8, 'iec61966-2-1': 13, pq: 16, hlg: 18 };
-const MATRIX = { rgb: 0, bt709: 1, bt470bg: 5, smpte170m: 6, 'bt2020-ncl': 9 };
-
-/**
- * The `colr` box for a reported colour space, or nothing when none was reported.
- * An unknown name is written as 2, "unspecified", rather than guessed.
- */
-function colourBox(space) {
-  if (!space) return new Uint8Array(0);
-  const code = (table, name) => (name in table ? table[name] : 2);
-  return box('colr', ascii('nclx'), u16(code(PRIMARIES, space.primaries)), u16(code(TRANSFER, space.transfer)),
-    u16(code(MATRIX, space.matrix)), u8(space.fullRange ? 0x80 : 0));
-}
+// The colour space of every frame handed to the encoder, in WebCodecs names,
+// and the `colr` box that states it in ISO/IEC 23091-2 code points: BT.709
+// primaries, transfer and matrix (1, 1, 1), full range off.
+const BT709 = { primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false };
+const COLR = box('colr', ascii('nclx'), u16(1), u16(1), u16(1), u8(0));
 
 function sampleTable(t) {
   const parts = [full('stsd', 0, 0, u32(1), t.entry)];
@@ -106,14 +97,14 @@ function track(t, movieScale) {
         sampleTable(t))));
 }
 
-function avcEntry(width, height, avcC, colour) {
+function avcEntry(width, height, avcC) {
   const name = new Uint8Array(32);
   const label = ascii('Artifex H.264');
   name[0] = label.length;
   name.set(label, 1);
   return box('avc1', new Uint8Array(6), u16(1), u16(0), u16(0), new Uint8Array(12), u16(width), u16(height),
     u32(0x00480000), u32(0x00480000), u32(0), u16(1), name, u16(0x0018), u16(0xffff),
-    box('avcC', avcC), colourBox(colour));
+    box('avcC', avcC), COLR);
 }
 
 function aacEntry(channels, rate, asc, bitrate) {
@@ -168,15 +159,16 @@ function opusSamples(packet) {
  * One MP4 file: moov first, so a player can start before it has the whole file.
  *
  * `video`: { width, height, timescale, delta, samples: [{ data, key, offset }],
- * avcC, colour }. `audio`, optional, is AAC as { sampleRate, channels, samples:
- * [Uint8Array], asc, bitrate }, or Opus as { codec: 'opus', head, samples }, where
- * `head` is the encoder's OpusHead. Every sample is its own chunk.
+ * avcC }, tagged limited-range BT.709. `audio`, optional, is AAC as { sampleRate,
+ * channels, samples: [Uint8Array], asc, bitrate }, or Opus as { codec: 'opus',
+ * head, samples }, where `head` is the encoder's OpusHead. Every sample is its
+ * own chunk.
  */
 function muxMp4({ video, audio = null }) {
   const tracks = [{
     id: 1, handler: 'vide', timescale: video.timescale, duration: video.samples.length * video.delta,
     width: video.width, height: video.height,
-    entry: avcEntry(video.width, video.height, video.avcC, video.colour),
+    entry: avcEntry(video.width, video.height, video.avcC),
     samples: video.samples.map((s) => s.data),
     deltas: video.samples.map(() => video.delta),
     offsets: video.samples.map((s) => s.offset || 0),
@@ -338,7 +330,12 @@ function filmCheck(expected, file) {
   }
   if (!v.keys || v.keys[0] !== 1) throw new Error('film: the first frame is not a keyframe, so the film cannot start. Nothing was saved.');
   if (!v.colour) {
-    throw new Error('film: the file carries no colour tag, and a decoder would assume limited range and shift every colour. Nothing was saved.');
+    throw new Error('film: the file carries no colour tag, so a player would have to guess its colours. Nothing was saved.');
+  }
+  const { primaries, transfer, matrix, fullRange } = v.colour;
+  if (primaries !== 1 || transfer !== 1 || matrix !== 1 || fullRange) {
+    throw new Error(`film: the file is tagged primaries ${primaries}, transfer ${transfer}, matrix ${matrix}, ${fullRange ? 'full' : 'limited'} range, `
+      + 'and every film must be limited-range BT.709 (1, 1, 1). Nothing was saved.');
   }
   const seconds = v.duration / v.timescale;
   let sound = null;
@@ -359,6 +356,149 @@ function filmCheck(expected, file) {
     throw new Error('film: the piece declares no sound and the file holds a soundtrack. Nothing was saved.');
   }
   return { frames: v.samples, seconds, width: v.width, height: v.height, keyframes: v.keys.length, colour: v.colour, sound };
+}
+
+// ---------------------------------------------------------------------------
+// Drawn frames to BT.709 limited-range NV12
+// ---------------------------------------------------------------------------
+
+// BT.709 luma weights. Limited range puts luma in 16..235 and chroma in 16..240.
+const KR = 0.2126;
+const KB = 0.0722;
+const KG = 1 - KR - KB;
+
+/**
+ * RGBA pixels, as a canvas holds them, to BT.709 limited-range NV12: a luma
+ * plane with a sample for every pixel, then one plane of chroma pairs, U then
+ * V, one pair for every 2x2 block from the block's average. The canvas's
+ * sRGB-encoded values are the R'G'B' that BT.709 converts. A translucent pixel
+ * is composited over black, as an encoder handed the canvas would. Width and
+ * height are even.
+ */
+function rgbaToNV12(px, w, h, out = new Uint8Array(w * h * 1.5)) {
+  const cw = w >> 1;
+  const u = w * h;
+  const row = w * 4;
+  const yr = KR * 219 / 255, yg = KG * 219 / 255, yb = KB * 219 / 255;
+  // Chroma is computed from the sum of the block's four pixels.
+  const cb = 224 / 255 / (2 * (1 - KB)) / 4, cr = 224 / 255 / (2 * (1 - KR)) / 4;
+  for (let y = 0; y < h; y += 2) {
+    for (let x = 0, p = y * row, o = y * w, c = (y >> 1) * cw; x < w; x += 2, p += 8, o += 2, c++) {
+      const q = p + row;
+      let r0 = px[p], g0 = px[p + 1], b0 = px[p + 2], r1 = px[p + 4], g1 = px[p + 5], b1 = px[p + 6];
+      let r2 = px[q], g2 = px[q + 1], b2 = px[q + 2], r3 = px[q + 4], g3 = px[q + 5], b3 = px[q + 6];
+      if ((px[p + 3] & px[p + 7] & px[q + 3] & px[q + 7]) !== 255) {
+        const a0 = px[p + 3] / 255, a1 = px[p + 7] / 255, a2 = px[q + 3] / 255, a3 = px[q + 7] / 255;
+        r0 *= a0; g0 *= a0; b0 *= a0; r1 *= a1; g1 *= a1; b1 *= a1;
+        r2 *= a2; g2 *= a2; b2 *= a2; r3 *= a3; g3 *= a3; b3 *= a3;
+      }
+      // A Uint8Array store truncates, so the added 0.5 rounds half up.
+      out[o] = 16.5 + yr * r0 + yg * g0 + yb * b0;
+      out[o + 1] = 16.5 + yr * r1 + yg * g1 + yb * b1;
+      out[o + w] = 16.5 + yr * r2 + yg * g2 + yb * b2;
+      out[o + w + 1] = 16.5 + yr * r3 + yg * g3 + yb * b3;
+      const rs = r0 + r1 + r2 + r3, gs = g0 + g1 + g2 + g3, bs = b0 + b1 + b2 + b3;
+      const ls = KR * rs + KG * gs + KB * bs;
+      out[u + 2 * c] = 128.5 + cb * (bs - ls);
+      out[u + 2 * c + 1] = 128.5 + cr * (rs - ls);
+    }
+  }
+  return out;
+}
+
+// Eight by four pixels whose NV12 the GPU must reproduce: black, white, the
+// primaries, grey, a block of four colours and a translucent white.
+const PROBE = [
+  '#000', '#000', '#fff', '#fff', '#f00', '#f00', '#0f0', '#0f0',
+  '#000', '#000', '#fff', '#fff', '#f00', '#f00', '#0f0', '#0f0',
+  '#00f', '#00f', '#808080', '#808080', '#f00', '#00f', 'rgba(255,255,255,0.5)', 'rgba(255,255,255,0.5)',
+  '#00f', '#00f', '#808080', '#808080', '#0f0', '#ff0', 'rgba(255,255,255,0.5)', 'rgba(255,255,255,0.5)',
+];
+
+/**
+ * The same conversion on the GPU, where the browser offers WebGL2. Reading the
+ * drawing canvas back every frame can make the browser move it to its CPU
+ * rasterizer part-way through a film; copying it into a texture does not. One
+ * pass writes the luma rows and then the chroma rows, four bytes to an RGBA
+ * texel, and one readback fetches both planes. Returns
+ * { convert(canvas) -> { data, layout }, dispose() }, or null where WebGL2 is
+ * missing or differs from rgbaToNV12 on PROBE by more than one.
+ */
+function gpuNV12(env) {
+  const gl = env.createCanvas(1, 1).getContext('webgl2', { antialias: false, depth: false, stencil: false, premultipliedAlpha: false });
+  if (!gl || typeof gl.texImage2D !== 'function') return null;
+  const dispose = () => { const lose = gl.getExtension('WEBGL_lose_context'); if (lose) lose.loseContext(); };
+  const f = (n) => n.toFixed(7);
+  const program = gl.createProgram();
+  for (const [type, source] of [
+    [gl.VERTEX_SHADER, '#version 300 es\nvoid main() { gl_Position = vec4(float(gl_VertexID & 1) * 4.0 - 1.0, float(gl_VertexID >> 1) * 4.0 - 1.0, 0.0, 1.0); }'],
+    [gl.FRAGMENT_SHADER, `#version 300 es
+precision highp float;
+uniform highp sampler2D s;
+uniform ivec2 size;
+out vec4 o;
+const vec3 K = vec3(${f(KR)}, ${f(KG)}, ${f(KB)});
+vec3 at(int x, int y) { return texelFetch(s, ivec2(min(x, size.x - 1), min(y, size.y - 1)), 0).rgb; }
+float luma(int x, int y) { return (16.0 + 219.0 * dot(at(x, y), K)) / 255.0; }
+vec2 chroma(int x, int y) {
+  vec3 c = (at(2 * x, 2 * y) + at(2 * x + 1, 2 * y) + at(2 * x, 2 * y + 1) + at(2 * x + 1, 2 * y + 1)) * 0.25;
+  float l = dot(c, K);
+  return (128.0 + 224.0 * vec2((c.b - l) / ${f(2 * (1 - KB))}, (c.r - l) / ${f(2 * (1 - KR))})) / 255.0;
+}
+void main() {
+  ivec2 q = ivec2(gl_FragCoord.xy);
+  int x = q.x * 4;
+  if (q.y < size.y) o = vec4(luma(x, q.y), luma(x + 1, q.y), luma(x + 2, q.y), luma(x + 3, q.y));
+  else o = vec4(chroma(q.x * 2, q.y - size.y), chroma(q.x * 2 + 1, q.y - size.y));
+}`],
+  ]) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    gl.attachShader(program, shader);
+  }
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) { dispose(); return null; }
+  gl.useProgram(program);
+  const [source, target] = [gl.createTexture(), gl.createTexture()];
+  gl.bindTexture(gl.TEXTURE_2D, source);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+  gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+  const frame = gl.createFramebuffer();
+  let shape = '';
+  const convert = (canvas) => {
+    const w = canvas.width, h = canvas.height;
+    // A row of either plane is w bytes: w luma samples, or w / 2 chroma pairs.
+    const tw = Math.ceil(w / 4), th = h * 1.5;
+    if (shape !== w + 'x' + h) {
+      gl.bindTexture(gl.TEXTURE_2D, target);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, tw, th, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, frame);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target, 0);
+      gl.viewport(0, 0, tw, th);
+      gl.uniform2i(gl.getUniformLocation(program, 'size'), w, h);
+      shape = w + 'x' + h;
+    }
+    gl.bindTexture(gl.TEXTURE_2D, source);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    const data = new Uint8Array(tw * 4 * th);
+    gl.readPixels(0, 0, tw, th, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    if (gl.isContextLost()) throw new Error('film: the GPU lost the colour conversion part-way through the film. Nothing was saved.');
+    const stride = tw * 4;
+    return { data, layout: [{ offset: 0, stride }, { offset: h * stride, stride }] };
+  };
+  // Trusted only once it reproduces the CPU conversion.
+  const probe = env.createCanvas(8, 4);
+  const pg = probe.getContext('2d', { willReadFrequently: true });
+  PROBE.forEach((css, i) => { pg.fillStyle = css; pg.fillRect(i % 8, i >> 3, 1, 1); });
+  const want = rgbaToNV12(pg.getImageData(0, 0, 8, 4).data, 8, 4);
+  const got = convert(probe);
+  const at = (k) => { const p = got.layout[k < 32 ? 0 : 1], j = k & 31; return p.offset + (j >> 3) * p.stride + (j & 7); };
+  if (want.some((value, k) => Math.abs(value - got.data[at(k)]) > 1)) { dispose(); return null; }
+  return { convert, dispose };
 }
 
 // ---------------------------------------------------------------------------
@@ -454,7 +594,9 @@ async function encodeSound(env, buffer, bitrate) {
  * yields to the event loop while the encoder drains. `opt`: `scale`, `bitrate`, `audioBitrate`,
  * `keySeconds` and `onProgress(done, total)`.
  *
- * Resolves to { bytes, report }; the report is read from the finished file.
+ * Resolves to { bytes, report }; the report is read from the finished file and
+ * names the colour conversion that ran, `gpu` or `cpu`. `convertMs` includes
+ * waiting for the browser to finish drawing each frame.
  */
 async function exportFilm(piece, solved, env, opt = {}) {
   if (!piece.time) throw new Error('film: a still has no frame list, so there is no film to write');
@@ -497,13 +639,11 @@ async function exportFilm(piece, solved, env, opt = {}) {
 
   const chunks = [];
   let avcC = null;
-  let colour = null;
   let failure = null;
   const encoder = new env.VideoEncoder({
     output(chunk, meta) {
       const cfg = meta && meta.decoderConfig;
       if (cfg && cfg.description) avcC = copyBytes(cfg.description);
-      if (cfg && cfg.colorSpace) colour = cfg.colorSpace;
       const data = new Uint8Array(chunk.byteLength);
       chunk.copyTo(data);
       chunks.push({ data, timestamp: chunk.timestamp, key: chunk.type === 'key' });
@@ -511,9 +651,15 @@ async function exportFilm(piece, solved, env, opt = {}) {
     error(e) { failure = e; },
   });
   const canvas = env.createCanvas(width, height);
-  const g = canvas.getContext('2d');
+  const gpu = gpuNV12(env);
+  // Without the GPU the canvas is read back every frame, so it is kept in memory
+  // from the first: a browser that moved it there part-way would change how the
+  // rest of the film is drawn.
+  const g = gpu ? canvas.getContext('2d') : canvas.getContext('2d', { willReadFrequently: true });
+  const toNV12 = gpu ? () => gpu.convert(canvas) : () => ({ data: rgbaToNV12(g.getImageData(0, 0, width, height).data, width, height) });
   const gop = Math.max(1, Math.round(hz * (opt.keySeconds || 2)));
   let drawMs = 0;
+  let convertMs = 0;
   let waitMs = 0;
   try {
     encoder.configure(config);
@@ -522,7 +668,12 @@ async function exportFilm(piece, solved, env, opt = {}) {
       const a = now();
       g.clearRect(0, 0, width, height);
       drawFrame(g, piece, solved, heads[i], { scale });
-      const frame = new env.VideoFrame(canvas, { timestamp: Math.round((i * 1e6) / hz), duration: Math.round(1e6 / hz) });
+      const c = now();
+      const { data, layout } = toNV12();
+      const frame = new env.VideoFrame(data, {
+        format: 'NV12', codedWidth: width, codedHeight: height, layout, colorSpace: BT709,
+        timestamp: Math.round((i * 1e6) / hz), duration: Math.round(1e6 / hz),
+      });
       const b = now();
       try { encoder.encode(frame, { keyFrame: i % gop === 0 }); } finally { frame.close(); }
       // Anything that can hang is raced against a deadline: an encoder that
@@ -532,12 +683,14 @@ async function exportFilm(piece, solved, env, opt = {}) {
         if (now() > stall) throw new Error(`film: the encoder stopped accepting frames at frame ${i} of ${heads.length}`);
         await pause();
       }
-      drawMs += b - a;
+      drawMs += c - a;
+      convertMs += b - c;
       waitMs += now() - b;
       if (opt.onProgress) opt.onProgress(i + 1, heads.length);
     }
     await encoder.flush();
   } finally {
+    if (gpu) gpu.dispose();
     if (encoder.state !== 'closed') encoder.close();
   }
   if (failure) throw failure;
@@ -548,7 +701,7 @@ async function exportFilm(piece, solved, env, opt = {}) {
   const delta = Math.round(timescale / hz);
   const bytes = muxMp4({
     video: {
-      width, height, timescale, delta, avcC, colour,
+      width, height, timescale, delta, avcC,
       samples: chunks.map((c, i) => ({ data: c.data, key: c.key, offset: Math.round((c.timestamp * timescale) / 1e6) - i * delta })),
     },
     audio: sound,
@@ -558,11 +711,12 @@ async function exportFilm(piece, solved, env, opt = {}) {
   return {
     bytes,
     report: Object.assign(report, {
-      codec: config.codec, bitrate, bytes: bytes.length, hz,
-      drawMs: Math.round(drawMs), encodeWaitMs: Math.round(waitMs), soundMs: Math.round(soundMs), totalMs: Math.round(totalMs),
+      codec: config.codec, bitrate, bytes: bytes.length, hz, conversion: gpu ? 'gpu' : 'cpu',
+      drawMs: Math.round(drawMs), convertMs: Math.round(convertMs), encodeWaitMs: Math.round(waitMs),
+      soundMs: Math.round(soundMs), totalMs: Math.round(totalMs),
       realtime: totalMs > 0 ? +((report.seconds * 1000) / totalMs).toFixed(2) : null,
     }),
   };
 }
 
-module.exports = { exportFilm, muxMp4, readMp4, filmCheck, avcCodecs, aacConfig };
+module.exports = { exportFilm, muxMp4, readMp4, filmCheck, avcCodecs, aacConfig, rgbaToNV12 };
