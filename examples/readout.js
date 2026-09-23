@@ -28,6 +28,7 @@ const { clamp, pick } = require('../core/num.js');
 const { mix } = require('../core/colour.js');
 const { stroke } = require('../core/path.js');
 const { span, shots, shotAt } = require('../core/time.js');
+const { layer } = require('../core/layer.js');
 
 const DIGITS = (
   '1415926535' + '8979323846' + '2643383279' + '5028841971' + '6939937510'
@@ -115,23 +116,8 @@ module.exports = {
     const lead = s.params.lead;
     const scan = scanAt(s, shots(SCORE, clock), clock.frame);
 
-    g.fillStyle = PAPER;
-    g.fillRect(0, 0, W, H);
-
-    // --- the slot grid, always fully drawn ------------------------------
-    // The empty slots are the measure. Without them a low digit and a missing
-    // cell look the same, which is the difference between a reading and a blot.
-    g.strokeStyle = MUTE;
-    g.lineWidth = 0.6;
-    for (const c of s.cells) {
-      const [x, y] = cellOrigin(c);
-      for (let i = 0; i < SLOTS; i++) {
-        const sy = y + CELL_H - 7 - (i + 1) * slotPitch();
-        g.beginPath();
-        g.rect(x, sy, c.wide ? 26 : 19, slotPitch() - 2.2);
-        g.stroke();
-      }
-    }
+    // The paper and the slot grid are the same on every frame: one static layer.
+    layer(g, s, 'grid', [0, 0, W, H], grid);
 
     // --- the filled slots, arriving one at a time -----------------------
     for (const c of s.cells) {
@@ -249,6 +235,25 @@ function scanAt(s, film, frame) {
   const shot = shotAt(film, frame);
   const u = shot.name === 'read' ? span(shot.start, shot.end - 1, frame) : 1;
   return u * (s.cells.length + s.params.lead);
+}
+
+/** The paper, then the slot grid, always fully drawn. The empty slots are the
+ *  measure: without them a low digit and a missing cell look the same, which is
+ *  the difference between a reading and a blot. */
+function grid(g, s) {
+  g.fillStyle = PAPER;
+  g.fillRect(0, 0, W, H);
+  g.strokeStyle = MUTE;
+  g.lineWidth = 0.6;
+  for (const c of s.cells) {
+    const [x, y] = cellOrigin(c);
+    for (let i = 0; i < SLOTS; i++) {
+      const sy = y + CELL_H - 7 - (i + 1) * slotPitch();
+      g.beginPath();
+      g.rect(x, sy, c.wide ? 26 : 19, slotPitch() - 2.2);
+      g.stroke();
+    }
+  }
 }
 
 function slotPitch() { return (CELL_H - 14) / SLOTS; }

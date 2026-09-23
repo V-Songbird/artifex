@@ -347,6 +347,50 @@ const MUTATIONS = [
     to: '      const at = (c.onset + 1) / timeline.hz;',
     expect: 'cues: each note sounds on the frame that first shows its part turning',
   },
+
+  // --- static layers ----------------------------------------------------------
+  {
+    why: 'a layer copied at one device scale is put back at another',
+    file: 'core/layer.js',
+    from: "  const id = `${key}@${at.scale}:${box.join(',')}:${g.canvas.width}x${g.canvas.height}`;",
+    to: "  const id = `${key}:${box.join(',')}:${g.canvas.width}x${g.canvas.height}`;",
+    expect: 'each device scale keeps its own copy',
+  },
+  {
+    why: 'a copy taken from one canvas is put on another',
+    file: 'core/layer.js',
+    from: '  let solves = caches.get(g.canvas);\n  if (!solves) caches.set(g.canvas, solves = new WeakMap());',
+    to: '  let solves = caches.get(caches);\n  if (!solves) caches.set(caches, solves = new WeakMap());',
+    expect: 'a copy belongs to its canvas and its solve',
+  },
+  {
+    why: 'layers are kept past the pixel cap',
+    file: 'core/layer.js',
+    from: '  const copy = cache.pixels + at.w * at.h <= cap ? keep(g, state, at, paint) : null;',
+    to: '  const copy = keep(g, state, at, paint);',
+    expect: 'past the cap a layer is drawn every time',
+  },
+  {
+    why: 'a translucent layer is kept, so its copy carries what lay under it',
+    file: 'core/layer.js',
+    from: '  for (let i = 3; i < px.length; i += 4) if (px[i] !== 255) return null;',
+    to: '  for (let i = 3; i < px.length; i += 4) if (false) return null;',
+    expect: 'a translucent layer is drawn every time, never copied',
+  },
+  {
+    why: 'a paint that takes the playhead is accepted',
+    file: 'core/layer.js',
+    from: "  if (typeof paint !== 'function' || paint.length > 2) {",
+    to: "  if (typeof paint !== 'function') {",
+    expect: 'a paint that takes a playhead is refused by name',
+  },
+  {
+    why: "drift's ground reads the playhead, so its copied frames freeze the ground",
+    file: 'examples/drift.js',
+    from: "    layer(g, s, 'ground', [0, 0, W, H], ground);",
+    to: "    layer(g, s, 'ground', [0, 0, W, H], (lg) => ground(lg, { ...s, hue: s.hue + t * 90 }));",
+    expect: 'layers: a frame whose static layer was copied holds the marks drawing it would',
+  },
   {
     why: 'render scale is ignored entirely, so a print is the size of a screen',
     file: 'core/render.js',

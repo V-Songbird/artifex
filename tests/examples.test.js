@@ -760,6 +760,86 @@ test("drift: a stroke's body reaches its tip on every frame", () => {
   }
 });
 
+/**
+ * A Recorder that core/layer.js treats as a raster surface: it has a canvas, and
+ * it reads back as opaque once an opaque fillRect has covered all of it. Copying
+ * a region takes the marks the canvas shows since it was last cleared, and
+ * putting a copy back records those marks again, so a frame whose layer was
+ * copied can be compared, mark for mark, with the frame drawn directly.
+ */
+class RasterRecorder extends Recorder {
+  constructor(canvas) {
+    super();
+    Object.assign(this, { canvas, cleared: 0, opaque: false, held: [], copies: 0 });
+  }
+
+  getContextAttributes() { return {}; }
+
+  clearRect(x, y, w, h) {
+    super.clearRect(x, y, w, h);
+    Object.assign(this, { cleared: this.ops.length, opaque: false });
+  }
+
+  fillRect(x, y, w, h) {
+    super.fillRect(x, y, w, h);
+    const covers = this._x(x, y) <= 0 && this._y(x, y) <= 0
+      && this._x(x + w, y + h) >= this.canvas.width && this._y(x + w, y + h) >= this.canvas.height;
+    if (covers && this.globalAlpha === 1 && !/rgba|\/|#[0-9a-f]{8}$/i.test(String(this.fillStyle))) this.opaque = true;
+  }
+
+  getImageData(x, y, w, h) {
+    const data = new Uint8ClampedArray(w * h * 4);
+    if (this.opaque) for (let i = 3; i < data.length; i += 4) data[i] = 255;
+    return { data };
+  }
+
+  /** What the canvas shows: every mark since it was last cleared, in device units. */
+  picture() {
+    return this.ops.slice(this.cleared).filter((o) => /^(?:[AEMLCQTR]-?[\d.]|RR|FR|SR|PX|fill:|stroke:|clip)/.test(o));
+  }
+
+  drawImage(src, ...args) {
+    if (args.length === 8) { this.held = src.getContext('2d').picture(); return; }
+    assert.deepEqual(args, [0, 0], 'a whole-frame layer lands at the origin');
+    this.copies++;
+    this.ops.push(...src.getContext('2d').held);
+  }
+}
+
+function rasterCanvas(width, height) {
+  const canvas = { width, height, ownerDocument: { createElement: () => rasterCanvas(0, 0) } };
+  canvas.getContext = () => canvas.ctx || (canvas.ctx = new RasterRecorder(canvas));
+  return canvas;
+}
+
+test('layers: a frame whose static layer was copied holds the marks drawing it would', () => {
+  // drift and readout keep their paper and ground as one static layer. On a raster
+  // surface it is copied from the layer's second frame on, and every copied frame
+  // must hold exactly the marks of drawing it. A layer whose paint read the
+  // playhead would freeze on the copied frame and fail here.
+  for (const name of ['drift', 'readout']) {
+    const p = validate(EXAMPLES[name]);
+    const heads = playheads(p);
+    const solved = solve(p, p.seed);
+    for (const scale of [1, 2]) {
+      const [w, h] = [p.size.w * scale, p.size.h * scale];
+      const kept = rasterCanvas(w, h).getContext('2d');
+      const picks = [0, 1, 2, Math.floor(heads.length / 2), heads.length - 1];
+      for (const f of picks) {
+        const fresh = rasterCanvas(w, h).getContext('2d');
+        for (const g of [kept, fresh]) {
+          g.clearRect(0, 0, w, h);
+          drawFrame(g, p, solved, heads[f], { scale });
+        }
+        assert.ok(kept.picture().join('|') === fresh.picture().join('|'), `${name} ${scale}x frame ${f}: the copied frame differs from drawing it`);
+      }
+      assert.equal(kept.copies, picks.length - 2, `${name} ${scale}x: the layer is copied from its third frame on`);
+    }
+  }
+  // A vector document keeps the layer as paths.
+  for (const t of [0, 0.5, 1]) assert.doesNotMatch(renderVector(EXAMPLES.readout, { t }).svg, /<image/);
+});
+
 test('specimen: every run of every glyph survives being drawn', () => {
   // THE CROSSBAR. A curvature-based resampler dropped a two-point straight run,
   // the T lost its crossbar and the E lost two of three bars, and the page read
