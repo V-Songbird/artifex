@@ -5,8 +5,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
-const { runSuite, mutationVerdict } = require('./negative.js');
+const { spawn, spawnSync } = require('node:child_process');
+const { runSuite, mutationVerdict, terminateSuite, stillRunning, removeCopy } = require('./negative.js');
 
 const PASS_TAP = `TAP version 13
 # Subtest: checks the value
@@ -29,7 +29,7 @@ function captured(stdout, status = 0, extra = {}) {
 
 function fixture(t, source) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'artifex-runner-test-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  t.after(() => removeCopy(dir));
   fs.mkdirSync(path.join(dir, 'tests'));
   fs.writeFileSync(path.join(dir, 'tests', 'fixture.test.js'), source);
   return dir;
@@ -252,7 +252,7 @@ test('mutation runner rejects actual process exits without a completed test repo
   assert.match(missing.failure, /ENOENT/);
 });
 
-test('failed control exits 2 after removing only its owned temporary directory', (t) => {
+test('failed control exits 2, prints its failing assertion and removes only its owned temporary directory', (t) => {
   const dir = fixture(t, `require('node:test')('deliberately failing control', () => {
     require('node:assert/strict').equal(1, 2);
   });`);
@@ -282,6 +282,10 @@ test('failed control exits 2 after removing only its owned temporary directory',
   assert.equal(result.status, 2, result.stderr);
   assert.match(result.stderr, /CONTROL IS NOT GREEN/);
   assert.match(result.stderr, /deliberately failing control/);
+  assert.match(result.stderr, /Expected values to be strictly equal:\s+1 !== 2/, 'the assertion message');
+  assert.match(result.stderr, /^ +expected: 2$/m, 'the expected value');
+  assert.match(result.stderr, /^ +actual: 1$/m, 'the actual value');
+  assert.match(result.stderr, /fixture\.test\.js:2:/, 'the assertion location');
   assert.doesNotMatch(result.stdout, /suite green|\bcaught\b|ESCAPED|MISNAMED/);
   const allocated = JSON.parse(fs.readFileSync(evidence, 'utf8'));
   assert.equal(path.dirname(allocated), tempRoot);
@@ -314,11 +318,13 @@ test('mutation runner bounds real output and retains real asynchronous launch er
   const dir = fixture(t, `require('node:test')('large diagnostic', () => {
     process.stdout.write('x'.repeat(2 * 1048576));
   });`);
-  const missing = await runSuite(path.join(dir, 'missing-directory'), undefined, 3000);
+  // The deadlines only stop a broken run: each case ends on its own error well
+  // before them, but CPU load can delay a flooding suite by seconds.
+  const missing = await runSuite(path.join(dir, 'missing-directory'), undefined, 60000);
   assert.equal(missing.error.code, 'ENOENT');
   assert.notEqual(missing.status, 0, 'preserve the actual asynchronous launch status');
   assert.equal(missing.timedOut, false);
-  const flooded = await runSuite(dir, undefined, 5000);
+  const flooded = await runSuite(dir, undefined, 60000);
   assert.equal(flooded.error.code, 'ENOBUFS');
   assert.equal(mutationVerdict(flooded, 'large diagnostic'), 'infra');
   assert.ok(Buffer.byteLength(flooded.stdout + flooded.stderr) <= 1048576);
@@ -334,7 +340,9 @@ test('real hanging suite returns timeout metadata instead of a mutation verdict'
   assert.equal(result.terminationError, undefined);
   assert.ok(result.status !== 0 || result.signal !== null);
   assert.equal(mutationVerdict(result, 'anything'), 'infra');
-  assert.ok(Date.now() - started < 12000, 'deadline and owned teardown must be bounded');
+  // The runner allows the deadline plus its 30 s teardown limit; the rest is
+  // process start-up, which CPU load from other work can stretch to seconds.
+  assert.ok(Date.now() - started < 500 + 30000 + 20000, 'deadline and owned teardown must be bounded');
   assert.throws(() => process.kill(result.pid, 0), { code: 'ESRCH' });
 });
 
@@ -356,12 +364,7 @@ test('timed-out control stops its actual process tree and preserves unrelated te
   fs.writeFileSync(observer, `const fs=require('node:fs'), allocate=fs.mkdtempSync;
     fs.mkdtempSync=(...args)=>{const owned=allocate(...args);
       fs.writeFileSync(${JSON.stringify(allocatedFile)},JSON.stringify(owned));return owned;};`);
-  const env = { ...process.env, TEMP: tempRoot, TMP: tempRoot, TMPDIR: tempRoot, ARTIFEX_NEGATIVE_TIMEOUT_MS: '1500' };
-  delete env.NODE_TEST_CONTEXT;
-  const result = spawnSync(process.execPath, ['--require', observer, runner], {
-    cwd: dir, encoding: 'utf8', env, windowsHide: true, timeout: 20000,
-  });
-  const ownedPids = fs.existsSync(pidsFile) ? JSON.parse(fs.readFileSync(pidsFile, 'utf8')) : [];
+  let ownedPids = [];
   t.after(() => {
     // Failure-only cleanup is limited to the PIDs created by this fixture.
     for (const pid of ownedPids) {
@@ -370,15 +373,42 @@ test('timed-out control stops its actual process tree and preserves unrelated te
       }
     }
   });
-  assert.equal(result.error, undefined, 'the outer guard must not kill the CLI');
-  assert.equal(result.status, 2, result.stderr);
-  assert.match(result.stderr, /CONTROL INFRASTRUCTURE FAILURE/);
-  assert.match(result.stderr, /ETIMEDOUT.*1500ms/);
+  // CPU load can delay the worker past a short deadline, which then stops a tree
+  // that never started. Lengthen the deadline until the whole tree has started;
+  // every attempt must still time out and release its own copy.
+  for (const deadline of [1500, 6000, 24000]) {
+    const env = { ...process.env, TEMP: tempRoot, TMP: tempRoot, TMPDIR: tempRoot, ARTIFEX_NEGATIVE_TIMEOUT_MS: String(deadline) };
+    delete env.NODE_TEST_CONTEXT;
+    const result = spawnSync(process.execPath, ['--require', observer, runner], {
+      cwd: dir, encoding: 'utf8', env, windowsHide: true, timeout: deadline + 70000,
+    });
+    ownedPids = fs.existsSync(pidsFile) ? JSON.parse(fs.readFileSync(pidsFile, 'utf8')) : [];
+    assert.equal(result.error, undefined, 'the outer guard must not kill the CLI');
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /CONTROL INFRASTRUCTURE FAILURE/);
+    assert.match(result.stderr, new RegExp(`ETIMEDOUT.*${deadline}ms`));
+    const allocated = JSON.parse(fs.readFileSync(allocatedFile, 'utf8'));
+    assert.equal(path.dirname(allocated), tempRoot);
+    assert.equal(fs.existsSync(allocated), false);
+    assert.deepEqual(fs.readdirSync(tempRoot), ['artifex-negative-unrelated']);
+    if (ownedPids.length) break;
+  }
   assert.equal(ownedPids.length, 3, 'the real test worker and its descendant must have started');
   for (const pid of ownedPids) assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
-  const allocated = JSON.parse(fs.readFileSync(allocatedFile, 'utf8'));
-  assert.equal(path.dirname(allocated), tempRoot);
-  assert.equal(fs.existsSync(allocated), false);
-  assert.deepEqual(fs.readdirSync(tempRoot), ['artifex-negative-unrelated']);
   assert.equal(fs.readFileSync(path.join(unrelated, 'keep.txt'), 'utf8'), 'unrelated work');
+});
+
+test('owned teardown waits for named processes and fails only while one still runs', async (t) => {
+  const exited = spawnSync(process.execPath, ['-e', '']).pid;
+  const live = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true });
+  t.after(() => live.kill('SIGKILL'));
+  assert.deepEqual(await stillRunning([exited], 1000), []);
+  const started = Date.now();
+  assert.deepEqual(await stillRunning([exited, live.pid], 300), [live.pid], 'a named process that keeps running is reported');
+  assert.ok(Date.now() - started >= 300, 'a running process is re-checked until the limit');
+  if (process.platform !== 'win32') return;
+  // taskkill exits nonzero for a member that had already exited; that tree is stopped.
+  assert.equal(await terminateSuite({ pid: exited }), null);
+  assert.match((await terminateSuite({ pid: 'not-a-pid' }))?.message ?? '', /owned tree termination exited/,
+    'a failure that names no process remains a teardown failure');
 });

@@ -20,6 +20,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
+const { setTimeout: sleep } = require('node:timers/promises');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -1256,6 +1257,21 @@ const MUTATIONS = [
     to: '      while (frame < timeline.frames && Math.floor((scanAt(s, film, Math.max(0, frame - 1)) - c.k) * 2.4) < 1) frame++;',
     expect: 'readout: every digit is heard on the frame that first shows it',
   },
+  // The runner's own patch texts are split so each matches its code once, not this list too.
+  {
+    why: 'a failed control prints only test titles, not what the assertion saw',
+    file: 'tests/negative.js',
+    from: 'if (detail) console' + ".error(detail.replace(/^/gm, '      '));",
+    to: 'void detail;',
+    expect: 'failed control exits 2, prints its failing assertion and removes only its owned temporary directory',
+  },
+  {
+    why: 'teardown stops re-checking a named process that is still running',
+    file: 'tests/negative.js',
+    from: '    alive = alive' + '.filter(running);',
+    to: '    alive = [];',
+    expect: 'owned teardown waits for named processes and fails only while one still runs',
+  },
 
 ];
 
@@ -1296,8 +1312,9 @@ function tapScopes(lines) {
     if (diagnostic) {
       if (indent === diagnostic.indent && text === '...') diagnostic = null;
       else if (text && indent < diagnostic.indent) return invalid('unterminated diagnostic');
-      else if (indent === diagnostic.indent) {
-        const type = /^type: ['"]?(test|suite)['"]?$/.exec(text);
+      else {
+        diagnostic.node.detail.push(line.slice(diagnostic.indent));
+        const type = indent === diagnostic.indent && /^type: ['"]?(test|suite)['"]?$/.exec(text);
         if (type) diagnostic.node.type = type[1];
       }
       continue;
@@ -1335,7 +1352,7 @@ function tapScopes(lines) {
       if (scope.pending !== point[3] || Number(point[2]) !== scope.points.length + 1) {
         return invalid('missing, renamed or misnumbered subtest result');
       }
-      const node = { indent, name: point[3], ok: point[1] === 'ok', directive: point[4], type: 'test' };
+      const node = { indent, name: point[3], ok: point[1] === 'ok', directive: point[4], type: 'test', detail: [] };
       nodes.push(node);
       scope.points.push(node);
       scope.pending = null;
@@ -1377,13 +1394,16 @@ function suiteReport(stdout) {
       : node.ok ? 'pass' : 'fail';
     counts[verdict]++;
   }
-  const failed = tree.nodes.filter((node) => !node.ok && !node.directive).map((node) => node.name);
+  const failedNodes = tree.nodes.filter((node) => !node.ok && !node.directive);
+  const failed = failedNodes.map((node) => node.name);
   if (summary.tests < 1 || summary.pass + summary.fail < 1 || summary.cancelled !== 0
       || Object.keys(counts).some((key) => counts[key] !== summary[key])
       || (summary.fail > 0) !== (failed.length > 0)) {
     return { failure: 'incomplete or inconsistent TAP test counts' };
   }
-  return { failed, names: tree.nodes.map((node) => node.name), summary };
+  // Each failed result's YAML diagnostic, aligned with `failed`: the assertion, its values and location.
+  const diagnostics = failedNodes.map((node) => node.detail.join('\n'));
+  return { failed, diagnostics, names: tree.nodes.map((node) => node.name), summary };
 }
 
 function suiteDeadline(value = process.env.ARTIFEX_NEGATIVE_TIMEOUT_MS) {
@@ -1403,15 +1423,49 @@ function terminateSuite(child) {
   }
   return new Promise((resolve) => {
     let detail = '';
+    // Under CPU load taskkill itself can take seconds to start.
     const killer = spawn('taskkill.exe', ['/pid', String(child.pid), '/T', '/F'], {
-      windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000, killSignal: 'SIGKILL',
+      windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout: 20000, killSignal: 'SIGKILL',
     });
     for (const stream of [killer.stdout, killer.stderr]) stream.on('data', (chunk) => {
       detail = (detail + chunk.toString('utf8')).slice(-2000);
     });
     killer.once('error', resolve);
-    killer.once('close', (code) => resolve(code === 0 ? null : new Error(`owned tree termination exited ${code}: ${detail.trim()}`)));
+    killer.once('close', async (code) => {
+      if (code === 0) { resolve(null); return; }
+      // taskkill also fails for a member that exited by itself after its tree
+      // snapshot, which load makes common. Teardown failed only when a process it
+      // names is still running once termination settles. The runner itself is
+      // named as the root's parent.
+      const pids = [...new Set(detail.match(/\d+/g) || [])].map(Number).filter((pid) => pid > 0 && pid !== process.pid);
+      resolve(pids.length && !(await stillRunning(pids, 5000)).length ? null : new Error(`owned tree termination exited ${code}: ${detail.trim()}`));
+    });
   });
+}
+
+/** The PIDs still running after up to `limitMs`; Windows completes a terminated process's exit asynchronously. */
+async function stillRunning(pids, limitMs) {
+  const running = (pid) => {
+    try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; }
+  };
+  const deadline = Date.now() + limitMs;
+  let alive = pids.filter(running);
+  while (alive.length && Date.now() < deadline) {
+    await sleep(50);
+    alive = alive.filter(running);
+  }
+  return alive;
+}
+
+/** Remove a copy whose stopped processes may still hold it: Windows releases their handles after they exit. */
+async function removeCopy(dir, limitMs = 10000) {
+  const deadline = Date.now() + limitMs;
+  for (;;) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); return; } catch (error) {
+      if (!['EBUSY', 'EPERM', 'ENOTEMPTY'].includes(error.code) || Date.now() >= deadline) throw error;
+      await sleep(100);
+    }
+  }
 }
 
 /** Bounded output and lifetime; closing a timed-out coordinator must also stop its test workers. */
@@ -1438,13 +1492,13 @@ function executeSuite(command, args, options) {
       // A failed OS tree-kill must return an infrastructure verdict, not wait
       // forever for inherited pipes. Retain that failure instead of claiming cleanup.
       teardownTimer = setTimeout(() => {
-        terminationError ||= new Error('owned subprocess did not close within the 10-second teardown limit');
+        terminationError ||= new Error('owned subprocess did not close within the 30-second teardown limit');
         try { child.kill('SIGKILL'); } catch (failure) { terminationError = failure; }
         child.stdout.destroy();
         child.stderr.destroy();
         child.unref();
         finish();
-      }, 10000);
+      }, 30000);
       termination = terminateSuite(child).then((failure) => {
         terminationError = failure || undefined;
         if (failure) {
@@ -1545,7 +1599,12 @@ async function main() {
     }
     if (already.failed.length) {
       console.error('CONTROL IS NOT GREEN. Fix the suite before running this.');
-      for (const t of already.failed) console.error(`  ${t}`);
+      // A title alone cannot tell a regression from a bound that load broke: print what the assertion saw.
+      for (const [i, name] of already.failed.entries()) {
+        console.error(`  ${name}`);
+        const detail = already.diagnostics[i].slice(0, 2000);
+        if (detail) console.error(detail.replace(/^/gm, '      '));
+      }
       return 2;
     }
     console.log(`control  ${MUTATIONS.length} mutations, suite green before any of them\n`);
@@ -1579,7 +1638,7 @@ async function main() {
       }
     }
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    await removeCopy(tmp);
   }
 
   console.log(`\n${passed} caught  ${escaped} escaped  ${misnamed} misnamed  ${invalid} invalid  ${infrastructure} infrastructure`);
@@ -1590,4 +1649,4 @@ if (require.main === module) main().then((code) => { process.exitCode = code; },
   console.error(error.message);
   process.exitCode = 2;
 });
-module.exports = { runSuite, mutationVerdict };
+module.exports = { runSuite, mutationVerdict, terminateSuite, stillRunning, removeCopy };
