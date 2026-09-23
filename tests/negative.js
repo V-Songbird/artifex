@@ -1300,6 +1300,20 @@ const MUTATIONS = [
     expect: 'the MP4 film is refused by name without an encoder, and a still offers none',
   },
   {
+    why: 'the WebM export hands the recorder its alpha plane, and Edge scales that film on another path',
+    file: 'tools/build-page.js',
+    from: "    var f = new VideoFrame(off, { timestamp: Math.round((i * 1000000) / hz), alpha: 'discard' });",
+    to: '    var f = new VideoFrame(off, { timestamp: Math.round((i * 1000000) / hz) });',
+    expect: 'the WebM export records frames without alpha and saves the film with its length',
+  },
+  {
+    why: 'the WebM export saves the film as recorded, so a player shows it as 0.001 s long',
+    file: 'tools/build-page.js',
+    from: "  var blob = new Blob([webmWithDuration(bytes, heads.length / hz)], { type: 'video/webm' });",
+    to: "  var blob = new Blob([bytes], { type: 'video/webm' });",
+    expect: 'the WebM export records frames without alpha and saves the film with its length',
+  },
+  {
     why: 'the page offers the WebM recorder where the MP4 film encodes',
     file: 'tools/build-page.js',
     from: "      document.getElementById('webm').hidden = format !== 'webm';",

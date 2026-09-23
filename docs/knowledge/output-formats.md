@@ -102,11 +102,21 @@ The exporter walks the piece's frame grid and paces frames at its declared rate,
 
 `MediaRecorder` writes a live WebM. In installed Edge its Segment has an unknown size and its Info Duration is one TimecodeScale unit, so a player reports 0.001 s and cannot seek. Once the recorded file passes its checks, the exporter writes the film's length, `frames / hz`, over that Duration in the file's own units. A file with no Duration gets one at the end of Info, and Info and a Segment of known size grow by its eleven bytes. Every other byte is the recorder's. Edge's recorder writes no SeekHead, so no stored position has to move. In installed Edge 153, a recorded 144-frame film at 24 Hz reported 0.001 s and a seek to its middle frame stopped at 2.25 s; with the Duration written it reported 6 s and seeks to its first, middle and last frames each showed the frame asked for.
 
+The exporter hands the recorder each frame without its alpha plane (`alpha: 'discard'`), so translucent pixels arrive composited over black, as in the MP4. The film carries no Colour element, and its decoded colours show no range, matrix or transfer error. Measured in installed Edge 153 against the drawn frames:
+
+| Film | Chart of flat patches | Settle, middle frame |
+| --- | --- | --- |
+| WebM without alpha | every patch within 1 level; whole frame 33.2 dB | 39.4 dB full size, 41.6 dB at 240 pixels wide |
+| MP4 | every patch within 1 level; whole frame 33.2 dB | 39.4 dB full size, 41.6 dB at 240 pixels wide |
+| WebM keeping alpha | every patch within 4 levels; whole frame 47.1 dB | 39.1 dB full size, 30.6 dB at 240 pixels wide |
+
+A film that keeps its alpha plane decodes the chart's patch edges more closely at full size, but Edge scales it on another path, so a player showing it at another size loses up to 11 dB. A half-transparent red patch over a cleared canvas decodes as 127, 0, 1 in the WebM and 127, 0, 0 in the MP4. The first keyframe is the least faithful frame: settle's paper, drawn as 248, 246, 241, decodes as 246, 246, 239 there.
+
 A timeline with one frame still requires exactly one recorded frame, but has no spacing interval to validate. Its report uses zero for the gap statistics and `1 / hz` seconds for the frame's declared interval. This reported duration does not independently measure playback duration in a video player.
 
 `window.__artifex.video()` returns the export report and blob without saving a file, whichever film the page offers. The page's video button downloads that result. A still has no video timeline and cannot use this exporter.
 
-The Node page tests cover both offers with stand-in encoders. `npm run browser` exercises only the MP4 offer, because installed Edge encodes H.264. A completed build or Node suite does not verify the browser's encoder, download behavior, or how the saved video looks. Validate those in the target browser using the saved file.
+The Node page tests cover both offers with stand-in encoders, and the WebM export's frames and saved duration with a stand-in recorder. `npm run browser` exercises only the MP4 offer, because installed Edge encodes H.264. A completed build or Node suite does not verify the browser's encoder, download behavior, or how the saved video looks. Validate those in the target browser using the saved file.
 
 ## Inspection and reproducibility
 
