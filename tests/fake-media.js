@@ -67,12 +67,13 @@ function opusHead({ channels = 2, preSkip = 312, rate = 48000, gain = 0, family 
 }
 
 /**
- * VideoEncoder, VideoFrame, AudioEncoder and AudioData stand-ins. Each encoded
- * frame is four bytes naming its index; `supported` decides which configs are
- * accepted, `colorSpace` is what the encoder reports, `aac` and `opus` whether
- * each encodes, `describe` whether the audio encoder describes its stream,
- * `failAt` a frame index whose encode reports an error, and `stall` an encoder
- * whose queue never drains.
+ * VideoEncoder, VideoFrame, AudioEncoder and AudioData stand-ins. A frame keeps
+ * the pixel data and colour space it was built with; each encoded frame is four
+ * bytes naming its index. `supported` decides which configs are accepted,
+ * `colorSpace` is what the video encoder reports (full-range sRGB unless
+ * given), `aac` and `opus` whether each encodes, `describe` whether the audio
+ * encoder describes its stream, `failAt` a frame index whose encode reports an
+ * error, and `stall` an encoder whose queue never drains.
  */
 function fakeCodecs({ supported = () => true, colorSpace, aac = true, opus = true, describe = true, failAt = -1, stall = false } = {}) {
   const log = { frames: [], audioFrames: 0 };
@@ -82,8 +83,10 @@ function fakeCodecs({ supported = () => true, colorSpace, aac = true, opus = tru
   const chunk = (type, timestamp, data) => ({ type, timestamp, byteLength: data.length, copyTo: (dest) => dest.set(data) });
 
   class VideoFrame {
-    constructor(source, init) {
-      Object.assign(this, { timestamp: init.timestamp, duration: init.duration, closed: false });
+    constructor(data, init) {
+      Object.assign(this, {
+        data, format: init.format, colorSpace: init.colorSpace, timestamp: init.timestamp, duration: init.duration, closed: false,
+      });
       log.frames.push(this);
     }
 
