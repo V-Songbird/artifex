@@ -285,6 +285,13 @@ const MUTATIONS = [
     expect: 'drift: every stroke is finished on the last frame',
   },
   {
+    why: 'the taper reaches nothing before the path ends, so the tip runs ahead of the body',
+    file: 'examples/drift.js',
+    from: '        const taper = Math.sin(Math.PI * Math.min(1 - 1 / (n - 1), u * 1.05)) ** 0.7;',
+    to: '        const taper = Math.sin(Math.PI * Math.min(1, u * 1.05)) ** 0.7;',
+    expect: "drift: a stroke's body reaches its tip on every frame",
+  },
+  {
     why: 'the subdivision is uniform, so every cell gets the same attention',
     file: 'examples/partition.js',
     from: 'const keep = d < maxDepth && w > 15 && h > 15 && (want * 0.95 + grain * 0.32) > 0.44;',

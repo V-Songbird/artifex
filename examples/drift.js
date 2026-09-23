@@ -169,8 +169,10 @@ module.exports = {
         const u = k / (n - 1);
         // The taper is the stroke's own shape: fat where the pen pressed, thin
         // at both ends. It is NOT a function of the playhead, so a dab looks the
-        // same the moment it lands and for the rest of the piece.
-        const taper = Math.sin(Math.PI * Math.min(1, u * 1.05)) ** 0.7;
+        // same the moment it lands and for the rest of the piece. Near the end it
+        // holds the width of one step from the end instead of falling to nothing,
+        // so the body reaches every point the tip does.
+        const taper = Math.sin(Math.PI * Math.min(1 - 1 / (n - 1), u * 1.05)) ** 0.7;
 
         // MATERIAL: how the medium behaves. Per dab, addressed by (stroke, dab),
         // so the texture belongs to the MARK. A global grain pass over the
