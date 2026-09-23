@@ -932,17 +932,7 @@ test('settle: the soundtrack follows the system frame by frame, and comes to res
   const listen = async (seed, params) => {
     const solved = solve(p, seed, params);
     const audio = fakeAudio();
-    // Record every connection, so each voice can be followed to the speakers.
-    class Wired extends audio.Context {}
-    for (const m of ['createOscillator', 'createGain', 'createBiquadFilter', 'createStereoPanner']) {
-      Wired.prototype[m] = function () {
-        const node = audio.Context.prototype[m].call(this);
-        node.to = [];
-        node.connect = (target) => { node.to.push(target); return target; };
-        return node;
-      };
-    }
-    await renderSound(p, solved, { OfflineAudioContext: Wired });
+    await renderSound(p, solved, { OfflineAudioContext: audio.Context });
     const ctx = audio.record.contexts[0];
     const voices = audio.record.oscillators;   // voice i is node i's, in creation order
     const routes = voices.map((v) => {
@@ -954,6 +944,8 @@ test('settle: the soundtrack follows the system frame by frame, and comes to res
       }
       return route;
     });
+    assert.equal(new Set(routes.flat()).size, audio.record.nodes.length + 1,
+      'every node the soundtrack makes lies on a voice\'s way to the speakers');
     const shared = routes[0].filter((n) => routes.every((route) => route.includes(n)));
     const s = solved.state;
     const N = s.nodes.length;
@@ -1054,6 +1046,85 @@ test('settle: the soundtrack follows the system frame by frame, and comes to res
   rises(moves.map(([, v, c]) => [v, c]), 'cutoff', true);
   const cutoffs = moves.map(([, , c]) => c);
   assert.ok(Math.max(...cutoffs) > 4 * Math.min(...cutoffs), 'and the brightness moves with it');
+});
+
+test('a soundtrack of seeded noise renders in the audio fake, and its record reaches every node', async () => {
+  // The runtime skill says noise comes from the seed: a buffer filled from
+  // rng(seed) and played by a buffer source. A piece that does that, through a
+  // delay line with feedback, a convolver and a compressor, has to render in
+  // these tests, and the fake's record has to follow every node it made, through
+  // a connection to a param as well, to the speakers.
+  const { renderSound } = require('../core/render.js');
+  const { fakeAudio } = require('./fake-media.js');
+  const { rng } = require('../core/rand.js');
+  const noise = (ctx, R, seconds, name) => {
+    const buffer = ctx.createBuffer(1, Math.round(seconds * ctx.sampleRate), ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = R(name, 'sample', i) * 2 - 1;
+    return buffer;
+  };
+  const p = validate({
+    name: 'hiss', size: { w: 10, h: 10 }, time: { duration: 2, hz: 12 }, draw() {},
+    sound(ctx, s, timeline) {
+      const R = rng(s.seed);
+      const hiss = ctx.createBufferSource();
+      hiss.buffer = noise(ctx, R, 0.5, 'hiss');
+      hiss.loop = true;
+      const band = ctx.createBiquadFilter();
+      band.type = 'bandpass';
+      const wobble = ctx.createOscillator();
+      const depth = ctx.createGain();
+      depth.gain.value = 300;
+      const echo = ctx.createDelay(1);
+      echo.delayTime.setValueAtTime(0.25, 0);
+      const back = ctx.createGain();
+      back.gain.value = 0.4;
+      const room = ctx.createConvolver();
+      room.buffer = noise(ctx, R, 0.1, 'room');
+      const glue = ctx.createDynamicsCompressor();
+      wobble.connect(depth);
+      depth.connect(band.frequency);
+      hiss.connect(band);
+      band.connect(echo);
+      echo.connect(back);
+      back.connect(echo);
+      band.connect(glue);
+      echo.connect(room);
+      room.connect(glue);
+      glue.connect(ctx.destination);
+      hiss.start(0);
+      hiss.stop(timeline.duration);
+      wobble.start(0);
+    },
+  });
+  const listen = async (seed) => {
+    const audio = fakeAudio();
+    await renderSound(p, solve(p, seed), { OfflineAudioContext: audio.Context });
+    return audio.record;
+  };
+  const a = await listen(3);
+  const [hiss, band, wobble, depth, echo, back, room, glue] = a.nodes;
+  assert.deepEqual(a.nodes.map((n) => n.kind),
+    ['bufferSource', 'biquadFilter', 'oscillator', 'gain', 'delay', 'gain', 'convolver', 'dynamicsCompressor'],
+    'every node the soundtrack made, in the order it made them');
+  const speakers = a.contexts[0].destination;
+  const reaches = (n, seen = new Set()) => {
+    if (n === speakers) return true;
+    if (seen.has(n)) return false;
+    seen.add(n);
+    return n.to.some((t) => reaches(t.kind === 'param' ? t.owner : t, seen));
+  };
+  for (const n of a.nodes) assert.ok(reaches(n), `the ${n.kind} never reaches the speakers`);
+  assert.deepEqual(depth.to, [band.frequency], 'a connection to a param names the param');
+  assert.ok(echo.to.includes(back) && back.to.includes(echo), 'and a feedback loop is recorded both ways');
+  assert.deepEqual([hiss.at, hiss.end, hiss.loop, wobble.at], [0, 2, true, 0], 'sources keep when they play');
+  assert.deepEqual([echo.delayTime.events, room.buffer.duration, glue.threshold.value], [[['setValueAtTime', 0.25, 0]], 0.1, -24]);
+
+  // The noise is the seed's: the same seed fills the same samples, another seed others.
+  const samples = (record) => Array.from(record.nodes[0].buffer.getChannelData(0));
+  assert.ok(samples(a).every((v) => v >= -1 && v <= 1) && new Set(samples(a)).size > 1000, 'the buffer holds noise');
+  assert.deepEqual(samples(await listen(3)), samples(a), 'one seed, one noise');
+  assert.notDeepEqual(samples(await listen(4)), samples(a), 'another seed, other noise');
 });
 
 /** Which stored settle snapshot each drawn frame shows, read back from the node

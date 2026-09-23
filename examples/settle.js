@@ -109,7 +109,7 @@ const WALL = 0.9;            // how hard the containment ellipse pushes back
 // Fruchterman-Reingold does. Measured, the ceiling turned out to be binding on
 // every frame of the timeline for seven of nine seeds -- the node with the
 // largest step moved exactly 2x the ceiling (two substeps, each clamped) from
-// frame 10 to frame 144. The motion on screen was the cooling curve, and the
+// frame 10 to the end. The motion on screen was the cooling curve, and the
 // physics was only choosing directions. So damping rises instead: the fluid the
 // graph is suspended in thickens, and the ceiling is left in as a safety against
 // the first few steps, where a random start puts 500-unit springs in the sheet.

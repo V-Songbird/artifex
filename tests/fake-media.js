@@ -4,41 +4,73 @@
 // a film export scheduled, and WHEN, without a browser. They record; they do
 // not make sound or pictures.
 
-/** An OfflineAudioContext that records the graph built on it. */
+/**
+ * An OfflineAudioContext that records the graph built on it. Every node a
+ * soundtrack creates lands in `record.nodes`, in creation order, with its
+ * `kind` and parameters; each `connect` adds its target to the node's `to`. A
+ * connection to an AudioParam lists the param, whose `owner` is its node, so a
+ * test can follow any node to `destination` from the record alone.
+ */
 function fakeAudio() {
-  const record = { contexts: [], oscillators: [] };
+  const record = {
+    contexts: [], nodes: [],
+    get oscillators() { return this.nodes.filter((n) => n.kind === 'oscillator'); },
+  };
   const param = (value) => {
-    const p = { value, events: [] };
+    const p = { kind: 'param', value, events: [], owner: null };
     for (const m of ['setValueAtTime', 'linearRampToValueAtTime', 'exponentialRampToValueAtTime',
       'setTargetAtTime', 'setValueCurveAtTime', 'cancelScheduledValues']) {
       p[m] = (...args) => { p.events.push([m, ...args]); return p; };
     }
     return p;
   };
-  const node = (fields) => Object.assign({ connect: (target) => target, disconnect() {} }, fields);
+  const node = (kind, fields) => {
+    const n = Object.assign({ kind, to: [] }, fields);
+    for (const v of Object.values(fields)) if (v && v.kind === 'param') v.owner = n;
+    // connect returns its target node, as Web Audio does, and nothing for a param.
+    n.connect = (target) => { n.to.push(target); return target.kind === 'param' ? undefined : target; };
+    n.disconnect = (target) => { n.to = target === undefined ? [] : n.to.filter((t) => t !== target); };
+    if (kind !== 'destination') record.nodes.push(n);
+    return n;
+  };
+  // A scheduled source records when it starts and stops, and where it starts reading.
+  const source = (kind, fields) => {
+    const n = node(kind, { at: null, end: null, ...fields });
+    n.start = (at = 0, offset = 0, duration = undefined) => { Object.assign(n, { at, offset, duration }); };
+    n.stop = (at = 0) => { n.end = at; };
+    return n;
+  };
   const buffer = (channels, length, sampleRate) => {
     const data = Array.from({ length: channels }, () => new Float32Array(length));
     return { numberOfChannels: channels, length, sampleRate, duration: length / sampleRate, getChannelData: (c) => data[c] };
   };
   class Context {
     constructor(channels, length, sampleRate) {
-      Object.assign(this, { channels, length, sampleRate, currentTime: 0, destination: node({}) });
+      Object.assign(this, { channels, length, sampleRate, currentTime: 0, destination: node('destination', {}) });
       record.contexts.push(this);
     }
 
-    createOscillator() {
-      const o = node({ type: 'sine', frequency: param(440), detune: param(0), at: null, end: null });
-      o.start = (at = 0) => { o.at = at; };
-      o.stop = (at = 0) => { o.end = at; };
-      record.oscillators.push(o);
-      return o;
+    createOscillator() { return source('oscillator', { type: 'sine', frequency: param(440), detune: param(0) }); }
+
+    createBufferSource() {
+      return source('bufferSource', { buffer: null, loop: false, loopStart: 0, loopEnd: 0, playbackRate: param(1), detune: param(0) });
     }
 
-    createGain() { return node({ gain: param(1) }); }
+    createGain() { return node('gain', { gain: param(1) }); }
 
-    createBiquadFilter() { return node({ type: 'lowpass', frequency: param(350), Q: param(1), gain: param(0) }); }
+    createBiquadFilter() { return node('biquadFilter', { type: 'lowpass', frequency: param(350), Q: param(1), gain: param(0), detune: param(0) }); }
 
-    createStereoPanner() { return node({ pan: param(0) }); }
+    createStereoPanner() { return node('stereoPanner', { pan: param(0) }); }
+
+    createDelay(maxDelayTime = 1) { return node('delay', { maxDelayTime, delayTime: param(0) }); }
+
+    createConvolver() { return node('convolver', { buffer: null, normalize: true }); }
+
+    createDynamicsCompressor() {
+      return node('dynamicsCompressor', {
+        threshold: param(-24), knee: param(30), ratio: param(12), attack: param(0.003), release: param(0.25), reduction: 0,
+      });
+    }
 
     createBuffer(channels, length, sampleRate) { return buffer(channels, length, sampleRate); }
 
