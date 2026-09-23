@@ -443,8 +443,13 @@ solved trajectory.
   generator makes the soundtrack a function of when it was rendered.
 - **Leave headroom.** Sum the gains you schedule; `npm run browser` reports the
   decoded peak of every film it exports.
-- Web Audio rendering can differ between engines, so byte-identical sound is
-  scoped to one browser, like pixels.
+- **Sound repeats to its last bits, not bytewise.** Installed Edge adds up a
+  node's three or more inputs in an order that changes from render to render,
+  so two renders of `readout` or `settle` in one page differ in most samples,
+  by at most 9e-8. A graph whose nodes take at most two inputs, such as voices
+  summed two at a time, renders identically. Compare soundtracks by
+  measurement: `npm run browser` requires two renders to agree within 1e-6.
+  Engines differ further, like pixels.
 
 ## Art-direction preset: focal composition
 

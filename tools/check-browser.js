@@ -180,8 +180,9 @@ function filmNames() {
 // WebM fallback, then exports the named example's film through the page's own
 // MP4 path and decodes it: the first, middle and last frames must each look at
 // least as much like their own drawn frame as like a neighbour, and a declared
-// soundtrack must decode to exactly the film's length. A held frame draws the
-// same picture as its neighbour, so that tie is a match. The export's own
+// soundtrack must decode to exactly the film's length, and two more renders of
+// it must agree within 1e-6. A held frame draws the same picture as its
+// neighbour, so that tie is a match. The export's own
 // verdict is read from the file. The replay manifest is found in the film's
 // bytes by this check's own scan, not readMp4, so a fault shared by the writer
 // and the reader cannot pass: it must be the page's recipe with the frames drawn
@@ -262,7 +263,17 @@ async function inspectFilm(name) {
     if (Math.abs(decoded.length - want) > 1) {
       throw new Error(name + ': the soundtrack decodes to ' + decoded.length + ' samples against the film\'s ' + want);
     }
-    sound = { seconds: +decoded.duration.toFixed(3), samples: decoded.length, peak: +peak.toFixed(3) };
+    // Edge adds up a node's three or more inputs in an order that changes
+    // between renders, so two renders agree only to the last bits of a float.
+    const [a, b] = [await api.render.renderSound(p, solved, { OfflineAudioContext }),
+      await api.render.renderSound(p, solved, { OfflineAudioContext })];
+    let apart = 0;
+    for (let c = 0; c < a.numberOfChannels; c++) {
+      const x = a.getChannelData(c), y = b.getChannelData(c);
+      for (let i = 0; i < x.length; i++) apart = Math.max(apart, Math.abs(x[i] - y[i]));
+    }
+    if (!(apart <= 1e-6)) throw new Error(name + ': two renders of the soundtrack differ by ' + apart);
+    sound = { seconds: +decoded.duration.toFixed(3), samples: decoded.length, peak: +peak.toFixed(3), renderDiff: apart };
   }
   return {
     name, offered, codec: report.codec, frames: report.frames, seconds: report.seconds, width: report.width, height: report.height,
