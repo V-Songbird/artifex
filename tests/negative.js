@@ -1268,8 +1268,8 @@ const MUTATIONS = [
   {
     why: 'a failed control prints only test titles, not what the assertion saw',
     file: 'tests/negative.js',
-    from: 'if (detail) console' + ".error(detail.replace(/^/gm, '      '));",
-    to: 'void detail;',
+    from: "    const detail = (result.diagnostics?.[i] || '')" + '.slice(0, 2000);',
+    to: "    const detail = '';",
     expect: 'failed control exits 2, prints its failing assertion and removes only its owned temporary directory',
   },
   {
@@ -1306,6 +1306,20 @@ const MUTATIONS = [
     from: '    const reach = s.nodes.map((nd) => WIDTH * Math.max(0, Math.log2((top + 1 - nd.deg) / 2)) / Math.log2(top / 2));',
     to: '    const reach = s.nodes.map(() => WIDTH);',
     expect: 'settle: the soundtrack follows the system frame by frame, and comes to rest with it',
+  },
+  {
+    why: 'a report-only retry replaces the infrastructure verdict it was meant to explain',
+    file: 'tests/negative.js',
+    from: '    verdict, ' + 'retry,',
+    to: '    verdict: retry, retry,',
+    expect: 'an infrastructure result keeps its streams and stays infrastructure after one report-only retry',
+  },
+  {
+    why: 'an infrastructure result keeps no TAP',
+    file: 'tests/negative.js',
+    from: "  fs.writeFileSync(path.join(dir, 'stdout.tap')" + ', result.stdout);',
+    to: '',
+    expect: 'an infrastructure result keeps its streams and stays infrastructure after one report-only retry',
   },
 
 ];
@@ -1614,9 +1628,56 @@ function infrastructureDetail(result) {
   return `${failure}${stderr ? `\n                stderr: ${stderr.slice(-2000)}` : ''}`;
 }
 
+/** Each failed title with what its assertion saw, capped so one large value cannot flood the report. */
+function failedDetail(result, indent) {
+  return (result.failed || []).map((name, i) => {
+    const detail = (result.diagnostics?.[i] || '').slice(0, 2000);
+    return `${indent}${name}${detail ? `\n${detail.replace(/^/gm, `${indent}    `)}` : ''}`;
+  }).join('\n');
+}
+
+/** Keep an infrastructure result's TAP, stderr and process metadata where removing the copies leaves them. */
+function keepEvidence(dir, result) {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'stdout.tap'), result.stdout);
+  fs.writeFileSync(path.join(dir, 'stderr.txt'), result.stderr);
+  const { status, signal, error, terminationError, failure, timeoutMs, timedOut, pid } = result;
+  fs.writeFileSync(path.join(dir, 'result.json'), `${JSON.stringify({
+    status, signal, failure, timeoutMs, timedOut, pid,
+    error: error && { code: error.code, message: error.message }, terminationError: terminationError?.message,
+  }, null, 2)}\n`);
+  return dir;
+}
+
+/**
+ * Judge one mutated copy. An infrastructure result keeps its evidence and runs
+ * once more for the report only: the verdict stays infrastructure whatever the
+ * second attempt shows, so load can never turn a failure into a pass.
+ */
+async function judgeMutation(dir, m, evidence, timeoutMs, execute = executeSuite) {
+  const result = await runSuite(dir, execute, timeoutMs);
+  const verdict = mutationVerdict(result, m.expect);
+  if (verdict === 'caught') return { verdict, text: `ok              ${m.why}` };
+  if (verdict === 'escaped') return { verdict, text: `ESCAPED         ${m.why}\n                nothing failed; no check covers this` };
+  if (verdict === 'misnamed') {
+    return { verdict, text: `MISNAMED        ${m.why}\n                expected: ${m.expect}\n                failed:\n${failedDetail(result, '                  ')}` };
+  }
+  const kept = keepEvidence(evidence, result);
+  const again = await runSuite(dir, execute, timeoutMs);
+  const retry = mutationVerdict(again, m.expect);
+  const keptAgain = retry === 'infra' ? `, kept in ${keepEvidence(`${evidence}-retry`, again)}` : '';
+  const failed = failedDetail(result, '                ');
+  return {
+    verdict, retry,
+    text: `INFRA           ${m.why}\n                ${infrastructureDetail(result)}${failed ? `\n${failed}` : ''}`
+      + `\n                kept in ${kept}\n                retry, report only: ${retry}${keptAgain}`,
+  };
+}
+
 async function main() {
   const timeoutMs = suiteDeadline();
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'artifex-negative-'));
+  const evidence = path.join(tmp, 'infrastructure');
   let escaped = 0, misnamed = 0, passed = 0, invalid = 0, infrastructure = 0;
 
   try {
@@ -1629,17 +1690,13 @@ async function main() {
     console.log(`copy     ${per} MB per mutation, ${((bytes * (MUTATIONS.length + 1)) / 1048576).toFixed(0)} MB in all`);
     const already = await runSuite(control, undefined, timeoutMs);
     if (already.failure) {
-      console.error(`CONTROL INFRASTRUCTURE FAILURE.\n  ${infrastructureDetail(already)}`);
+      console.error(`CONTROL INFRASTRUCTURE FAILURE.\n  ${infrastructureDetail(already)}`
+        + `\n  kept in ${keepEvidence(path.join(evidence, 'control'), already)}`);
       return 2;
     }
     if (already.failed.length) {
-      console.error('CONTROL IS NOT GREEN. Fix the suite before running this.');
       // A title alone cannot tell a regression from a bound that load broke: print what the assertion saw.
-      for (const [i, name] of already.failed.entries()) {
-        console.error(`  ${name}`);
-        const detail = already.diagnostics[i].slice(0, 2000);
-        if (detail) console.error(detail.replace(/^/gm, '      '));
-      }
+      console.error(`CONTROL IS NOT GREEN. Fix the suite before running this.\n${failedDetail(already, '  ')}`);
       return 2;
     }
     console.log(`control  ${MUTATIONS.length} mutations, suite green before any of them\n`);
@@ -1655,28 +1712,21 @@ async function main() {
       if (hits > 1) { console.log(`MUTATION AMBIG  ${m.why}\n                patch text matches ${hits} times in ${m.file}`); invalid++; continue; }
 
       fs.writeFileSync(file, src.replace(m.from, m.to));
-      const result = await runSuite(dir, undefined, timeoutMs);
-      const verdict = mutationVerdict(result, m.expect);
-
-      if (verdict === 'infra') {
-        console.log(`INFRA           ${m.why}\n                ${infrastructureDetail(result)}`);
-        infrastructure++;
-      } else if (verdict === 'escaped') {
-        console.log(`ESCAPED         ${m.why}\n                nothing failed; no check covers this`);
-        escaped++;
-      } else if (verdict === 'misnamed') {
-        console.log(`MISNAMED        ${m.why}\n                expected: ${m.expect}\n                failed:   ${result.failed.join(' | ')}`);
-        misnamed++;
-      } else {
-        console.log(`ok              ${m.why}`);
-        passed++;
-      }
+      const { verdict, text } = await judgeMutation(dir, m, path.join(evidence, `m${i}`), timeoutMs);
+      console.log(text);
+      if (verdict === 'infra') infrastructure++;
+      else if (verdict === 'escaped') escaped++;
+      else if (verdict === 'misnamed') misnamed++;
+      else passed++;
     }
   } finally {
-    await removeCopy(tmp);
+    // Remove every copy; the run's temp root stays only to hold kept evidence.
+    for (const entry of fs.readdirSync(tmp)) if (entry !== 'infrastructure') await removeCopy(path.join(tmp, entry));
+    if (!fs.existsSync(evidence)) await removeCopy(tmp);
   }
 
   console.log(`\n${passed} caught  ${escaped} escaped  ${misnamed} misnamed  ${invalid} invalid  ${infrastructure} infrastructure`);
+  if (fs.existsSync(evidence)) console.log(`infrastructure evidence kept in ${evidence}`);
   return escaped + misnamed + invalid + infrastructure === 0 ? 0 : 1;
 }
 
@@ -1684,4 +1734,4 @@ if (require.main === module) main().then((code) => { process.exitCode = code; },
   console.error(error.message);
   process.exitCode = 2;
 });
-module.exports = { runSuite, mutationVerdict, terminateSuite, stillRunning, removeCopy };
+module.exports = { runSuite, mutationVerdict, terminateSuite, stillRunning, removeCopy, judgeMutation };

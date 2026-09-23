@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
-const { runSuite, mutationVerdict, terminateSuite, stillRunning, removeCopy } = require('./negative.js');
+const { runSuite, mutationVerdict, terminateSuite, stillRunning, removeCopy, judgeMutation } = require('./negative.js');
 
 const PASS_TAP = `TAP version 13
 # Subtest: checks the value
@@ -346,7 +346,7 @@ test('real hanging suite returns timeout metadata instead of a mutation verdict'
   assert.throws(() => process.kill(result.pid, 0), { code: 'ESRCH' });
 });
 
-test('timed-out control stops its actual process tree and preserves unrelated temporary work', (t) => {
+test('timed-out control stops its actual process tree, keeps its evidence and preserves unrelated temporary work', (t) => {
   const dir = fixture(t, '');
   const pidsFile = path.join(dir, 'owned-pids.json');
   fs.writeFileSync(path.join(dir, 'tests', 'fixture.test.js'), `const {spawn}=require('node:child_process');
@@ -389,7 +389,14 @@ test('timed-out control stops its actual process tree and preserves unrelated te
     assert.match(result.stderr, new RegExp(`ETIMEDOUT.*${deadline}ms`));
     const allocated = JSON.parse(fs.readFileSync(allocatedFile, 'utf8'));
     assert.equal(path.dirname(allocated), tempRoot);
-    assert.equal(fs.existsSync(allocated), false);
+    // The copy is gone; the run's temp root stays only for the evidence the report names.
+    const kept = path.join(allocated, 'infrastructure', 'control');
+    assert.ok(result.stderr.includes(`kept in ${kept}`), result.stderr);
+    assert.deepEqual(fs.readdirSync(allocated), ['infrastructure']);
+    assert.deepEqual(fs.readdirSync(kept).sort(), ['result.json', 'stderr.txt', 'stdout.tap']);
+    const saved = JSON.parse(fs.readFileSync(path.join(kept, 'result.json'), 'utf8'));
+    assert.deepEqual([saved.timedOut, saved.error.code, saved.timeoutMs], [true, 'ETIMEDOUT', deadline]);
+    fs.rmSync(allocated, { recursive: true, force: true });
     assert.deepEqual(fs.readdirSync(tempRoot), ['artifex-negative-unrelated']);
     if (ownedPids.length) break;
   }
@@ -411,4 +418,51 @@ test('owned teardown waits for named processes and fails only while one still ru
   assert.equal(await terminateSuite({ pid: exited }), null);
   assert.match((await terminateSuite({ pid: 'not-a-pid' }))?.message ?? '', /owned tree termination exited/,
     'a failure that names no process remains a teardown failure');
+});
+
+test('an infrastructure result keeps its streams and stays infrastructure after one report-only retry', async (t) => {
+  const root = fixture(t, '');
+  const evidence = path.join(root, 'infrastructure', 'm7');
+  const truncated = PASS_TAP.slice(0, PASS_TAP.indexOf('1..1'));
+  const m = { why: 'a mutation', expect: 'checks the value' };
+  for (const [second, retry] of [[{ stdout: FAIL_TAP }, 'caught'], [{ stdout: truncated }, 'infra']]) {
+    fs.rmSync(path.join(root, 'infrastructure'), { recursive: true, force: true });
+    const attempts = [{ stdout: truncated, stderr: 'first diagnostic' }, { stderr: 'second diagnostic', ...second }];
+    let calls = 0;
+    const judged = await judgeMutation('.', m, evidence, 1000, () => ({ status: 1, signal: null, ...attempts[calls++] }));
+    assert.equal(calls, 2, 'one retry, no more');
+    assert.equal(judged.verdict, 'infra', 'the retry never replaces the verdict');
+    assert.equal(judged.retry, retry);
+    assert.equal(fs.readFileSync(path.join(evidence, 'stdout.tap'), 'utf8'), truncated);
+    assert.equal(fs.readFileSync(path.join(evidence, 'stderr.txt'), 'utf8'), 'first diagnostic');
+    const saved = JSON.parse(fs.readFileSync(path.join(evidence, 'result.json'), 'utf8'));
+    assert.deepEqual([saved.status, saved.timeoutMs], [1, 1000]);
+    assert.match(saved.failure, /incomplete/);
+    assert.ok(judged.text.includes(`kept in ${evidence}\n`), judged.text);
+    assert.ok(judged.text.includes(`retry, report only: ${retry}`), judged.text);
+    assert.equal(fs.existsSync(`${evidence}-retry`), retry === 'infra', 'only an infrastructure retry keeps its streams');
+    if (retry === 'infra') {
+      assert.ok(judged.text.includes(`kept in ${evidence}-retry`), judged.text);
+      assert.equal(fs.readFileSync(path.join(`${evidence}-retry`, 'stderr.txt'), 'utf8'), 'second diagnostic');
+    }
+  }
+  let calls = 0;
+  const caught = await judgeMutation('.', m, path.join(root, 'caught'), 1000, () => {
+    calls++;
+    return { stdout: FAIL_TAP, stderr: '', status: 1, signal: null };
+  });
+  assert.deepEqual([caught.verdict, calls, fs.existsSync(path.join(root, 'caught'))], ['caught', 1, false]);
+});
+
+test('misnamed and infrastructure results print what the unintended failure saw', async (t) => {
+  const diagnosed = FAIL_TAP.replace('not ok 1 - checks the value\n',
+    "not ok 1 - checks the value\n  ---\n  duration_ms: 1\n  error: 'unintended failure'\n  ...\n");
+  const execute = () => ({ stdout: diagnosed, stderr: '', status: 1, signal: null });
+  const misnamed = await judgeMutation('.', { why: 'w', expect: 'another assertion' }, 'unused', 1000, execute);
+  assert.equal(misnamed.verdict, 'misnamed');
+  assert.match(misnamed.text, /expected: another assertion\n +failed:\n +checks the value\n +duration_ms: 1\n +error: 'unintended failure'/);
+  const evidence = path.join(fixture(t, ''), 'ambiguous');
+  const ambiguous = await judgeMutation('.', { why: 'w', expect: 'checks\\nvalue' }, evidence, 1000, execute);
+  assert.equal(ambiguous.verdict, 'infra');
+  assert.match(ambiguous.text, /checks the value\n +duration_ms: 1\n +error: 'unintended failure'/);
 });
