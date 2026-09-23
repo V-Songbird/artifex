@@ -1,6 +1,6 @@
 # Artifex
 
-Artifex is a JavaScript library and agent skill for making art from code. A piece can produce a page, PNG, an MP4 film with its own soundtrack (WebM where a browser cannot encode H.264), or supported SVG.
+Artifex is a JavaScript library and agent skill for making art from code. A piece can produce a page, PNG, an MP4 film with its own soundtrack (WebM where a browser cannot encode that film), or supported SVG.
 
 Use it for seeded compositions, animation with sound, and vector artwork. It does not generate images from text or judge artistic quality.
 

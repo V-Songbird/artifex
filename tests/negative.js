@@ -1183,7 +1183,7 @@ const MUTATIONS = [
   {
     why: 'the WebM fallback never appears, so a browser without H.264 offers no film it can make',
     file: 'tools/build-page.js',
-    from: "    var format = !p.time ? null : encodes ? 'mp4' : 'webm';",
+    from: "    var format = !p.time ? null : answers[0] && answers[1] ? 'mp4' : 'webm';",
     to: "    var format = !p.time ? null : 'mp4';",
     expect: 'where H.264 cannot encode the film, the page offers the WebM recorder instead',
   },
@@ -1193,6 +1193,20 @@ const MUTATIONS = [
     from: '    if (p === current) {',
     to: '    if (true) {',
     expect: 'an unanswered H.264 question blocks nothing, and a late answer stays with its piece',
+  },
+  {
+    why: 'a piece with sound is offered the MP4 film where no soundtrack codec encodes, so it gets no film at all',
+    file: 'tools/build-page.js',
+    from: '    voiced = aacOrOpus;',
+    to: '    voiced = true;',
+    expect: 'where neither AAC nor Opus encodes, a piece with sound is offered a silent WebM',
+  },
+  {
+    why: 'a piece without sound loses its MP4 film because the browser encodes no soundtrack codec',
+    file: 'tools/build-page.js',
+    from: '  if (p.time && p.sound) {',
+    to: '  if (p.time) {',
+    expect: 'a piece without sound keeps the MP4 film where neither AAC nor Opus encodes',
   },
   {
     why: 'the readout melody follows the seed instead of the data',
