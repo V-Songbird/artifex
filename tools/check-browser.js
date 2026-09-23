@@ -174,7 +174,9 @@ function inspectPiece(name) {
 // like their own drawn frame as like a neighbour, and a declared soundtrack must
 // decode to sound as long as the film. A held frame draws the same picture as
 // its neighbour, so that tie is a match. The export's own verdict is read from
-// the file.
+// the file. The replay manifest is found in the film's bytes by this check's own
+// scan, not readMp4, so a fault shared by the writer and the reader cannot pass:
+// it must be the page's recipe with the frames drawn in place of the playhead.
 async function inspectFilm() {
   const api = window.__artifex;
   const pieces = api.names.map((name) => [name, api.piece.validate(api.examples[name])]);
@@ -191,6 +193,19 @@ async function inspectFilm() {
   const report = await api.film();
   const solved = api.piece.solve(p, api.read().seed);
   const heads = api.render.playheads(p);
+  const bytes = new Uint8Array(await report.blob.arrayBuffer());
+  // 'uuid', then the manifest box's extended type.
+  const mark = [0x75, 0x75, 0x69, 0x64, 0x8b, 0x2f, 0xd9, 0x66, 0xe9, 0x23, 0x43, 0x30, 0xa2, 0x8e, 0x6d, 0x82, 0x58, 0x7d, 0x1e, 0xc9];
+  let at = -1;
+  for (let i = 4; at < 0 && i + mark.length <= bytes.length; i++) if (mark.every((v, k) => bytes[i + k] === v)) at = i - 4;
+  if (at < 0) throw new Error(name + ': the film carries no replay manifest');
+  const manifest = JSON.parse(String.fromCharCode(...bytes.subarray(at + 24, at + new DataView(bytes.buffer).getUint32(at))));
+  const recipe = api.manifest();
+  delete recipe.t;
+  recipe.film = { frames: heads.length, hz: p.time.hz, loop: !!p.time.loop, scale: 1 };
+  if (JSON.stringify(manifest) !== JSON.stringify(recipe)) {
+    throw new Error(name + ': the film names ' + JSON.stringify(manifest) + ' and the page ' + JSON.stringify(recipe));
+  }
   const video = document.createElement('video');
   video.muted = true;
   video.src = URL.createObjectURL(report.blob);
@@ -243,7 +258,7 @@ async function inspectFilm() {
   }
   return {
     name, offered, codec: report.codec, frames: report.frames, seconds: report.seconds, width: report.width, height: report.height,
-    bytes: report.bytes, colour: report.colour, realtime: report.realtime, decoded: frames, sound,
+    bytes: report.bytes, colour: report.colour, realtime: report.realtime, decoded: frames, sound, manifest,
   };
 }
 
@@ -387,7 +402,8 @@ async function main() {
   const report = await runBrowserCheck(options);
   console.log(JSON.stringify(report, null, 2));
   const film = report.film
-    ? '; film ' + report.film.name + ' offered as MP4 with WebM hidden, exported ' + report.film.frames + ' frames' + (report.film.sound ? ' with sound' : '') + ' and decoded'
+    ? '; film ' + report.film.name + ' offered as MP4 with WebM hidden, exported ' + report.film.frames + ' frames' + (report.film.sound ? ' with sound' : '')
+      + ', decoded, and named the page\'s recipe'
     : '; no example has a timeline, so no film was exported';
   console.log('browser: ' + report.pieces.length + ' examples passed' + film + '; owned browser, server and profile cleaned up');
 }

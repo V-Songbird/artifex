@@ -18,6 +18,10 @@
 // limited-range NV12 before the encoder sees it, the `colr` box says so, and
 // the check refuses a film tagged anything else.
 //
+// THE FILM NAMES ITS RECIPE. Like an SVG, every film carries the replay manifest
+// it was drawn from, so a saved file can say which piece, seed and parameters
+// made it. The check refuses a film whose manifest is missing or differs.
+//
 // The browser's encoders arrive through `env`, so the whole path runs in Node
 // against controlled stand-ins. Nothing here knows what a piece depicts.
 
@@ -65,6 +69,20 @@ function runs(values) {
 // primaries, transfer and matrix (1, 1, 1), full range off.
 const BT709 = { primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false };
 const COLR = box('colr', ascii('nclx'), u16(1), u16(1), u16(1), u8(0));
+
+// The replay manifest rides in moov/udta, the user-data box, as a `uuid` box,
+// the ISO/IEC 14496-12 form for a private box type:
+//
+//   u32 size | 'uuid' | the 16-byte extended type below | manifest JSON
+//
+// The JSON runs to the end of the box, size - 24 bytes. It is ASCII only: any
+// other character is written as a \uXXXX escape, so the bytes are also UTF-8
+// and no TextEncoder is needed. Readers skip a box type they do not know, so
+// players ignore it. It sits in moov, outside the media data, so adding it moves
+// the chunk offsets and no sample byte.
+const MANIFEST_TYPE = Uint8Array.of(0x8b, 0x2f, 0xd9, 0x66, 0xe9, 0x23, 0x43, 0x30, 0xa2, 0x8e, 0x6d, 0x82, 0x58, 0x7d, 0x1e, 0xc9);
+const manifestBox = (m) => box('uuid', MANIFEST_TYPE,
+  ascii(JSON.stringify(m).replace(/[^\x00-\x7f]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'))));
 
 function sampleTable(t) {
   const parts = [full('stsd', 0, 0, u32(1), t.entry)];
@@ -161,10 +179,10 @@ function opusSamples(packet) {
  * `video`: { width, height, timescale, delta, samples: [{ data, key, offset }],
  * avcC }, tagged limited-range BT.709. `audio`, optional, is AAC as { sampleRate,
  * channels, samples: [Uint8Array], asc, bitrate }, or Opus as { codec: 'opus',
- * head, samples }, where `head` is the encoder's OpusHead. Every sample is its
- * own chunk.
+ * head, samples }, where `head` is the encoder's OpusHead. `manifest`, optional,
+ * is the replay manifest, written to moov/udta. Every sample is its own chunk.
  */
-function muxMp4({ video, audio = null }) {
+function muxMp4({ video, audio = null, manifest = null }) {
   const tracks = [{
     id: 1, handler: 'vide', timescale: video.timescale, duration: video.samples.length * video.delta,
     width: video.width, height: video.height,
@@ -186,10 +204,11 @@ function muxMp4({ video, audio = null }) {
   const ftyp = box('ftyp', ascii('isom'), u32(512), ascii('isom'), ascii('iso2'), ascii('avc1'), ascii('mp41'));
   const movieScale = 1000;
   const span = Math.max(...tracks.map((t) => Math.round((t.duration * movieScale) / t.timescale)));
+  const udta = manifest ? box('udta', manifestBox(manifest)) : new Uint8Array(0);
   const moov = () => box('moov',
     full('mvhd', 0, 0, u32(0), u32(0), u32(movieScale), u32(span), u32(0x00010000), u16(0x0100), new Uint8Array(10),
       IDENTITY, new Uint8Array(24), u32(tracks.length + 1)),
-    ...tracks.map((t) => track(t, movieScale)));
+    ...tracks.map((t) => track(t, movieScale)), udta);
   // Chunk offsets depend on moov's size and moov's size never depends on the
   // offsets (stco entries are fixed width), so measure once and fill in.
   for (const t of tracks) t.chunks = t.samples.map(() => 0);
@@ -203,18 +222,18 @@ function muxMp4({ video, audio = null }) {
 // Reading it back
 // ---------------------------------------------------------------------------
 
-const CONTAINERS = new Set(['moov', 'trak', 'mdia', 'minf', 'stbl', 'dinf', 'edts']);
+const CONTAINERS = new Set(['moov', 'trak', 'mdia', 'minf', 'stbl', 'dinf', 'edts', 'udta']);
 
 /**
- * What an MP4 file actually holds: each track's codec, size, timescale, sample
- * durations, keyframes, colour tag, an Opus track's `dOps`, and whether every
- * sample lies inside the media data. Reads any file with 32-bit chunk offsets,
- * not only this writer's.
+ * What an MP4 file actually holds: its replay manifest, or null, and each
+ * track's codec, size, timescale, sample durations, keyframes, colour tag, an
+ * Opus track's `dOps`, and whether every sample lies inside the media data.
+ * Reads any file with 32-bit chunk offsets, not only this writer's.
  */
 function readMp4(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const type = (at) => String.fromCharCode(bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]);
-  const out = { brand: null, seconds: 0, media: null, tracks: [] };
+  const out = { brand: null, seconds: 0, media: null, manifest: null, tracks: [] };
   let t = null;
   const walk = (start, end) => {
     for (let at = start; at + 8 <= end;) {
@@ -227,6 +246,11 @@ function readMp4(bytes) {
       const b = at + head;
       if (kind === 'ftyp') out.brand = type(b);
       else if (kind === 'mdat') out.media = [b, at + size];
+      else if (kind === 'uuid' && size - head >= 16 && MANIFEST_TYPE.every((v, i) => bytes[b + i] === v)) {
+        let json = '';
+        for (let i = b + 16; i < at + size; i++) json += String.fromCharCode(bytes[i]);
+        try { out.manifest = JSON.parse(json); } catch (e) { throw new Error(`film: the replay manifest at byte ${at} is not JSON: ${e.message}`); }
+      }
       else if (kind === 'mvhd') {
         const v1 = bytes[b] === 1;
         const scale = view.getUint32(b + (v1 ? 20 : 12));
@@ -280,6 +304,7 @@ function readMp4(bytes) {
   return {
     brand: out.brand,
     seconds: out.seconds,
+    manifest: out.manifest,
     tracks: out.tracks.map((x) => {
       // Place every sample from its chunk and the chunk's run in stsc.
       let inside = !!out.media && x.sizes.length > 0;
@@ -306,8 +331,9 @@ function readMp4(bytes) {
 /**
  * Judge a film by what its file holds against the frame grid it was cut from.
  *
- * `expected`: { frames, hz, width, height, sound, sampleRate }. Throws naming the
- * first thing the file gets wrong; returns the report otherwise.
+ * `expected`: { frames, hz, width, height, sound, manifest }, where `manifest` is
+ * the one the export drew from. Throws naming the first thing the file gets
+ * wrong; returns the report otherwise.
  */
 function filmCheck(expected, file) {
   const video = file.tracks.filter((x) => x.kind === 'vide');
@@ -337,6 +363,13 @@ function filmCheck(expected, file) {
     throw new Error(`film: the file is tagged primaries ${primaries}, transfer ${transfer}, matrix ${matrix}, ${fullRange ? 'full' : 'limited'} range, `
       + 'and every film must be limited-range BT.709 (1, 1, 1). Nothing was saved.');
   }
+  if (!file.manifest) throw new Error('film: the file carries no replay manifest, so it cannot say what made it. Nothing was saved.');
+  const differs = Object.keys({ ...expected.manifest, ...file.manifest })
+    .find((k) => JSON.stringify(file.manifest[k]) !== JSON.stringify(expected.manifest[k]));
+  if (differs) {
+    throw new Error(`film: the file's manifest gives ${differs} ${JSON.stringify(file.manifest[differs])} `
+      + `where the export drew with ${JSON.stringify(expected.manifest[differs])}. Nothing was saved.`);
+  }
   const seconds = v.duration / v.timescale;
   let sound = null;
   if (expected.sound) {
@@ -355,7 +388,7 @@ function filmCheck(expected, file) {
   } else if (audio.length) {
     throw new Error('film: the piece declares no sound and the file holds a soundtrack. Nothing was saved.');
   }
-  return { frames: v.samples, seconds, width: v.width, height: v.height, keyframes: v.keys.length, colour: v.colour, sound };
+  return { frames: v.samples, seconds, width: v.width, height: v.height, keyframes: v.keys.length, colour: v.colour, sound, manifest: file.manifest };
 }
 
 // ---------------------------------------------------------------------------
@@ -615,8 +648,9 @@ async function encodeSound(env, buffer, bitrate) {
  * yields to the event loop while the encoder drains. `opt`: `scale`, `bitrate`, `audioBitrate`,
  * `keySeconds` and `onProgress(done, total)`.
  *
- * Resolves to { bytes, report }; the report is read from the finished file and
- * names the colour conversion that ran, `gpu` or `cpu`. `convertMs` includes
+ * Resolves to { bytes, report }; the report is read from the finished file,
+ * replay manifest included, and names the colour conversion that ran, `gpu` or
+ * `cpu`. `convertMs` includes
  * waiting for the browser to finish drawing each frame.
  */
 async function exportFilm(piece, solved, env, opt = {}) {
@@ -715,14 +749,19 @@ async function exportFilm(piece, solved, env, opt = {}) {
   // The timescale holds a whole number of ticks per frame, so no frame drifts.
   const timescale = Math.round(hz * 1000);
   const delta = Math.round(timescale / hz);
+  // The solve's recipe, with the frames drawn where an SVG names its playhead:
+  // how many, at what rate, whether the timeline loops, which decides each
+  // frame's playhead, and the scale, which some pieces draw finer detail for.
+  const manifest = { ...solved.manifest, film: { frames: heads.length, hz, loop: !!piece.time.loop, scale } };
   const bytes = muxMp4({
     video: {
       width, height, timescale, delta, avcC,
       samples: chunks.map((c, i) => ({ data: c.data, key: c.key, offset: Math.round((c.timestamp * timescale) / 1e6) - i * delta })),
     },
     audio: sound,
+    manifest,
   });
-  const report = filmCheck({ frames: heads.length, hz, width, height, sound: !!piece.sound }, readMp4(bytes));
+  const report = filmCheck({ frames: heads.length, hz, width, height, sound: !!piece.sound, manifest }, readMp4(bytes));
   const totalMs = now() - started;
   return {
     bytes,
