@@ -1127,6 +1127,39 @@ test('a soundtrack of seeded noise renders in the audio fake, and its record rea
   assert.notDeepEqual(samples(await listen(4)), samples(a), 'another seed, other noise');
 });
 
+test('every soundtrack builds the same graph each time it renders one solved state', async () => {
+  // A browser repeats the rendered samples only to their last bits, because it
+  // may add up a node's inputs in another order each time. Everything on the
+  // piece's side must repeat exactly: the nodes, their settings, every scheduled
+  // value and every connection.
+  const { renderSound } = require('../core/render.js');
+  const { fakeAudio } = require('./fake-media.js');
+  const graph = (record) => {
+    const where = (t) => (t.kind === 'destination' ? 'out'
+      : t.kind === 'param' ? `${record.nodes.indexOf(t.owner)}.${Object.keys(t.owner).find((k) => t.owner[k] === t)}`
+        : record.nodes.indexOf(t));
+    const field = ([k, v]) => [k, k === 'to' ? v.map(where)
+      : v && v.kind === 'param' ? { value: v.value, events: v.events }
+        : v && typeof v.getChannelData === 'function' ? Array.from({ length: v.numberOfChannels }, (_, c) => Array.from(v.getChannelData(c)))
+          : typeof v === 'function' ? 'fn' : v];
+    return record.nodes.map((n) => Object.fromEntries(Object.entries(n).map(field)));
+  };
+  const sounding = NAMES.filter((name) => validate(EXAMPLES[name]).sound);
+  assert.ok(sounding.length >= 2, `only ${sounding.join(', ')} declares sound`);
+  for (const name of sounding) {
+    const p = validate(EXAMPLES[name]);
+    const solved = solve(p, p.seed);
+    const renders = [];
+    for (let k = 0; k < 2; k++) {
+      const audio = fakeAudio();
+      await renderSound(p, solved, { OfflineAudioContext: audio.Context });
+      renders.push(graph(audio.record));
+    }
+    assert.ok(renders[0].length > 0, `${name} builds a graph`);
+    assert.ok(JSON.stringify(renders[1]) === JSON.stringify(renders[0]), `${name}: a second render of one solved state built another graph`);
+  }
+});
+
 /** Which stored settle snapshot each drawn frame shows, read back from the node
  *  discs it draws, or -1 where they match none. */
 function settleSnapshots(p, solved) {

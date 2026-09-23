@@ -1504,6 +1504,13 @@ const MUTATIONS = [
     expect: 'a soundtrack of seeded noise renders in the audio fake, and its record reaches every node',
   },
   {
+    why: 'the settle soundtrack counts each degree up as it reads it, so a second render plays another chord',
+    file: 'examples/settle.js',
+    from: '    const top = Math.max(...s.nodes.map((nd) => nd.deg));',
+    to: '    const top = Math.max(...s.nodes.map((nd) => nd.deg++));',
+    expect: 'every soundtrack builds the same graph each time it renders one solved state',
+  },
+  {
     why: 'the settle bass follows its node off-centre like every other voice',
     file: 'examples/settle.js',
     from: '    const reach = s.nodes.map((nd) => WIDTH * Math.max(0, Math.log2((top + 1 - nd.deg) / 2)) / Math.log2(top / 2));',
