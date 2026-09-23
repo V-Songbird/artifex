@@ -508,6 +508,20 @@ const MUTATIONS = [
     to: '      out.push(((uint(at, 2) << 16) >> 16) * scale / 1000000);',
     expect: 'a film is read from the blocks its FILE holds, by walking it rather than scanning it',
   },
+  {
+    why: 'a saved WebM states its length in milliseconds whatever unit its file declares',
+    file: 'tools/build-page.js',
+    from: '    const units = (seconds * 1e9) / scale;',
+    to: '    const units = seconds * 1000;',
+    expect: 'a recorded WebM is saved with its length, and every other byte as recorded',
+  },
+  {
+    why: 'an added Duration leaves Info its old size, so a reader stops short of it',
+    file: 'tools/build-page.js',
+    from: '    grow(e);',
+    to: '',
+    expect: 'a recorded WebM is saved with its length, and every other byte as recorded',
+  },
 
 
   // --- shared arithmetic --------------------------------------------------
