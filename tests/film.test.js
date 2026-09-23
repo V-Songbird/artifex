@@ -7,7 +7,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { validate, solve } = require('../core/piece.js');
+const { validate, solve, VERSION } = require('../core/piece.js');
 const { playheads } = require('../core/render.js');
 const { exportFilm, muxMp4, readMp4, filmCheck, avcCodecs, aacConfig, rgbaToNV12 } = require('../core/film.js');
 const { nullSurface } = require('../tools/bench.js');
@@ -19,8 +19,16 @@ const AVCC = Uint8Array.of(1, 0x64, 0, 0x1f, 0xff, 0xe1, 0, 0);
 /** `n` Opus packets of one 20 ms fullband CELT frame each. */
 const celt = (n) => Array.from({ length: n }, (_, i) => Uint8Array.of(0xfc, i & 255));
 
-function film({ frames = 48, delta = 1000, timescale = 24000, keys = [0, 24], audio = 94, opus = null, width = 64, height = 48 } = {}) {
+// A recipe to carry: a name with characters past Latin-1, and a parameter no
+// binary fraction holds exactly.
+const MANIFEST = {
+  artifex: '0.1.0', piece: 'señal ✳', seed: 3, size: { w: 64, h: 48 }, outputs: ['raster'], params: { reach: 0.1 },
+  film: { frames: 48, hz: 24, loop: false, scale: 1 },
+};
+
+function film({ frames = 48, delta = 1000, timescale = 24000, keys = [0, 24], audio = 94, opus = null, width = 64, height = 48, manifest = MANIFEST } = {}) {
   return muxMp4({
+    manifest,
     video: {
       width, height, timescale, delta, avcC: AVCC,
       samples: Array.from({ length: frames }, (_, i) => ({ data: Uint8Array.of(i, 1, 2, 3), key: keys.includes(i) })),
@@ -32,13 +40,20 @@ function film({ frames = 48, delta = 1000, timescale = 24000, keys = [0, 24], au
   });
 }
 
+/** Where every box of `type` starts, at its size field. */
+function boxesOf(bytes, type) {
+  const out = [];
+  for (let i = 4; i + 4 <= bytes.length; i++) if (String.fromCharCode(...bytes.subarray(i, i + 4)) === type) out.push(i - 4);
+  return out;
+}
+
 /** The bytes of the first box of `type`, from its size field to its end. */
 function boxBytes(bytes, type) {
-  const at = bytes.findIndex((_, i) => String.fromCharCode(...bytes.subarray(i, i + 4)) === type) - 4;
+  const at = boxesOf(bytes, type)[0];
   return [...bytes.subarray(at, at + new DataView(bytes.buffer, bytes.byteOffset).getUint32(at))];
 }
 
-const GRID = { frames: 48, hz: 24, width: 64, height: 48, sound: true };
+const GRID = { frames: 48, hz: 24, width: 64, height: 48, sound: true, manifest: MANIFEST };
 
 function env(options = {}) {
   const codecs = fakeCodecs(options);
@@ -145,6 +160,51 @@ test('every film is tagged limited-range BT.709, and the check refuses any other
   assert.match(tagged((v, b) => { b[at + 3] = 0x78; }), /no colour tag/);
 });
 
+test('a film carries its replay manifest in a user-data box, and no sample byte moves', () => {
+  const carried = film();
+  assert.deepEqual(readMp4(carried).manifest, MANIFEST);
+  // One uuid box: its size, 'uuid', the extended type, then the JSON in ASCII.
+  const uuid = boxBytes(carried, 'uuid');
+  assert.deepEqual(uuid.slice(8, 24), [0x8b, 0x2f, 0xd9, 0x66, 0xe9, 0x23, 0x43, 0x30, 0xa2, 0x8e, 0x6d, 0x82, 0x58, 0x7d, 0x1e, 0xc9]);
+  assert.ok(uuid.slice(24).every((b) => b < 0x80), 'ASCII only');
+  assert.ok(String.fromCharCode(...uuid.slice(24)).startsWith('{"artifex":"0.1.0","piece":"se\\u00f1al \\u2733","seed":3,'));
+  const size = (at) => new DataView(carried.buffer).getUint32(at);
+  const [moov] = boxesOf(carried, 'moov'), [udta] = boxesOf(carried, 'udta'), [mdat] = boxesOf(carried, 'mdat');
+  assert.ok(udta > moov && udta + size(udta) <= moov + size(moov) && udta < mdat, 'in moov, before the media data');
+
+  // The same film without it: the media data is the same bytes, and every
+  // chunk offset moves by the box, so every sample is read from them.
+  const plain = film({ manifest: null });
+  assert.equal(readMp4(plain).manifest, null);
+  const grow = carried.length - plain.length;
+  assert.equal(grow, size(udta), 'the file grows by the user-data box alone');
+  const media = (b) => [...b.subarray(boxesOf(b, 'mdat')[0])];
+  assert.deepEqual(media(carried), media(plain));
+  const offsets = (b) => boxesOf(b, 'stco').map((at) => {
+    const v = new DataView(b.buffer);
+    return Array.from({ length: v.getUint32(at + 12) }, (_, i) => v.getUint32(at + 16 + i * 4));
+  });
+  assert.deepEqual(offsets(carried), offsets(plain).map((track) => track.map((o) => o + grow)));
+});
+
+test('the film check refuses a film whose manifest is missing or differs from the one the export drew with', () => {
+  assert.deepEqual(filmCheck(GRID, readMp4(film())).manifest, MANIFEST, 'the report carries the manifest the file holds');
+  assert.match(grab(() => filmCheck(GRID, readMp4(film({ manifest: null })))).message, /carries no replay manifest/);
+  const drew = (change) => grab(() => filmCheck({ ...GRID, manifest: { ...MANIFEST, ...change } }, readMp4(film()))).message;
+  assert.match(drew({ seed: 4 }), /manifest gives seed 3 where the export drew with 4\./);
+  assert.match(drew({ params: { reach: 0.2 } }), /gives params \{"reach":0\.1\} where the export drew with \{"reach":0\.2\}/);
+  assert.match(drew({ film: { ...MANIFEST.film, loop: true } }), /gives film \{[^}]*"loop":false[^}]*\} where/);
+  assert.match(drew({ t: 0.5 }), /gives t undefined where the export drew with 0\.5/);
+
+  // Only this writer's extended type is a manifest, and a broken one is named.
+  const foreign = film();
+  foreign[boxesOf(foreign, 'uuid')[0] + 8] ^= 1;
+  assert.equal(readMp4(foreign).manifest, null, 'a uuid box of another type is not a manifest');
+  const broken = film();
+  broken[boxesOf(broken, 'uuid')[0] + 24] = 0x78;
+  assert.throws(() => readMp4(broken), /the replay manifest at byte \d+ is not JSON/);
+});
+
 test('drawn pixels become BT.709 limited-range NV12: luma per pixel, chroma per 2x2 block, translucency over black', () => {
   // A 2x2 block of one colour gives four equal luma samples and one chroma pair.
   const block = (rgba) => Uint8ClampedArray.from({ length: 16 }, (_, i) => rgba[i & 3]);
@@ -231,6 +291,24 @@ test('every drawn frame is encoded once, at its own timestamp, however slowly it
   assert.equal(report.keyframes, 1, 'one keyframe per two seconds');
   assert.ok(report.realtime < 1, 'a piece slower than real time is a slower export, not a shorter film');
   assert.equal(readMp4(bytes).tracks[0].samples, n);
+});
+
+test('an exported film names its piece, seed, parameters, frame grid and scale', async () => {
+  const reach = { reach: { value: 0.5, min: 0, max: 1, meaning: 'how far the bar reaches' } };
+  const draw = (g, s, t) => g.fillRect(0, 0, 64 * t * s.params.reach + 1, 48);
+  const want = (loop, scale) => ({
+    artifex: VERSION, piece: 'film-fixture', seed: 7, size: { w: 64, h: 48 }, outputs: ['raster'],
+    params: { reach: 0.25 }, film: { frames: 48, hz: 24, loop, scale },
+  });
+  const { p } = piece({ params: reach, draw });
+  const { bytes, report } = await exportFilm(p, solve(p, 7, { reach: 0.25 }), env().env);
+  assert.deepEqual(readMp4(bytes).manifest, want(false, 1));
+  assert.deepEqual(report.manifest, want(false, 1));
+  // A looping timeline puts frame i at i / 48 instead of i / 47, so the grid
+  // says which; a piece may draw finer detail at 2x, so the scale is named too.
+  const { p: loop } = piece({ params: reach, draw, time: { duration: 2, hz: 24, loop: true } });
+  const twice = await exportFilm(loop, solve(loop, 7, { reach: 0.25 }), env().env, { scale: 2 });
+  assert.deepEqual(readMp4(twice.bytes).manifest, want(true, 2));
 });
 
 test('every frame reaches the encoder as BT.709 limited-range NV12, whatever the encoder reports', async () => {
