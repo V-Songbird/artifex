@@ -880,8 +880,11 @@ async function exportVideo() {
     onData = null;
     return webmBlockTimes(new Uint8Array(await new Blob(chunks).arrayBuffer())).length;
   }
+  // Without its alpha plane, as the MP4 composites translucency over black. A
+  // film that keeps one is decoded and scaled on another path in Edge, and a
+  // player showing it at another size loses up to 11 dB against the drawing.
   async function encodeFrame(i) {
-    var f = new VideoFrame(off, { timestamp: Math.round((i * 1000000) / hz) });
+    var f = new VideoFrame(off, { timestamp: Math.round((i * 1000000) / hz), alpha: 'discard' });
     await writer.write(f);
     f.close();
   }

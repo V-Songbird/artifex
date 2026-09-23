@@ -33,7 +33,7 @@ function registry(module) {
   };
 }
 
-function openPage({ deferPng = false, videoFailure = null, codecs = null } = {}) {
+function openPage({ deferPng = false, videoFailure = null, codecs = null, media = null } = {}) {
   const elements = new Map(), downloads = [], frames = new Map();
   const pngCallbacks = [];
   const activity = { clears: 0, draws: 0 };
@@ -80,6 +80,7 @@ function openPage({ deferPng = false, videoFailure = null, codecs = null } = {})
       AudioEncoder: codecs.AudioEncoder, AudioData: codecs.AudioData, OfflineAudioContext: fakeAudio().Context,
     });
   }
+  if (media) Object.assign(sandbox, media);
   const script = html(bundle() + overrides).match(/<script>([\s\S]*)<\/script>/)[1];
   vm.runInNewContext(script, sandbox);
   const api = sandbox.window.__artifex;
@@ -277,6 +278,49 @@ test('a piece without sound keeps the MP4 film where neither AAC nor Opus encode
   neither.api.select('voiced');
   assert.equal(await neither.api.filmFormat(), 'webm');
   assert.match(neither.elements.get('videonote').textContent, /without sound, because this browser cannot encode the MP4 film/);
+});
+
+// The browser's recorder, played by stand-ins: every frame written becomes one
+// SimpleBlock at its place on the frame grid, in the live shape Edge writes -- a
+// Segment and a Cluster of unknown size, and a Duration of one unit.
+function recorderStandIns(hz) {
+  const inits = [];
+  let written = 0, sent = 0, clock = 0, opened = false;
+  const head = [0x1A, 0x45, 0xDF, 0xA3, 0x83, 0xA3, 0xA3, 0xA3, 0x18, 0x53, 0x80, 0x67, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0x15, 0x49, 0xA9, 0x66, 0x8E, 0x2A, 0xD7, 0xB1, 0x83, 0x0F, 0x42, 0x40, 0x44, 0x89, 0x84, 0x3F, 0x80, 0x00, 0x00,
+    0x1F, 0x43, 0xB6, 0x75, 0xFF, 0xE7, 0x81, 0x00];
+  class MediaRecorder {
+    start() {}
+    requestData() {
+      const bytes = opened ? [] : [...head];
+      opened = true;
+      for (; sent < written; sent++) { const t = Math.round((sent * 1000) / hz); bytes.push(0xA3, 0x85, 0x81, t >> 8, t & 255, 0x80, 0x00); }
+      this.ondataavailable({ data: new Blob([Uint8Array.from(bytes)]) });
+    }
+    stop() { this.requestData(); this.onstop(); }
+  }
+  const media = {
+    performance: { now: () => (clock += 20) },
+    MessageChannel: function () { const port1 = {}; this.port1 = port1; this.port2 = { postMessage() { Promise.resolve().then(() => port1.onmessage()); } }; },
+    MediaStreamTrackGenerator: function () { this.writable = { getWriter: () => ({ async write() { written++; }, async close() {} }) }; },
+    MediaStream: function () {},
+    MediaRecorder,
+    VideoFrame: function (source, init) { inits.push(init); this.close = () => {}; },
+  };
+  return { media, inits };
+}
+
+test('the WebM export records frames without alpha and saves the film with its length', async () => {
+  const { webmBlockTimes } = require('../tools/build-page.js');
+  const { media, inits } = recorderStandIns(4);
+  const { api } = openPage({ media });
+  api.setSeed(42);
+  const report = await api.video();
+  assert.equal(inits.length, 4);
+  assert.ok(inits.every((init) => init.alpha === 'discard'), 'translucency reaches the recorder over black, as in the MP4');
+  const saved = new Uint8Array(await report.blob.arrayBuffer());
+  assert.deepEqual(webmBlockTimes(saved), [0, 250, 500, 750]);
+  assert.equal(new DataView(saved.buffer).getFloat32(35), 1000, 'four frames at 4 Hz last 1000 units of 1 ms');
 });
 
 test('an unanswered H.264 question blocks nothing, and a late answer stays with its piece', async () => {
