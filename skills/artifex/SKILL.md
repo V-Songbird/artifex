@@ -193,6 +193,25 @@ piece and its helpers in the user's project rather than modifying the plugin's e
 Automated checks cover mechanical properties; composition also requires visual
 review. The sheet uses seeds 1 through N so an identified seed can be reproduced.
 
+After the review, name the default the piece fell back on, in visual terms:
+"every stroke leaves the same point and sweeps the same way, like a bouquet",
+not "it looks generic". Add it to the piece's [looks to leave out](#ask-which-looks-to-leave-out),
+then re-roll or revise before you show the next draft.
+
+## Ask which looks to leave out
+
+Before the first draft, ask the owner which looks this piece must not have, and
+keep the answer with the piece, in the comment at the top of its source. Start
+the list with the defaults this skill already names, so the owner can strike or
+extend it:
+
+- one noise family at every scale ([focal composition](#art-direction-preset-focal-composition));
+- a grain pass over the finished frame instead of texture on each mark (same);
+- a line that fades up through `globalAlpha` instead of arriving (same);
+- a flow field around a focus that turns botanical ([traps](#traps)).
+
+The list belongs to the piece; the library forbids no style.
+
 ## Read an example before you write a piece
 
 **Open the one whose idiom is closest to what you are making, and none of them
