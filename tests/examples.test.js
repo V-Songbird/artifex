@@ -722,6 +722,44 @@ test('drift: every stroke is finished on the last frame', () => {
   }
 });
 
+test("drift: a stroke's body reaches its tip on every frame", () => {
+  // The tip is the pen, and it must sit on the stroke it is drawing. A taper
+  // that reaches nothing before the path ends leaves the tip travelling over
+  // points no dab will ever cover. On every frame, each point a stroke has
+  // passed, from its second to the pen's, carries a dab, and on the last frame
+  // the finished end stays a fraction of the stroke's widest dab.
+  const p = validate(EXAMPLES.drift);
+  const heads = playheads(p);
+  for (const seed of [p.seed, 5, 11]) {
+    const solved = solve(p, seed);
+    const { strokes } = solved.state;
+    const where = new Map();
+    strokes.forEach((st, s) => st.pts.forEach(([x, y], k) => where.set(`${x},${y}`, [s, k])));
+    heads.forEach((t, frame) => {
+      // The path points each stroke dabs on this frame, with their widest radius.
+      const laid = strokes.map(() => new Map());
+      drawFrame({
+        fillRect() {}, beginPath() {}, fill() {},
+        arc(x, y, r) {
+          const at = where.get(`${x},${y}`);
+          if (at) laid[at[0]].set(at[1], Math.max(r, laid[at[0]].get(at[1]) || 0));
+        },
+      }, p, solved, t);
+      laid.forEach((dabs, s) => {
+        const pen = Math.max(-1, ...dabs.keys());
+        for (let k = 1; k <= pen; k++) {
+          assert.ok(dabs.has(k), `seed ${seed}, frame ${frame}: stroke ${strokes[s].i} has no body at point ${k} of ${pen}`);
+        }
+        // A path the bounds cut short leaves the picture before it can taper.
+        if (frame === heads.length - 1 && strokes[s].pts.length >= 40) {
+          assert.ok(dabs.get(pen) < Math.max(...dabs.values()) / 3,
+            `seed ${seed}: stroke ${strokes[s].i} ends without a taper`);
+        }
+      });
+    });
+  }
+});
+
 test('specimen: every run of every glyph survives being drawn', () => {
   // THE CROSSBAR. A curvature-based resampler dropped a two-point straight run,
   // the T lost its crossbar and the E lost two of three bars, and the page read
