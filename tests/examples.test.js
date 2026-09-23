@@ -1096,6 +1096,52 @@ test('settle: frame k draws the snapshot stored for frame k, so each is drawn on
   }
 });
 
+test('settle: the seed moves where the graph starts, never what it connects', () => {
+  // The header's promise, and it can fail: at any seed the same edge table and
+  // degrees, and a different start, so a different trajectory.
+  const p = validate(EXAMPLES.settle);
+  // The edges as the first frame draws them: each is one line between two node
+  // centres, read back as the pair of nodes it joins.
+  const drawnEdges = (solved) => {
+    const s = solved.state;
+    const node = new Map(s.nodes.map((_, i) => [`${s.traj[i * 2]},${s.traj[i * 2 + 1]}`, i]));
+    const g = new Recorder();
+    const edges = [];
+    let line = [];
+    g.beginPath = () => { line = []; };
+    g.moveTo = (x, y) => { line.push(node.get(`${x},${y}`)); };
+    g.lineTo = (x, y) => { line.push(node.get(`${x},${y}`)); };
+    g.stroke = () => {
+      if (line.length === 2 && line.every((i) => i !== undefined)) edges.push(line.sort((a, b) => a - b).join('-'));
+    };
+    drawFrame(g, p, solved, 0);
+    return edges.sort();
+  };
+  const runs = [p.seed, 1, 2, 99999].map((seed) => {
+    const solved = solve(p, seed);
+    return { seed, s: solved.state, edges: drawnEdges(solved) };
+  });
+  const [a] = runs;
+  const N = a.s.nodes.length;
+  const degrees = a.s.nodes.map((nd) => nd.deg);
+  a.s.nodes.forEach((_, i) => assert.equal(a.edges.filter((e) => e.split('-').includes(String(i))).length, degrees[i],
+    `node ${i} is drawn with as many edges as its degree`));
+  for (const run of runs.slice(1)) {
+    assert.deepEqual(run.s.nodes.map((nd) => nd.deg), degrees, `seed ${run.seed} changed a node's degree`);
+    assert.deepEqual(run.edges, a.edges, `seed ${run.seed} changed what is connected to what`);
+  }
+  // Everything else is the seed's: under another seed every node starts
+  // somewhere else, and the graph comes to rest in another arrangement.
+  const start = (run, i) => [run.s.traj[i * 2], run.s.traj[i * 2 + 1]];
+  const rest = (run) => Array.from(run.s.traj.slice(run.s.traj.length - N * 2));
+  runs.forEach((x, j) => runs.slice(j + 1).forEach((y) => {
+    for (let i = 0; i < N; i++) {
+      assert.notDeepEqual(start(x, i), start(y, i), `node ${i} starts in one place at seeds ${x.seed} and ${y.seed}`);
+    }
+    assert.notDeepEqual(rest(x), rest(y), `seeds ${x.seed} and ${y.seed} settle into one arrangement`);
+  }));
+});
+
 test('contours: chaining collapses the segments into few pen-down paths', () => {
   // A plotter lifts between paths, and lifting is the slow, ugly part. Stated
   // as a RATIO the piece publishes, so it is measured rather than assumed.

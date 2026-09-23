@@ -1329,6 +1329,20 @@ const MUTATIONS = [
     expect: 'settle: frame k draws the snapshot stored for frame k, so each is drawn once',
   },
   {
+    why: 'the seed reaches settle\'s graph, so a re-roll counts a node\'s edges on another node',
+    file: 'examples/settle.js',
+    from: '      for (const [a, b] of EDGES) { s.nodes[a].deg++; s.nodes[b].deg++; }',
+    to: '      for (const [a, b] of EDGES) { s.nodes[(a + s.seed) % n].deg++; s.nodes[b].deg++; }',
+    expect: 'settle: the seed moves where the graph starts, never what it connects',
+  },
+  {
+    why: 'settle\'s start ignores the seed, so every re-roll springs from one scatter',
+    file: 'examples/settle.js',
+    from: '      const R = rng(s.seed);',
+    to: '      const R = (...key) => rng(key[0] === \'start\' ? 1 : s.seed)(...key);',
+    expect: 'settle: the seed moves where the graph starts, never what it connects',
+  },
+  {
     why: 'the settle bass follows its node off-centre like every other voice',
     file: 'examples/settle.js',
     from: '    const reach = s.nodes.map((nd) => WIDTH * Math.max(0, Math.log2((top + 1 - nd.deg) / 2)) / Math.log2(top / 2));',
