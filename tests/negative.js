@@ -306,6 +306,13 @@ const MUTATIONS = [
     expect: 'readout: the DATA is not seeded, and the presentation is',
   },
   {
+    why: 'past the last cell the scan line wraps to the start of the last row',
+    file: 'examples/readout.js',
+    from: '      const col = k % COLS;',
+    to: '      const col = Math.floor(scan) % COLS;',
+    expect: 'readout: the scan line never runs back at the end of the reading',
+  },
+  {
     why: 'render scale is ignored entirely, so a print is the size of a screen',
     file: 'core/render.js',
     from: '  if (scale !== 1 && surface.scale) surface.scale(scale, scale);',
