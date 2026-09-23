@@ -149,6 +149,68 @@ function webmBlockTimes(bytes) {
 }
 
 /**
+ * A recorded WebM whose Segment Info says it lasts `seconds`.
+ *
+ * MediaRecorder writes a live film. Edge's recorder leaves a Duration of one
+ * TimecodeScale unit, so a player reports 0.001 s and cannot seek. The film's
+ * length is known -- frames / hz -- so it is written here, in the file's own
+ * units: over the recorder's Duration where there is one, else as a new one at
+ * the end of Info. Every other byte stays; an insertion also grows Info's size
+ * and a Segment size that is known. The recorder writes no SeekHead, so no
+ * position needs moving.
+ */
+function webmWithDuration(bytes, seconds) {
+  const SEGMENT = 0x18538067, INFO = 0x1549A966, SCALE = 0x2AD7B1, DURATION = 0x4489;
+  const width = (b) => { let n = 1; while (n <= 8 && !(b & (0x80 >> (n - 1)))) n++; return n; };
+  const uint = (at, n) => { let v = 0; for (let i = 0; i < n; i++) v = v * 256 + bytes[at + i]; return v; };
+  // An element's head. The size is read without its marker bit, so an 8-byte
+  // size stays exact; all value bits set means "unknown".
+  const head = (at) => {
+    const idLen = width(bytes[at]), sizeLen = width(bytes[at + idLen]);
+    let size = bytes[at + idLen] & (0xFF >> sizeLen), unknown = size === 0xFF >> sizeLen;
+    for (let i = 1; i < sizeLen; i++) { size = size * 256 + bytes[at + idLen + i]; unknown = unknown && bytes[at + idLen + i] === 0xFF; }
+    return { at, id: uint(at, idLen), sizeLen, size, unknown, body: at + idLen + sizeLen };
+  };
+  let segment = null;
+  for (let p = 0; p < bytes.length;) {
+    const e = head(p);
+    if (e.id === SEGMENT) { segment = e; p = e.body; continue; }
+    if (e.id !== INFO) { if (e.unknown) break; p = e.body + e.size; continue; }
+    let scale = 1000000, duration = null;
+    for (let q = e.body; q < e.body + e.size;) {
+      const c = head(q);
+      if (c.id === SCALE) scale = uint(c.body, c.size);
+      else if (c.id === DURATION) duration = c;
+      q = c.body + c.size;
+    }
+    const units = (seconds * 1e9) / scale;
+    if (duration && (duration.size === 4 || duration.size === 8)) {
+      const out = bytes.slice();
+      const view = new DataView(out.buffer, out.byteOffset + duration.body, duration.size);
+      if (duration.size === 4) view.setFloat32(0, units); else view.setFloat64(0, units);
+      return out;
+    }
+    const added = Uint8Array.of(0x44, 0x89, 0x88, 0, 0, 0, 0, 0, 0, 0, 0);
+    new DataView(added.buffer).setFloat64(3, units);
+    const end = e.body + e.size;
+    const out = new Uint8Array(bytes.length + added.length);
+    out.set(bytes.subarray(0, end));
+    out.set(added, end);
+    out.set(bytes.subarray(end), end + added.length);
+    const grow = (el) => {
+      let v = el.size + added.length;
+      if (v >= 2 ** (7 * el.sizeLen) - 1) throw new Error('the WebM Info has no room to say how long the film is');
+      for (let i = el.sizeLen - 1; i >= 0; i--) { out[el.body - el.sizeLen + i] = v % 256; v = Math.floor(v / 256); }
+      out[el.body - el.sizeLen] |= 0x80 >> (el.sizeLen - 1);
+    };
+    grow(e);
+    if (segment && !segment.unknown) grow(segment);
+    return out;
+  }
+  throw new Error('the recorded WebM has no Segment Info, so its length cannot be written');
+}
+
+/**
  * Judge a film by what its file holds: every declared frame, evenly spaced.
  *
  * A film once passed frames written, frames received AND duration, and still
@@ -761,6 +823,7 @@ document.getElementById('svg').onclick = function () {
 };
 
 ${webmBlockTimes.toString()}
+${webmWithDuration.toString()}
 ${filmVerdict.toString()}
 
 // THE REAL-TIME WEBM, offered only where the MP4 below cannot be encoded (see
@@ -852,8 +915,10 @@ async function exportVideo() {
     await finished;
   }
 
-  var blob = new Blob(chunks, { type: 'video/webm' });
-  var report = filmVerdict(heads.length, hz, webmBlockTimes(new Uint8Array(await blob.arrayBuffer())), { worstLagMs: worstLagMs });
+  var bytes = new Uint8Array(await new Blob(chunks).arrayBuffer());
+  var report = filmVerdict(heads.length, hz, webmBlockTimes(bytes), { worstLagMs: worstLagMs });
+  // Judged as recorded, saved with the length it has: frames / hz.
+  var blob = new Blob([webmWithDuration(bytes, heads.length / hz)], { type: 'video/webm' });
   report.bytes = blob.size;
   report.renderMs = renderMs;
   report.encodeMs = encodeMs;
@@ -1104,4 +1169,4 @@ function bundle(external = null) {
   return [RUNTIME].concat(MODULES.map(wrap), external ? [external.source] : []).join(String.fromCharCode(10));
 }
 
-module.exports = { modules, checkResolvable, checkParses, bundle, html, webmBlockTimes, filmVerdict, MODULES };
+module.exports = { modules, checkResolvable, checkParses, bundle, html, webmBlockTimes, webmWithDuration, filmVerdict, MODULES };

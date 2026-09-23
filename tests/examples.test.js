@@ -1566,6 +1566,50 @@ test('a film is read from the blocks its FILE holds, by walking it rather than s
   assert.deepEqual(webmBlockTimes(new Uint8Array(0)), []);
 });
 
+test('a recorded WebM is saved with its length, and every other byte as recorded', () => {
+  // The shape Edge's recorder writes: a Segment of unknown size, a Void, and an
+  // Info whose Duration is one TimecodeScale unit, which players show as 0.001 s.
+  const { webmWithDuration, webmBlockTimes } = require('../tools/build-page.js');
+  const cluster = [0x1F, 0x43, 0xB6, 0x75, 0xFF, 0xE7, 0x81, 0x00,
+    0xA3, 0x85, 0x81, 0x00, 0x00, 0x80, 0xA3, 0xA3, 0x85, 0x81, 0x00, 0x2A, 0x80, 0xA3];
+  const film = (info, known) => {
+    const body = [0xEC, 0x83, 0, 0, 0, 0x15, 0x49, 0xA9, 0x66, 0x80 | info.length, ...info, ...cluster];
+    const size = known ? [0x01, 0, 0, 0, 0, 0, 0, body.length] : [0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+    return Uint8Array.from([0x1A, 0x45, 0xDF, 0xA3, 0x83, 0xA3, 0xA3, 0xA3, 0x18, 0x53, 0x80, 0x67, ...size, ...body]);
+  };
+  const scale = (ns) => [0x2A, 0xD7, 0xB1, 0x83, (ns >> 16) & 255, (ns >> 8) & 255, ns & 255];
+  const app = [0x4D, 0x80, 0x86, ...Array.from('Chrome', (ch) => ch.charCodeAt(0))];
+  const changed = (a, b) => [...a.keys()].filter((i) => a[i] !== b[i]);
+  const view = (bytes) => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  // The recorder's one-unit Duration is overwritten where it stands: 168 frames at
+  // 24 Hz last 7 s, which is 7000 units of 1 ms, or 14000 of 0.5 ms.
+  for (const [ns, units] of [[1000000, 7000], [500000, 14000]]) {
+    const recorded = film([...scale(ns), 0x44, 0x89, 0x84, 0x3F, 0x80, 0x00, 0x00, ...app], false);
+    const saved = webmWithDuration(recorded, 168 / 24);
+    assert.equal(saved.length, recorded.length);
+    assert.equal(view(saved).getFloat32(40), units, 'the Duration is the film\'s length in the file\'s own units');
+    assert.deepEqual(changed(saved, recorded).filter((i) => i < 40 || i > 43), [], 'and nothing else changes');
+    assert.deepEqual(webmBlockTimes(saved), webmBlockTimes(recorded), 'every frame is where the recorder put it');
+  }
+
+  // Where the recorder wrote none, one is added at the end of Info, and Info and
+  // a Segment of known size grow by exactly its eleven bytes.
+  const bare = film([...scale(1000000), ...app], true);
+  const saved = webmWithDuration(bare, 8);
+  const end = 30 + 16;
+  assert.equal(saved.length, bare.length + 11);
+  assert.deepEqual([...saved.subarray(end, end + 3)], [0x44, 0x89, 0x88]);
+  assert.equal(view(saved).getFloat64(end + 3), 8000);
+  const rest = Uint8Array.from([...saved.subarray(0, end), ...saved.subarray(end + 11)]);
+  assert.deepEqual(changed(rest, bare), [19, 29], 'only the Segment and Info sizes differ');
+  assert.equal(saved[19], bare[19] + 11);
+  assert.equal(saved[29], bare[29] + 11);
+  assert.deepEqual(webmBlockTimes(saved), webmBlockTimes(bare));
+
+  assert.throws(() => webmWithDuration(Uint8Array.from(cluster), 1), /no Segment Info/);
+});
+
 test('a single-frame film needs exactly one frame and no spacing interval', () => {
   const { filmVerdict } = require('../tools/build-page.js');
   assert.throws(() => filmVerdict(1, 30, []), /holds 0 of 1 frames/);
