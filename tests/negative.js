@@ -1483,6 +1483,27 @@ const MUTATIONS = [
     expect: 'settle: the seed moves where the graph starts, never what it connects',
   },
   {
+    why: 'the audio fake keeps no connections, so no test can follow a node to the speakers',
+    file: 'tests/fake-media.js',
+    from: '    n.connect = (target) => { n.to.push(target); return target.kind === \'param\' ? undefined : target; };',
+    to: '    n.connect = (target) => (target.kind === \'param\' ? undefined : target);',
+    expect: 'a soundtrack of seeded noise renders in the audio fake, and its record reaches every node',
+  },
+  {
+    why: 'the audio fake has no buffer source, so a piece that plays seeded noise fails its tests',
+    file: 'tests/fake-media.js',
+    from: '    createBufferSource() {',
+    to: '    createNoiseSource() {',
+    expect: 'a soundtrack of seeded noise renders in the audio fake, and its record reaches every node',
+  },
+  {
+    why: 'the audio fake leaves gain nodes out of its record',
+    file: 'tests/fake-media.js',
+    from: '    if (kind !== \'destination\') record.nodes.push(n);',
+    to: '    if (kind !== \'destination\' && kind !== \'gain\') record.nodes.push(n);',
+    expect: 'a soundtrack of seeded noise renders in the audio fake, and its record reaches every node',
+  },
+  {
     why: 'the settle bass follows its node off-centre like every other voice',
     file: 'examples/settle.js',
     from: '    const reach = s.nodes.map((nd) => WIDTH * Math.max(0, Math.log2((top + 1 - nd.deg) / 2)) / Math.log2(top / 2));',
