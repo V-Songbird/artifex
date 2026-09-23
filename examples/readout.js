@@ -172,8 +172,11 @@ module.exports = {
     // It is a position, not a fade. A line arrives; it does not resolve out of
     // nothing, and the reader can always point at where the piece has got to.
     if (scan > 0 && scan < s.cells.length + lead) {
-      const col = Math.min(COLS - 1, Math.floor(scan) % COLS);
-      const row = Math.min(ROWS - 1, Math.floor(Math.floor(scan) / COLS));
+      // It sits on the cell it has reached. Past the last cell it holds there
+      // while the fill catches up, rather than wrapping to the start of the row.
+      const k = Math.min(s.cells.length - 1, Math.floor(scan));
+      const col = k % COLS;
+      const row = Math.floor(k / COLS);
       const x = M + col * CELL_W;
       g.strokeStyle = s.accent;
       g.lineWidth = 2;

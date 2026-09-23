@@ -835,6 +835,42 @@ test('readout: every digit is heard on the frame that first shows it', async () 
   }
 });
 
+test('readout: the scan line never runs back at the end of the reading', () => {
+  // Past the last cell the scan still runs `lead` cells ahead of the fill. A
+  // column taken modulo the grid sent it back to the start of the last row on
+  // the reading's final frames. Frame by frame it may only move on, right along
+  // a row or down to the next, never past the last column, and it ends on the
+  // last cell.
+  const p = validate(EXAMPLES.readout);
+  const heads = playheads(p);
+  const d = p.params.lead;
+  for (const lead of [d.min, d.value, 4, d.max]) {
+    const solved = solve(p, p.seed, { lead });
+    const mark = `stroke:${solved.state.accent}:2`;
+    // Each scan line is beginPath, moveTo, lineTo and a stroke in the accent:
+    // the vertical one gives the column, the horizontal one the row.
+    const start = (ops, i) => ops[i - 2].slice(1).split(',').map(Number);
+    const seen = [];
+    heads.forEach((t, frame) => {
+      const g = new Recorder();
+      drawFrame(g, p, solved, t);
+      const i = g.ops.indexOf(mark);
+      if (i >= 0) seen.push({ frame, x: start(g.ops, i)[0], y: start(g.ops, g.ops.indexOf(mark, i + 1))[1] });
+    });
+    const lastRow = Math.max(...seen.map((s) => s.y));
+    const lastColumn = Math.max(...seen.filter((s) => s.y < lastRow).map((s) => s.x));
+    for (let n = 1; n < seen.length; n++) {
+      const [a, b] = [seen[n - 1], seen[n]];
+      assert.ok(b.y > a.y || (b.y === a.y && b.x >= a.x),
+        `lead ${lead}, frame ${b.frame}: the scan ran back from x ${a.x} to x ${b.x}`);
+      assert.ok(b.x <= lastColumn, `lead ${lead}, frame ${b.frame}: the scan ran past the last column`);
+    }
+    const end = seen[seen.length - 1];
+    assert.ok(end.y === lastRow && end.x === lastColumn,
+      `lead ${lead}: the scan ends on frame ${end.frame} at x ${end.x}, not on the last cell`);
+  }
+});
+
 test('contours: chaining collapses the segments into few pen-down paths', () => {
   // A plotter lifts between paths, and lifting is the slow, ugly part. Stated
   // as a RATIO the piece publishes, so it is measured rather than assumed.
