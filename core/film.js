@@ -100,12 +100,16 @@ function sampleTable(t) {
 }
 
 function track(t, movieScale) {
-  const span = Math.round((t.duration * movieScale) / t.timescale);
+  // A track with an edit lasts what its edit presents, as ISO/IEC 14496-12 has it.
+  const span = t.edit ? t.edit.duration : Math.round((t.duration * movieScale) / t.timescale);
   const audio = t.handler === 'soun';
   return box('trak',
     full('tkhd', 0, 3, u32(0), u32(0), u32(t.id), u32(0), u32(span), new Uint8Array(8),
       u16(0), u16(0), u16(audio ? 0x0100 : 0), u16(0), IDENTITY,
       u32((t.width || 0) * 65536), u32((t.height || 0) * 65536)),
+    // One edit: segment_duration in movie ticks, media_time in the track's own
+    // ticks, media rate 1.
+    t.edit ? box('edts', full('elst', 0, 0, u32(1), u32(t.edit.duration), u32(t.edit.mediaTime), u16(1), u16(0))) : new Uint8Array(0),
     box('mdia',
       full('mdhd', 0, 0, u32(0), u32(0), u32(t.timescale), u32(t.duration), u16(0x55c4), u16(0)),
       full('hdlr', 0, 0, u32(0), ascii(t.handler), new Uint8Array(12), ascii(audio ? 'SoundHandler\0' : 'VideoHandler\0')),
@@ -143,8 +147,12 @@ function aacConfig(rate, channels) {
 /**
  * The `dOps` box from the encoder's OpusHead (RFC 7845, section 5.1): the same
  * fields in the same order under version 0, big-endian where OpusHead is
- * little-endian. The pre-skip is kept, because it is how many decoded samples
- * are the encoder warming up rather than the soundtrack.
+ * little-endian, except PreSkip, which is written as 0.
+ *
+ * The encoder's pre-skip, the samples it spent warming up, is skipped by the
+ * soundtrack's edit list, which Opus in ISOBMFF makes the trim and PreSkip
+ * informative only. Chromium trims by both, so a PreSkip that repeated the
+ * edit would drop the pre-skip twice there.
  */
 function opusSpecific(head) {
   // Mapping families other than 0 add stream counts and a channel mapping.
@@ -153,7 +161,7 @@ function opusSpecific(head) {
     throw new Error('film: the Opus encoder described its stream with something other than an OpusHead');
   }
   const le = new DataView(head.buffer, head.byteOffset, head.byteLength);
-  return box('dOps', u8(0), u8(head[9]), u16(le.getUint16(10, true)), u32(le.getUint32(12, true)), u16(le.getInt16(16, true)),
+  return box('dOps', u8(0), u8(head[9]), u16(0), u32(le.getUint32(12, true)), u16(le.getInt16(16, true)),
     u8(head[18]), head.subarray(19, 19 + table));
 }
 
@@ -178,13 +186,22 @@ function opusSamples(packet) {
  *
  * `video`: { width, height, timescale, delta, samples: [{ data, key, offset }],
  * avcC }, tagged limited-range BT.709. `audio`, optional, is AAC as { sampleRate,
- * channels, samples: [Uint8Array], asc, bitrate }, or Opus as { codec: 'opus',
- * head, samples }, where `head` is the encoder's OpusHead. `manifest`, optional,
- * is the replay manifest, written to moov/udta. Every sample is its own chunk.
+ * channels, samples: [Uint8Array], asc, bitrate, priming }, or Opus as { codec:
+ * 'opus', head, samples, priming }, where `head` is the encoder's OpusHead and
+ * `priming` the samples the encoder primed the soundtrack with: the Opus
+ * pre-skip, or an AAC encoder's reported delay. `manifest`, optional, is the
+ * replay manifest, written to moov/udta. Every sample is its own chunk.
+ *
+ * THE FILM IS AS LONG AS ITS PICTURES. The movie counts time in the video's own
+ * ticks, so the movie, each track and the soundtrack's edit all state the
+ * film's length exactly. An encoder's soundtrack starts with its priming and
+ * runs past the film, to the end of its last packet. The soundtrack's one edit
+ * skips the priming and plays exactly the film's length.
  */
 function muxMp4({ video, audio = null, manifest = null }) {
+  const length = video.samples.length * video.delta;
   const tracks = [{
-    id: 1, handler: 'vide', timescale: video.timescale, duration: video.samples.length * video.delta,
+    id: 1, handler: 'vide', timescale: video.timescale, duration: length,
     width: video.width, height: video.height,
     entry: avcEntry(video.width, video.height, video.avcC),
     samples: video.samples.map((s) => s.data),
@@ -199,14 +216,14 @@ function muxMp4({ video, audio = null, manifest = null }) {
       id: 2, handler: 'soun', timescale: opus ? 48000 : audio.sampleRate, duration: deltas.reduce((n, d) => n + d, 0),
       entry: opus ? opusEntry(audio.head) : aacEntry(audio.channels, audio.sampleRate, audio.asc, audio.bitrate),
       samples: audio.samples, deltas,
+      edit: { duration: length, mediaTime: audio.priming || 0 },
     });
   }
   const ftyp = box('ftyp', ascii('isom'), u32(512), ascii('isom'), ascii('iso2'), ascii('avc1'), ascii('mp41'));
-  const movieScale = 1000;
-  const span = Math.max(...tracks.map((t) => Math.round((t.duration * movieScale) / t.timescale)));
+  const movieScale = video.timescale;
   const udta = manifest ? box('udta', manifestBox(manifest)) : new Uint8Array(0);
   const moov = () => box('moov',
-    full('mvhd', 0, 0, u32(0), u32(0), u32(movieScale), u32(span), u32(0x00010000), u16(0x0100), new Uint8Array(10),
+    full('mvhd', 0, 0, u32(0), u32(0), u32(movieScale), u32(length), u32(0x00010000), u16(0x0100), new Uint8Array(10),
       IDENTITY, new Uint8Array(24), u32(tracks.length + 1)),
     ...tracks.map((t) => track(t, movieScale)), udta);
   // Chunk offsets depend on moov's size and moov's size never depends on the
@@ -225,15 +242,17 @@ function muxMp4({ video, audio = null, manifest = null }) {
 const CONTAINERS = new Set(['moov', 'trak', 'mdia', 'minf', 'stbl', 'dinf', 'edts', 'udta']);
 
 /**
- * What an MP4 file actually holds: its replay manifest, or null, and each
- * track's codec, size, timescale, sample durations, keyframes, colour tag, an
- * Opus track's `dOps`, and whether every sample lies inside the media data.
- * Reads any file with 32-bit chunk offsets, not only this writer's.
+ * What an MP4 file actually holds: the movie's timescale and duration, its
+ * replay manifest, or null, and each track's codec, size, timescale, sample
+ * durations, its header's duration (`span`, in movie ticks), its edit list or
+ * null, keyframes, colour tag, an Opus track's `dOps`, and whether every sample
+ * lies inside the media data. Reads any file with 32-bit chunk offsets, not
+ * only this writer's.
  */
 function readMp4(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const type = (at) => String.fromCharCode(bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]);
-  const out = { brand: null, seconds: 0, media: null, manifest: null, tracks: [] };
+  const out = { brand: null, seconds: 0, movie: null, media: null, manifest: null, tracks: [] };
   let t = null;
   const walk = (start, end) => {
     for (let at = start; at + 8 <= end;) {
@@ -253,11 +272,22 @@ function readMp4(bytes) {
       }
       else if (kind === 'mvhd') {
         const v1 = bytes[b] === 1;
-        const scale = view.getUint32(b + (v1 ? 20 : 12));
-        out.seconds = (v1 ? Number(view.getBigUint64(b + 24)) : view.getUint32(b + 16)) / scale;
+        out.movie = { timescale: view.getUint32(b + (v1 ? 20 : 12)), duration: v1 ? Number(view.getBigUint64(b + 24)) : view.getUint32(b + 16) };
+        out.seconds = out.movie.duration / out.movie.timescale;
       } else if (kind === 'trak') {
-        t = { handler: null, codec: null, colour: null, opus: null, deltas: [], keys: null, sizes: [], chunks: [], stsc: [], offsets: false };
+        t = { handler: null, codec: null, colour: null, opus: null, span: null, edits: null, deltas: [], keys: null, sizes: [], chunks: [], stsc: [], offsets: false };
         out.tracks.push(t);
+      } else if (kind === 'tkhd') t.span = bytes[b] === 1 ? Number(view.getBigUint64(b + 28)) : view.getUint32(b + 20);
+      else if (kind === 'elst') {
+        // Each edit: segment_duration in movie ticks, media_time in the track's
+        // ticks (-1 for an empty edit), and the media rate.
+        const v1 = bytes[b] === 1;
+        t.edits = [];
+        for (let i = 0, n = view.getUint32(b + 4), p = b + 8; i < n; i++, p += v1 ? 20 : 12) {
+          t.edits.push(v1
+            ? { duration: Number(view.getBigUint64(p)), mediaTime: Number(view.getBigInt64(p + 8)), rate: view.getInt16(p + 16) + view.getInt16(p + 18) / 65536 }
+            : { duration: view.getUint32(p), mediaTime: view.getInt32(p + 4), rate: view.getInt16(p + 8) + view.getInt16(p + 10) / 65536 });
+        }
       } else if (kind === 'hdlr') t.handler = type(b + 8);
       else if (kind === 'mdhd') {
         const v1 = bytes[b] === 1;
@@ -304,6 +334,7 @@ function readMp4(bytes) {
   return {
     brand: out.brand,
     seconds: out.seconds,
+    movie: out.movie,
     manifest: out.manifest,
     tracks: out.tracks.map((x) => {
       // Place every sample from its chunk and the chunk's run in stsc.
@@ -320,7 +351,7 @@ function readMp4(bytes) {
       if (sample < x.sizes.length) inside = false;
       return {
         kind: x.handler, codec: x.codec, width: x.width, height: x.height, channels: x.channels, sampleRate: x.sampleRate,
-        timescale: x.timescale, duration: x.duration, samples: x.sizes.length,
+        timescale: x.timescale, duration: x.duration, span: x.span, edits: x.edits, samples: x.sizes.length,
         bytes: x.sizes.reduce((s, v) => s + v, 0), deltas: x.deltas, keys: x.keys, colour: x.colour, opus: x.opus,
         reordered: x.offsets, inside,
       };
@@ -331,9 +362,10 @@ function readMp4(bytes) {
 /**
  * Judge a film by what its file holds against the frame grid it was cut from.
  *
- * `expected`: { frames, hz, width, height, sound, manifest }, where `manifest` is
- * the one the export drew from. Throws naming the first thing the file gets
- * wrong; returns the report otherwise.
+ * `expected`: { frames, hz, width, height, sound, priming, manifest }, where
+ * `priming` is the samples the encoder primed the soundtrack with and
+ * `manifest` the one the export drew from. Throws naming the first thing the
+ * file gets wrong; returns the report otherwise.
  */
 function filmCheck(expected, file) {
   const video = file.tracks.filter((x) => x.kind === 'vide');
@@ -371,15 +403,40 @@ function filmCheck(expected, file) {
       + `where the export drew with ${JSON.stringify(expected.manifest[differs])}. Nothing was saved.`);
   }
   const seconds = v.duration / v.timescale;
+  // The movie and every track last the film, however far the soundtrack's
+  // last packet runs.
+  const movie = file.movie || { timescale: 0, duration: 0 };
+  if (!(Math.abs(movie.duration / movie.timescale - seconds) * movie.timescale <= 0.5)) {
+    throw new Error(`film: the movie lasts ${(movie.duration / movie.timescale).toFixed(3)} s against a ${seconds.toFixed(3)} s film. Nothing was saved.`);
+  }
+  const long = file.tracks.find((x) => x.span !== movie.duration);
+  if (long) {
+    throw new Error(`film: the ${long.kind === 'soun' ? 'sound' : 'video'} track's header gives ${(long.span / movie.timescale).toFixed(3)} s `
+      + `against a ${seconds.toFixed(3)} s film. Nothing was saved.`);
+  }
   let sound = null;
   if (expected.sound) {
     const a = audio[0];
-    // A decoder opens an Opus track by its dOps, and drops the pre-skip it names.
+    // A decoder opens an Opus track by its dOps.
     const opus = a && a.codec === 'Opus' ? a.opus : null;
     if (audio.length !== 1 || !(a.codec === 'mp4a' || (opus && opus.version === 0)) || !a.inside || a.samples === 0) {
       throw new Error('film: the piece declares sound and the file holds no playable soundtrack. Nothing was saved.');
     }
-    const heard = a.duration / a.timescale - (opus ? opus.preSkip / 48000 : 0);
+    // One edit plays it, past the samples the encoder primed and for exactly the
+    // film's length. The priming is the encoder's word, never read back from
+    // the file: dOps carries a PreSkip of 0.
+    const edit = a.edits && a.edits.length === 1 && a.edits[0].rate === 1 && a.edits[0].mediaTime >= 0 ? a.edits[0] : null;
+    if (!edit) {
+      throw new Error('film: the soundtrack has no single edit to play it, so a player may start it with the encoder\'s priming '
+        + 'or play it past the pictures. Nothing was saved.');
+    }
+    if (edit.duration !== movie.duration) {
+      throw new Error(`film: the soundtrack's edit lasts ${(edit.duration / movie.timescale).toFixed(3)} s against a ${seconds.toFixed(3)} s film. Nothing was saved.`);
+    }
+    if (edit.mediaTime !== expected.priming) {
+      throw new Error(`film: the soundtrack's edit skips ${edit.mediaTime} samples and the encoder primed ${expected.priming}. Nothing was saved.`);
+    }
+    const heard = (a.duration - edit.mediaTime) / a.timescale;
     const grain = Math.max(...a.deltas.map(([, d]) => d)) / a.timescale;
     if (heard < seconds - grain || heard > seconds + 2 * grain) {
       throw new Error(`film: the soundtrack lasts ${heard.toFixed(3)} s against a ${seconds.toFixed(3)} s film. Nothing was saved.`);
@@ -623,8 +680,10 @@ async function encodeSound(env, buffer, bitrate) {
   const samples = [];
   let description = null;
   let failure = null;
+  let first = null;
   const encoder = new env.AudioEncoder({
     output(chunk, meta) {
+      if (first === null) first = chunk.timestamp;
       if (meta && meta.decoderConfig && meta.decoderConfig.description) description = copyBytes(meta.decoderConfig.description);
       const data = new Uint8Array(chunk.byteLength);
       chunk.copyTo(data);
@@ -651,9 +710,13 @@ async function encodeSound(env, buffer, bitrate) {
     // Only the OpusHead knows the pre-skip, and a guessed one moves the sound
     // against the pictures. Refused here, before a single frame is drawn.
     if (!description) throw new Error('film: the Opus encoder gave no OpusHead, so the film cannot say where its sound starts');
-    return { codec: 'opus', head: description, samples };
+    // OpusHead holds the pre-skip little-endian at byte 10.
+    return { codec: 'opus', head: description, samples, priming: description[10] | (description[11] << 8) };
   }
-  return { samples, asc: description || aacConfig(rate, channels), sampleRate: rate, channels, bitrate };
+  // An AAC encoder that primes its first packet with samples from before the
+  // soundtrack says so by stamping that packet before zero, and the edit list
+  // skips them. Edge's encoder stamps its first packet at zero.
+  return { samples, asc: description || aacConfig(rate, channels), sampleRate: rate, channels, bitrate, priming: Math.max(0, Math.round((-first * rate) / 1e6)) };
 }
 
 /**
@@ -778,7 +841,7 @@ async function exportFilm(piece, solved, env, opt = {}) {
     audio: sound,
     manifest,
   });
-  const report = filmCheck({ frames: heads.length, hz, width, height, sound: !!piece.sound, manifest }, readMp4(bytes));
+  const report = filmCheck({ frames: heads.length, hz, width, height, sound: !!piece.sound, priming: sound ? sound.priming : 0, manifest }, readMp4(bytes));
   const totalMs = now() - started;
   return {
     bytes,

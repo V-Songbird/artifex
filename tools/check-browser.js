@@ -180,7 +180,7 @@ function filmNames() {
 // WebM fallback, then exports the named example's film through the page's own
 // MP4 path and decodes it: the first, middle and last frames must each look at
 // least as much like their own drawn frame as like a neighbour, and a declared
-// soundtrack must decode to sound as long as the film. A held frame draws the
+// soundtrack must decode to exactly the film's length. A held frame draws the
 // same picture as its neighbour, so that tie is a match. The export's own
 // verdict is read from the file. The replay manifest is found in the film's
 // bytes by this check's own scan, not readMp4, so a fault shared by the writer
@@ -257,10 +257,12 @@ async function inspectFilm(name) {
       for (const v of decoded.getChannelData(c)) peak = Math.max(peak, Math.abs(v));
     }
     if (!(peak > 0.01)) throw new Error(name + ': the soundtrack decodes to silence');
-    if (Math.abs(decoded.duration - report.seconds) > 0.05) {
-      throw new Error(name + ': the soundtrack decodes to ' + decoded.duration.toFixed(3) + ' s against a ' + report.seconds.toFixed(3) + ' s film');
+    // The soundtrack's edit list trims it to the film, to the sample.
+    const want = Math.round(report.seconds * decoded.sampleRate);
+    if (Math.abs(decoded.length - want) > 1) {
+      throw new Error(name + ': the soundtrack decodes to ' + decoded.length + ' samples against the film\'s ' + want);
     }
-    sound = { seconds: +decoded.duration.toFixed(3), peak: +peak.toFixed(3) };
+    sound = { seconds: +decoded.duration.toFixed(3), samples: decoded.length, peak: +peak.toFixed(3) };
   }
   return {
     name, offered, codec: report.codec, frames: report.frames, seconds: report.seconds, width: report.width, height: report.height,
