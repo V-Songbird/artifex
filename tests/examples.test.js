@@ -15,7 +15,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-const { validate, solve, frameT, frameCount, frameDen, frameIndex } = require('../core/piece.js');
+const { validate, solve, frameT, frameCount, frameDen, frameIndex, clockAt } = require('../core/piece.js');
 const { renderVector, drawFrame, playheads } = require('../core/render.js');
 const { VectorSurface } = require('../core/surface-vector.js');
 const { nullSurface } = require('../tools/bench.js');
@@ -1140,6 +1140,138 @@ test('settle: the seed moves where the graph starts, never what it connects', ()
     }
     assert.notDeepEqual(rest(x), rest(y), `seeds ${x.seed} and ${y.seed} settle into one arrangement`);
   }));
+});
+
+/**
+ * Every frame of `cues`, read part by part from the drawing. Each part is drawn
+ * in its own top-level save/restore, in the order `state.cues.parts` lists them:
+ * its first translate, rotate and scale are its pose, and the last fill colour
+ * set inside it is its colour.
+ */
+function cueFrames(p, solved) {
+  return playheads(p).map((t) => {
+    const parts = [];
+    let depth = 0;
+    const top = () => parts[parts.length - 1];
+    const on = {
+      save() { if (depth++ === 0) parts.push({ at: null, turn: null, scale: null, colour: null }); },
+      restore() { depth--; },
+      translate(x, y) { if (depth === 1 && !top().at) top().at = [x, y]; },
+      rotate(a) { if (depth === 1) top().turn = a; },
+      scale(x, y) { if (depth === 1) top().scale = [x, y]; },
+    };
+    const g = new Proxy({}, {
+      get: (_, k) => on[k] || (() => {}),
+      set: (_, k, v) => { if (k === 'fillStyle' && depth > 0) top().colour = v; return true; },
+    });
+    p.draw(g, solved.state, t, clockAt(p, t));
+    return parts.map(({ at, turn, scale, colour }) => ({ pose: JSON.stringify([at, turn, scale]), colour }));
+  });
+}
+
+/** The first frame after each scene boundary on which each part shows its turn. */
+function cueTurns(frames, cues) {
+  const bounds = cues.shots.slice(1).map((s) => s.start);
+  return bounds.map((B, k) => {
+    const next = k + 1 < bounds.length ? bounds[k + 1] : frames.length;
+    return cues.parts.map((_, i) => {
+      let f = B;
+      while (f < next && frames[f][i].colour === frames[B - 1][i].colour) f++;
+      return f;
+    });
+  });
+}
+
+test('cues: every move starts and arrives on the frames its cue declares', () => {
+  // A move is at rest on the frame before it and on its first frame, moving on
+  // the next, still moving into its last frame and at rest from there on.
+  const p = validate(EXAMPLES.cues);
+  const solved = solve(p, p.seed);
+  const { cues } = solved.state;
+  const frames = cueFrames(p, solved);
+  assert.equal(frames[0].length, cues.parts.length, 'one drawn part for each part the cues name');
+  assert.ok(new Set(cues.moves.map((m) => m.rate)).size >= 4, 'the moves are timed at several named rates');
+  const pose = (f, part) => frames[f][cues.parts.indexOf(part)].pose;
+  for (const m of cues.moves) {
+    const cue = `${m.part} ${m.prop} ${m.a}-${m.b}`;
+    assert.ok(pose(m.a, m.part) === pose(m.a - 1, m.part), `${cue} moved before its first frame`);
+    assert.ok(pose(m.a + 1, m.part) !== pose(m.a, m.part), `${cue} did not start on frame ${m.a}`);
+    assert.ok(pose(m.b, m.part) !== pose(m.b - 1, m.part), `${cue} arrived before frame ${m.b}`);
+    assert.ok(pose(m.b + 1, m.part) === pose(m.b, m.part), `${cue} was still moving after frame ${m.b}`);
+  }
+});
+
+test('cues: the blink closes on its middle frame, and every bump peaks there', () => {
+  // ease.bump rests at both ends of its window and is fully out at the middle,
+  // so a bump over an even number of frames peaks on one whole frame. A squash
+  // reads as the part's vertical scale and a height as its y: both are least at
+  // the peak, and mirror each other either side of it.
+  const p = validate(EXAMPLES.cues);
+  const solved = solve(p, p.seed);
+  const { cues } = solved.state;
+  const frames = cueFrames(p, solved);
+  assert.ok(cues.bumps.some((b) => b.name === 'blink'), 'there is a blink');
+  for (const b of cues.bumps) {
+    const cue = `${b.name} ${b.a}-${b.b}`;
+    const mid = (b.a + b.b) / 2;
+    assert.ok(Number.isInteger(mid), `${cue} has no middle frame`);
+    const read = (f) => {
+      const [at, , scale] = JSON.parse(frames[f][cues.parts.indexOf(b.part)].pose);
+      return b.prop === 'squash' ? scale[1] : at[1];
+    };
+    assert.ok(read(b.a - 1) === read(b.a) && read(b.b + 1) === read(b.b), `${cue} runs outside its window`);
+    for (let f = b.a; f <= b.b; f++) {
+      if (f !== mid) assert.ok(read(f) > read(mid), `${cue}: frame ${f} is further out than the middle frame ${mid}`);
+      assert.ok(Math.abs(read(f) - read(2 * mid - f)) < 1e-9, `${cue}: frames ${f} and ${2 * mid - f} do not mirror`);
+    }
+  }
+});
+
+test('cues: each scene change starts on its boundary and reaches the parts one by one', () => {
+  // A change blends, but it is anchored: nothing turns on the frame before a
+  // boundary, the first part turns on the boundary, the parts turn in order,
+  // and every turn is over within the blend. At blend 0 it is a hard cut.
+  const p = validate(EXAMPLES.cues);
+  const d = p.params.blend;
+  for (const blend of [d.min, d.value, d.max]) {
+    const solved = solve(p, p.seed, { blend });
+    const { cues } = solved.state;
+    const frames = cueFrames(p, solved);
+    const bounds = cues.shots.slice(1).map((s) => s.start);
+    const within = Math.max(1, Math.round(blend * p.time.hz));
+    for (let f = 1; f < frames.length; f++) {
+      if (frames[f].every((q, i) => q.colour === frames[f - 1][i].colour)) continue;
+      const B = bounds.filter((b) => b <= f).pop();
+      assert.ok(B !== undefined && f < B + within, `blend ${blend}: a part turned on frame ${f}, outside every change`);
+    }
+    cueTurns(frames, cues).forEach((turns, k) => {
+      const B = bounds[k];
+      assert.equal(Math.min(...turns), B, `blend ${blend}: the change at frame ${B} first shows on frame ${Math.min(...turns)}`);
+      assert.deepEqual(turns, [...turns].sort((a, b) => a - b), `blend ${blend}: the parts at frame ${B} turn out of order`);
+      const apart = new Set(turns).size;
+      assert.ok(blend === d.min ? apart === 1 : apart > 1,
+        `blend ${blend}: the change at frame ${B} turns its parts on ${apart} different frame(s)`);
+    });
+  }
+});
+
+test('cues: each note sounds on the frame that first shows its part turning', async () => {
+  // One note per part per change, scheduled from the same cue table the picture
+  // reads, so a change and its note cannot land on different frames.
+  const { renderSound } = require('../core/render.js');
+  const { fakeAudio } = require('./fake-media.js');
+  const p = validate(EXAMPLES.cues);
+  const d = p.params.blend;
+  for (const blend of [d.min, d.value, d.max]) {
+    const solved = solve(p, p.seed, { blend });
+    const audio = fakeAudio();
+    await renderSound(p, solved, { OfflineAudioContext: audio.Context });
+    const heard = audio.record.oscillators.map((o) => o.at * p.time.hz);
+    assert.ok(heard.every((f) => Math.abs(f - Math.round(f)) < 1e-9), `blend ${blend}: a note falls between frames`);
+    const shown = cueTurns(cueFrames(p, solved), solved.state.cues).flat();
+    const sorted = (a) => a.map(Math.round).sort((x, y) => x - y);
+    assert.deepEqual(sorted(heard), sorted(shown), `blend ${blend}: the notes and the frames that show each part turning disagree`);
+  }
 });
 
 test('contours: chaining collapses the segments into few pen-down paths', () => {

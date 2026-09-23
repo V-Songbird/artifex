@@ -10,6 +10,7 @@ module.exports = {
   drift: require('./drift.js'),
   specimen: require('./specimen.js'),
   readout: require('./readout.js'),
+  cues: require('./cues.js'),
   partition: require('./partition.js'),
   contours: require('./contours.js'),
   packing: require('./packing.js'),

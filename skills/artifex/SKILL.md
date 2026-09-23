@@ -223,6 +223,7 @@ the notes at the top of each say what it is in the set to prove.
 | `drift.js` | organic, painterly — dabs, opacity, a flow field | 240 frames | **raster only** |
 | `specimen.js` | hard-edged, typographic — a stroke font, straight runs | a still | raster + vector |
 | `readout.js` | data-driven — a fixed dataset the seed may not touch; it sounds, the data choosing the pitch; picture and sound share one shot list | 168 frames | raster + vector + sound |
+| `cues.js` | authored motion — eased moves, bumps and a blink, and scene changes blended part by part, all written as one cue table on whole frames; each part is heard as it turns | 192 frames | raster + vector + sound |
 | `partition.js` | recursive subdivision — area, not marks | a still | raster + vector |
 | `contours.js` | plotter-native — one pen, one weight, no fills | a still | raster + vector |
 | `packing.js` | closed forms grown until they touch — composition decided by refusal | a still | raster + vector |
@@ -321,6 +322,11 @@ draw(g, s, t, clock) {
   passes its mark and settles; `bump` goes out and comes back, an event such as
   a blink. The table is frozen because every piece in a page shares it.
 - **A cut is a hard cut.** The module has no transitions.
+
+`examples/cues.js` shows the whole pattern: its build writes every move, bump and
+scene change as a cue in frames, and `draw` and `sound` read only that table. A
+scene change there blends from its boundary frame, one part after another, and
+each part's note sounds on the frame that first shows it turning.
 
 Read the [piece API](../../docs/apis/piece-api.md#authored-time) for the contracts.
 
