@@ -591,17 +591,34 @@ function copyBytes(source) {
   return source instanceof ArrayBuffer ? new Uint8Array(source.slice(0)) : new Uint8Array(source.buffer.slice(source.byteOffset, source.byteOffset + source.byteLength));
 }
 
-// AAC first, because more MP4 players play it. Opus is the fallback where the
-// encoder refuses AAC: a piece with sound gets its soundtrack or no film at all.
+// The soundtrack every film is rendered and encoded at.
+const SOUND = { sampleRate: 48000, channels: 2, bitrate: 192000 };
+
+/**
+ * The soundtrack configuration a film is encoded with: AAC where `AudioEncoder`
+ * accepts it, because more MP4 players play it, else Opus, or null when it
+ * accepts neither. `opt.sampleRate`, `opt.channels` and `opt.bitrate` default to
+ * the ones exportFilm renders and encodes at. The export and any caller asking
+ * whether a soundtrack can be encoded share this one choice.
+ */
+async function soundConfig(AudioEncoder, opt = {}) {
+  const sampleRate = opt.sampleRate || SOUND.sampleRate;
+  const numberOfChannels = opt.channels || SOUND.channels;
+  const bitrate = opt.bitrate || SOUND.bitrate;
+  for (const codec of ['mp4a.40.2', 'opus']) {
+    const candidate = { codec, sampleRate, numberOfChannels, bitrate };
+    const support = await AudioEncoder.isConfigSupported(candidate);
+    if (support && support.supported) return candidate;
+  }
+  return null;
+}
+
+// Opus is the fallback where the encoder refuses AAC: a piece with sound gets
+// its soundtrack or no film at all.
 async function encodeSound(env, buffer, bitrate) {
   const rate = buffer.sampleRate;
   const channels = buffer.numberOfChannels;
-  let config = null;
-  for (const codec of ['mp4a.40.2', 'opus']) {
-    const candidate = { codec, sampleRate: rate, numberOfChannels: channels, bitrate };
-    const support = await env.AudioEncoder.isConfigSupported(candidate);
-    if (support && support.supported) { config = candidate; break; }
-  }
+  const config = await soundConfig(env.AudioEncoder, { sampleRate: rate, channels, bitrate });
   if (!config) throw new Error('film: this browser encodes neither AAC nor Opus, and a film without its soundtrack is not written');
   const samples = [];
   let description = null;
@@ -682,8 +699,8 @@ async function exportFilm(piece, solved, env, opt = {}) {
   let soundMs = 0;
   if (piece.sound) {
     const s0 = now();
-    const buffer = await renderSound(piece, solved, { OfflineAudioContext: env.OfflineAudioContext });
-    sound = await encodeSound(env, buffer, opt.audioBitrate || 192000);
+    const buffer = await renderSound(piece, solved, { OfflineAudioContext: env.OfflineAudioContext, sampleRate: SOUND.sampleRate, channels: SOUND.channels });
+    sound = await encodeSound(env, buffer, opt.audioBitrate || SOUND.bitrate);
     soundMs = now() - s0;
   }
 
@@ -774,4 +791,4 @@ async function exportFilm(piece, solved, env, opt = {}) {
   };
 }
 
-module.exports = { exportFilm, filmConfig, muxMp4, readMp4, filmCheck, avcCodecs, aacConfig, rgbaToNV12 };
+module.exports = { exportFilm, filmConfig, soundConfig, muxMp4, readMp4, filmCheck, avcCodecs, aacConfig, rgbaToNV12 };

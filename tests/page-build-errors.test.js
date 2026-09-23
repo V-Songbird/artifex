@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const { html, bundle } = require('../tools/build-page.js');
 const { nullSurface } = require('../tools/bench.js');
-const { fakeCodecs } = require('./fake-media.js');
+const { fakeAudio, fakeCodecs } = require('./fake-media.js');
 
 function registry(module) {
   module.exports = {
@@ -20,6 +20,11 @@ function registry(module) {
       draw(surface, state) { surface.fillRect(0, 0, state.width, 10); },
     },
     valid: { name: 'valid', size: { w: 40, h: 30 }, draw(surface) { surface.fillRect(0, 0, 20, 20); } },
+    voiced: {
+      name: 'voiced', size: { w: 40, h: 30 }, time: { duration: 1, hz: 4 },
+      sound(ctx) { const o = ctx.createOscillator(); o.connect(ctx.destination); o.start(0); },
+      draw(surface) { surface.fillRect(0, 0, 20, 20); },
+    },
     throwing: {
       name: 'throwing', size: { w: 40, h: 30 },
       state() { throw new Error('fixture state failed'); },
@@ -69,7 +74,12 @@ function openPage({ deferPng = false, videoFailure = null, codecs = null } = {})
   };
   const overrides = "\n__def('examples/index.js', " + registry.toString() + ');';
   if (videoFailure) sandbox.MediaStreamTrackGenerator = function () { throw new Error(videoFailure); };
-  if (codecs) Object.assign(sandbox, { VideoEncoder: codecs.VideoEncoder, VideoFrame: codecs.VideoFrame });
+  if (codecs) {
+    Object.assign(sandbox, {
+      VideoEncoder: codecs.VideoEncoder, VideoFrame: codecs.VideoFrame,
+      AudioEncoder: codecs.AudioEncoder, AudioData: codecs.AudioData, OfflineAudioContext: fakeAudio().Context,
+    });
+  }
   const script = html(bundle() + overrides).match(/<script>([\s\S]*)<\/script>/)[1];
   vm.runInNewContext(script, sandbox);
   const api = sandbox.window.__artifex;
@@ -223,6 +233,50 @@ test('where H.264 cannot encode the film, the page offers the WebM recorder inst
     assert.equal(elements.get('webm').hidden, true, 'a still offers no film');
     assert.equal(elements.get('mp4').hidden, false);
   }
+});
+
+test('where neither AAC nor Opus encodes, a piece with sound is offered a silent WebM', async () => {
+  const asked = [];
+  const codecs = fakeCodecs({ aac: false, opus: false });
+  const ask = codecs.AudioEncoder.isConfigSupported;
+  codecs.AudioEncoder.isConfigSupported = (config) => { asked.push(config); return ask(config); };
+  const { api, elements } = openPage({ codecs, videoFailure: 'fixture recorder reached' });
+  api.select('voiced');
+  assert.equal(await api.filmFormat(), 'webm');
+  assert.equal(elements.get('mp4').hidden, true, 'an MP4 control that would refuse the film is not offered');
+  assert.equal(elements.get('webm').hidden, false);
+  assert.match(elements.get('videonote').textContent, /^4 frames, recorded in real time\. The film is silent: this browser encodes neither AAC nor Opus/);
+  const probed = asked.length;
+  assert.equal(probed, 2, 'AAC, then Opus');
+  await assert.rejects(api.film(), /encodes neither AAC nor Opus, and a film without its soundtrack is not written/,
+    'the MP4 export still refuses a film without its soundtrack');
+  assert.deepEqual(asked.slice(probed), asked.slice(0, probed), 'the page asks about the soundtrack the export would encode');
+  elements.get('video').onclick();
+  await new Promise(setImmediate);
+  assert.equal(api.read().error, 'fixture recorder reached', 'the WebM control runs the recorder');
+});
+
+test('a piece without sound keeps the MP4 film where neither AAC nor Opus encodes', async () => {
+  let asked = 0;
+  const codecs = fakeCodecs({ aac: false, opus: false });
+  const ask = codecs.AudioEncoder.isConfigSupported;
+  codecs.AudioEncoder.isConfigSupported = (config) => { asked++; return ask(config); };
+  const { api, elements } = openPage({ codecs });
+  api.setSeed(42);
+  assert.equal(await api.filmFormat(), 'mp4');
+  assert.equal(elements.get('webm').hidden, true);
+  assert.equal(asked, 0, 'a piece without sound asks nothing about a soundtrack');
+  assert.equal((await api.film()).frames, 4);
+  // A piece with sound keeps MP4 where its soundtrack encodes, and keeps the
+  // H.264 reason where the video cannot encode either.
+  const voiced = openPage({ codecs: fakeCodecs({ aac: false }) });
+  voiced.api.select('voiced');
+  assert.equal(await voiced.api.filmFormat(), 'mp4');
+  assert.equal((await voiced.api.film()).sound.codec, 'Opus');
+  const neither = openPage({ codecs: fakeCodecs({ supported: () => false, aac: false, opus: false }) });
+  neither.api.select('voiced');
+  assert.equal(await neither.api.filmFormat(), 'webm');
+  assert.match(neither.elements.get('videonote').textContent, /without sound, because this browser cannot encode the MP4 film/);
 });
 
 test('an unanswered H.264 question blocks nothing, and a late answer stays with its piece', async () => {

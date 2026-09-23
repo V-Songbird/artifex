@@ -457,12 +457,15 @@ function select(name) {
 // THE FILM ON OFFER. MP4 is the film export wherever this browser encodes the
 // piece's H.264 configuration -- the one core/film.js picks at 1x. Only where it
 // cannot does the page offer the real-time WebM recorder, which loses frames on
-// a piece slower than real time and carries no sound. The encoder is asked once
-// per size and frame rate, and nothing waits for it: MP4 shows until it answers.
-var h264 = {}, filmOffer = null;
+// a piece slower than real time and carries no sound. The MP4 export never
+// writes a film without the soundtrack a piece declares, so where the browser
+// encodes neither AAC nor Opus, a piece with sound is offered a silent WebM. The
+// video encoder is asked once per size and frame rate, the audio encoder once,
+// and nothing waits for either: MP4 shows until they answer.
+var h264 = {}, aacOrOpus = null, filmOffer = null;
 
 function offerFilm() {
-  var p = current, asked = null;
+  var p = current, asked = null, voiced = true;
   if (p.time) {
     var key = p.size.w + 'x' + p.size.h + '@' + p.time.hz;
     if (!h264[key]) {
@@ -471,14 +474,26 @@ function offerFilm() {
     }
     asked = h264[key];
   }
+  if (p.time && p.sound) {
+    if (!aacOrOpus) {
+      aacOrOpus = typeof AudioEncoder !== 'function' || typeof AudioData !== 'function' ? Promise.resolve(false)
+        : film.soundConfig(AudioEncoder).then(function (config) { return !!config; }, function () { return false; });
+    }
+    voiced = aacOrOpus;
+  }
   document.getElementById('mp4').hidden = false;
   document.getElementById('webm').hidden = true;
-  filmOffer = Promise.resolve(asked).then(function (encodes) {
-    var format = !p.time ? null : encodes ? 'mp4' : 'webm';
+  filmOffer = Promise.all([asked, voiced]).then(function (answers) {
+    var format = !p.time ? null : answers[0] && answers[1] ? 'mp4' : 'webm';
     // An answer about a piece no longer selected says nothing about this one.
     if (p === current) {
       document.getElementById('mp4').hidden = format === 'webm';
       document.getElementById('webm').hidden = format !== 'webm';
+      if (answers[0] && !answers[1]) {
+        document.getElementById('videonote').textContent = render.playheads(p).length
+          + ' frames, recorded in real time. The film is silent: this browser encodes neither AAC nor Opus for the soundtrack'
+          + ' the piece declares, and an MP4 is never written without it. A piece slower than its frame rate cannot be recorded this way.';
+      }
     }
     return format;
   });

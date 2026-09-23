@@ -6,7 +6,7 @@ related_files: ["package.json", "core/render.js", "tools/contact-sheet.js", "exa
 
 # Artifex
 
-Artifex is a CommonJS library and agent skill for creating art from code. One piece can produce an interactive page, a PNG, an MP4 film (WebM where a browser cannot encode H.264), or an SVG when its drawing operations support that output.
+Artifex is a CommonJS library and agent skill for creating art from code. One piece can produce an interactive page, a PNG, an MP4 film (WebM where a browser cannot encode that film), or an SVG when its drawing operations support that output.
 
 The library supplies deterministic randomness, geometry, colour, a piece contract, and rendering tools. It has no runtime dependencies or required network service. It does not generate images from text or judge artistic quality.
 
