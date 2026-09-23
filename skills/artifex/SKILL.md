@@ -126,6 +126,7 @@ require('./core/geom.js')    // lengthOf, bbox, centroid, pointInPoly, resample,
 require('./core/field.js')   // sampleGrid, gradient, curl, warp, threshold,
                              // isolines, streamline, streamlines
 require('./core/time.js')    // span, ease, tween, shots, shotAt
+require('./core/layer.js')   // layer
 ```
 
 **`noise2` is value noise and `gradient2` is gradient noise.** The derivative of
@@ -382,6 +383,15 @@ to `"0.000000"`.
 `willReadFrequently: true`. Canvas rasterization and anti-aliasing can vary with
 the rendering backend; comparing measurements from differently configured
 canvases can introduce differences unrelated to the piece.
+
+**A frame's unchanging ground can be drawn once per scale.** Called first in
+`draw`, `layer(g, s, 'ground', [0, 0, W, H], paintGround)` from `core/layer.js`
+copies the layer on a raster canvas from its second frame on and runs
+`paintGround(g, s)` everywhere else, so an SVG keeps its paths. `paintGround`
+reads the solved state and never the playhead, and the layer must be opaque;
+otherwise it is drawn every time. It pays where frames are rasterized on the
+CPU, so measure with forced raster before adopting it. `drift` and `readout`
+use it.
 
 The surface is **Canvas2D-shaped** in all four, so one `draw` reaches all of
 them unchanged.

@@ -1,7 +1,7 @@
 ---
 type: api_spec
-summary: "Shows a runnable custom Artifex piece and the public validation, solving, rendering and soundtrack entry points."
-related_files: ["core/piece.js", "core/render.js", "core/time.js", "core/film.js", "core/webgpu-preview.js", "core/surface-vector.js", "examples/pixel-field.js", "examples/readout.js", "examples/drift.js", "examples/settle.js", "examples/cues.js", "tests/piece.test.js", "tests/render.test.js", "tests/time.test.js", "tests/film.test.js", "tests/webgpu-preview.test.js"]
+summary: "Shows a runnable custom Artifex piece and the public validation, solving, rendering, static-layer and soundtrack entry points."
+related_files: ["core/piece.js", "core/render.js", "core/time.js", "core/film.js", "core/webgpu-preview.js", "core/surface-vector.js", "examples/pixel-field.js", "examples/readout.js", "examples/drift.js", "examples/settle.js", "examples/cues.js", "core/layer.js", "tests/layer.test.js", "tests/piece.test.js", "tests/render.test.js", "tests/time.test.js", "tests/film.test.js", "tests/webgpu-preview.test.js"]
 ---
 
 # Piece API
@@ -89,6 +89,16 @@ const piece = {
 ```
 
 [`examples/readout.js`](../../examples/readout.js) cuts a reading and a one-second rest on whole frames, and schedules its notes from the same shots. [`examples/drift.js`](../../examples/drift.js) times each stroke with `span`. [`examples/cues.js`](../../examples/cues.js) writes its moves (`tween` at named rates), its bumps (`ease.bump`, including a blink) and its scene changes into one cue table in its build; `draw` and `sound` read only that table. Each scene change starts on its `shots` boundary and turns the parts one after another over a short blend, or all at once at `blend: 0`. Run `node --test tests/time.test.js` for the span, rate, tween and shot contracts.
+
+## Static layers
+
+`layer(surface, state, key, box, paint)` in [`core/layer.js`](../../core/layer.js) draws the part of a frame that never changes, such as a ground or a grid, once per canvas and device scale. `paint(surface, state)` draws it inside `box`, `[x, y, w, h]` in the surface's current units. It reads only the solved state, never the playhead; a paint that declares a third parameter is refused by name.
+
+On a raster canvas the layer is drawn directly on its first frame at a scale. On its second it is drawn again and copied from the canvas right after; later frames put the copy back instead of drawing it. The copy is kept only when the layer alone is opaque across its box and the box lands on whole device pixels under a plain scale, so a copied frame holds exactly the pixels drawing it would. Otherwise, past 2^25 kept pixels per canvas and solve, and on vector and null surfaces, `paint` runs on every frame, and an SVG keeps every path. The copies live per canvas and solve and are released with either. Call `layer` first in `draw`, from the default drawing state.
+
+A browser may move a GPU-backed canvas that is read back often to CPU rasterization, which changes its antialiasing; a copy keeps the layer as that canvas drew it before the move. Read pixels back from a canvas created with `willReadFrequently: true`, as the checks and the CPU film route do. The copy saves drawing time where a canvas is rasterized on the CPU; where the GPU rasterizes it, the layer may already be cheap.
+
+[`examples/drift.js`](../../examples/drift.js) keeps its paper and ground as a layer, and [`examples/readout.js`](../../examples/readout.js) its paper and slot grid. Run `node --test tests/layer.test.js` for the copy rules.
 
 ## Soundtrack
 

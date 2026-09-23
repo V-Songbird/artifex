@@ -26,6 +26,7 @@ const { rng, fbm, noise2 } = require('../core/rand.js');
 const { lerp, pick } = require('../core/num.js');
 const { streamline } = require('../core/field.js');
 const { span } = require('../core/time.js');
+const { layer } = require('../core/layer.js');
 
 const W = 1000;
 const H = 700;
@@ -130,21 +131,8 @@ module.exports = {
   draw(g, s, t) {
     const R = rng(s.seed);
 
-    g.fillStyle = s.ground;
-    g.fillRect(0, 0, W, H);
-
-    // A ground: broad, low-contrast, laid before anything else, so the strokes
-    // sit IN something instead of on nothing.
-    for (let i = 0; i < 90; i++) {
-      const x = R('ground', 'x', i) * W;
-      const y = R('ground', 'y', i) * H;
-      const r = 90 + noise2(R, x / 260, y / 260, 'ground') * 210;
-      g.globalAlpha = 0.03;
-      g.fillStyle = `hsl(${(s.hue + 150 + noise2(R, x / 400, y / 400, 'tint') * 60) % 360} 14% 88%)`;
-      g.beginPath();
-      g.arc(x, y, r, 0, Math.PI * 2);
-      g.fill();
-    }
+    // The paper and its ground are the same on every frame: one static layer.
+    layer(g, s, 'ground', [0, 0, W, H], ground);
 
     for (const st of s.strokes) {
       // The window closes by the end of the film, so the last frame shows every
@@ -205,3 +193,21 @@ module.exports = {
     g.globalAlpha = 1;
   },
 };
+
+/** The paper, then a ground: broad, low-contrast, laid before anything else, so
+ *  the strokes sit IN something instead of on nothing. */
+function ground(g, s) {
+  const R = rng(s.seed);
+  g.fillStyle = s.ground;
+  g.fillRect(0, 0, W, H);
+  for (let i = 0; i < 90; i++) {
+    const x = R('ground', 'x', i) * W;
+    const y = R('ground', 'y', i) * H;
+    const r = 90 + noise2(R, x / 260, y / 260, 'ground') * 210;
+    g.globalAlpha = 0.03;
+    g.fillStyle = `hsl(${(s.hue + 150 + noise2(R, x / 400, y / 400, 'tint') * 60) % 360} 14% 88%)`;
+    g.beginPath();
+    g.arc(x, y, r, 0, Math.PI * 2);
+    g.fill();
+  }
+}
