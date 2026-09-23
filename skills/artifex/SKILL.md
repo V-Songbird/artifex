@@ -293,6 +293,9 @@ draw(g, s, t, clock) {
   with its `timeline`, and the soundtrack cuts on the frame the picture does.
 - **A zero-length `span` is a cut**, 0 before its instant and 1 from it on.
   `unlerp` answers 0 there, which for time is a change that never happens.
+- **A `span` window that closes after `t = 1` never finishes** on a timeline that
+  does not loop, because its last frame is `t = 1`; close it by then, as drift
+  does with `span(st.birth, Math.min(st.birth + st.span, 1), t)`.
 - **`ease` curves hold their end values outside `[0, 1]`**, exactly. `back`
   passes its mark and settles; `bump` goes out and comes back, an event such as
   a blink. The table is frozen because every piece in a page shares it.
