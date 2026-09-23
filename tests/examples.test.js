@@ -957,12 +957,11 @@ test('settle: the soundtrack follows the system frame by frame, and comes to res
     const shared = routes[0].filter((n) => routes.every((route) => route.includes(n)));
     const s = solved.state;
     const N = s.nodes.length;
-    const steps = s.energy.length - 1;
-    // Draw's own lookup, which is not the frame index: there are 145 snapshots
-    // and 144 drawn frames, so from frame 72 on each frame shows snapshot k + 1.
-    const f = heads.map((t) => Math.round(frameT(p, t) * steps));
+    // The snapshot the picture shows on each frame, read back from its discs,
+    // and the last one stored: where every node comes to rest.
+    const f = settleSnapshots(p, solved);
     return {
-      s, N, f, voices, rest: steps * N * 2,
+      s, N, f, voices, rest: s.traj.length - N * 2,
       gain: routes.map((route) => route[1].gain.value),
       detune: voices.map((v) => perFrame(v.detune)),
       pan: routes.map((route) => perFrame(route.find((n) => n.pan).pan)),
@@ -1055,6 +1054,46 @@ test('settle: the soundtrack follows the system frame by frame, and comes to res
   rises(moves.map(([, v, c]) => [v, c]), 'cutoff', true);
   const cutoffs = moves.map(([, , c]) => c);
   assert.ok(Math.max(...cutoffs) > 4 * Math.min(...cutoffs), 'and the brightness moves with it');
+});
+
+/** Which stored settle snapshot each drawn frame shows, read back from the node
+ *  discs it draws, or -1 where they match none. */
+function settleSnapshots(p, solved) {
+  const s = solved.state;
+  const N = s.nodes.length;
+  return playheads(p).map((t) => {
+    const g = new Recorder();
+    const centres = [];
+    const arc = g.arc.bind(g);
+    g.arc = (x, y, ...rest) => {
+      // A hub's ring repeats its disc's centre.
+      const last = centres[centres.length - 1];
+      if (!last || last[0] !== x || last[1] !== y) centres.push([x, y]);
+      arc(x, y, ...rest);
+    };
+    drawFrame(g, p, solved, t);
+    assert.equal(centres.length, N, 'one disc per node');
+    for (let j = 0; j < s.traj.length / (N * 2); j++) {
+      if (centres.every(([x, y], i) => x === s.traj[(j * N + i) * 2] && y === s.traj[(j * N + i) * 2 + 1])) return j;
+    }
+    return -1;
+  });
+}
+
+test('settle: frame k draws the snapshot stored for frame k, so each is drawn once', () => {
+  // The build stores one snapshot per drawn frame and draw reads clock.frame.
+  // Looking a playhead up among one snapshot more than there are frames drew
+  // snapshot 71 and then 73: the motion jumped two steps halfway through.
+  const p = validate(EXAMPLES.settle);
+  const heads = playheads(p);
+  for (const [seed, params] of [[p.seed, {}], [1, {}], [p.seed, { tension: p.params.tension.min }]]) {
+    const solved = solve(p, seed, params);
+    const s = solved.state;
+    assert.equal(s.traj.length, heads.length * s.nodes.length * 2, 'one snapshot per drawn frame');
+    assert.equal(s.energy.length, heads.length, 'and one point of the energy trace');
+    assert.deepEqual(settleSnapshots(p, solved), heads.map((_, k) => k),
+      `seed ${seed} ${JSON.stringify(params)}: a frame shows another frame's snapshot`);
+  }
 });
 
 test('contours: chaining collapses the segments into few pen-down paths', () => {

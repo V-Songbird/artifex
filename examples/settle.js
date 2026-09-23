@@ -85,12 +85,14 @@ const MUTE = '#cac4b6';
 const INK = '#20201e';
 const ACCENTS = ['#b4462a', '#2d6382', '#3d6b46', '#7a4a86'];
 
-// The timeline. FRAMES has to exist as a constant here because `draw` is handed
-// a normalised playhead and nothing else -- it never sees `time`, so a piece
-// with a fixed timestep has to restate its own frame count to find its index.
+// The timeline. The build solves all of it before any frame is drawn, so it
+// needs the frame count here: it stores one snapshot per drawn frame, the first
+// the scattered start and the last the completed rest. Frame k shows snapshot k:
+// `draw` reads `clock.frame` and `sound` its own frame index, both through `at`.
 const DUR = 6;
 const HZ = 24;
 const FRAMES = Math.round(DUR * HZ);
+const LAST = FRAMES - 1;
 
 // ---- the integrator -------------------------------------------------------
 const SUB = 2;               // substeps per drawn frame
@@ -223,12 +225,17 @@ module.exports = {
         mass[i] = s.nodes[i].mass;
       }
 
-      const traj = new Float64Array((FRAMES + 1) * N * 2);
-      const energy = new Float64Array(FRAMES + 1);
+      const traj = new Float64Array(FRAMES * N * 2);
+      const energy = new Float64Array(FRAMES);
       for (let i = 0; i < N; i++) { traj[i * 2] = px[i]; traj[i * 2 + 1] = py[i]; }
 
+      // The medium thickens over FRAMES * SUB substeps. Frame k shows the system
+      // after k * SUB of them, and the last frame after all of them, at rest: the
+      // SUB more that the last interval spans move no node much more than a
+      // hundredth of a design unit, a hundredth of its travel over one frame
+      // mid-film.
       const STEPS = FRAMES * SUB;
-      let acc = 0;
+      let frame = 1, acc = 0, taken = 0;
       for (let step = 0; step < STEPS; step++) {
         // Neither the ceiling nor the viscosity touches the forces, so the
         // equilibrium the system is heading for never moves while it settles.
@@ -280,31 +287,27 @@ module.exports = {
           sum += Math.sqrt(sx * sx + sy * sy);
         }
         acc += sum / N;
+        taken++;
 
-        if ((step + 1) % SUB === 0) {
-          const f = (step + 1) / SUB;
-          const o = f * N * 2;
+        if (step + 1 === (frame < LAST ? frame * SUB : STEPS)) {
+          const o = frame * N * 2;
           for (let i = 0; i < N; i++) { traj[o + i * 2] = px[i]; traj[o + i * 2 + 1] = py[i]; }
-          energy[f] = acc / SUB;
-          acc = 0;
+          energy[frame] = acc / taken;
+          acc = 0; taken = 0; frame++;
         }
       }
 
       let peak = 0;
-      for (let f = 0; f <= FRAMES; f++) if (energy[f] > peak) peak = energy[f];
+      for (let f = 0; f < FRAMES; f++) if (energy[f] > peak) peak = energy[f];
       s.traj = traj;
       s.energy = energy;
       s.peak = peak || 1;
     }],
   ],
 
-  draw(g, s, t) {
+  draw(g, s, _t, clock) {
     const N = s.nodes.length;
-    const f = snapshotAt(t);
-    const at = (frame, i) => {
-      const o = frame * N * 2 + i * 2;
-      return [s.traj[o], s.traj[o + 1]];
-    };
+    const f = clock.frame;
 
     // --- the plate ------------------------------------------------------
     g.fillStyle = PAPER;
@@ -325,8 +328,8 @@ module.exports = {
     // structure it found rather than merely displaying it.
     const strain = new Array(EDGES.length);
     for (let e = 0; e < EDGES.length; e++) {
-      const [ax, ay] = at(f, EDGES[e][0]);
-      const [bx, by] = at(f, EDGES[e][1]);
+      const [ax, ay] = at(s, f, EDGES[e][0]);
+      const [bx, by] = at(s, f, EDGES[e][1]);
       strain[e] = (Math.sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay)) - REST) / REST;
     }
     // Exactly the LOADED most-stretched edges take the accent, ranked rather
@@ -338,8 +341,8 @@ module.exports = {
 
     g.lineCap = 'butt';
     for (let e = 0; e < EDGES.length; e++) {
-      const [ax, ay] = at(f, EDGES[e][0]);
-      const [bx, by] = at(f, EDGES[e][1]);
+      const [ax, ay] = at(s, f, EDGES[e][0]);
+      const [bx, by] = at(s, f, EDGES[e][1]);
       // The multiplier is 2.2 and not 1.1 because at 1.1 every edge in the sheet
       // landed between 0.3 and 0.8 of the ramp and the whole drawing came out
       // one weight -- a readout with no range is not a readout.
@@ -363,12 +366,12 @@ module.exports = {
     g.lineWidth = 1.5;
     const back = Math.max(0, f - TAIL);
     for (let i = 0; i < N; i++) {
-      const [hx, hy] = at(back, i);
-      const [cx, cy] = at(f, i);
+      const [hx, hy] = at(s, back, i);
+      const [cx, cy] = at(s, f, i);
       if (Math.abs(cx - hx) + Math.abs(cy - hy) < TAIL_MIN) continue;
       g.beginPath();
       g.moveTo(hx, hy);
-      for (let k = back + 1; k <= f; k++) { const [x, y] = at(k, i); g.lineTo(x, y); }
+      for (let k = back + 1; k <= f; k++) { const [x, y] = at(s, k, i); g.lineTo(x, y); }
       g.stroke();
     }
 
@@ -377,7 +380,7 @@ module.exports = {
     // doing the most work rather than to every node equally.
     for (let i = 0; i < N; i++) {
       const nd = s.nodes[i];
-      const [x, y] = at(f, i);
+      const [x, y] = at(s, f, i);
       // Size AND value both come from degree, so contrast falls away from the
       // parts of the graph doing the most work instead of every node receiving
       // the same algorithmic attention.
@@ -414,7 +417,7 @@ module.exports = {
       g.lineJoin = 'round';
       g.beginPath();
       for (let k = 0; k <= f; k++) {
-        const x = M + (k / FRAMES) * span;
+        const x = M + (k / LAST) * span;
         const y = base - (s.energy[k] / s.peak) * TRACE_H;
         if (k === 0) g.moveTo(x, y); else g.lineTo(x, y);
       }
@@ -423,7 +426,7 @@ module.exports = {
 
     // The playhead as a POSITION, not a fade. It is the only mark in the piece
     // whose job is to say where the piece has got to.
-    const px = M + (f / FRAMES) * span;
+    const px = M + (f / LAST) * span;
     g.strokeStyle = s.accent;
     g.lineWidth = 1.6;
     g.beginPath();
@@ -433,13 +436,11 @@ module.exports = {
   },
 
   // Heard, and continuously. Every control is set on every drawn frame, at that
-  // frame's second, from the snapshot draw shows at that frame, and ramps
-  // linearly to the next. The sound is sampled from the trajectory the picture
-  // is drawn from, at the rate it is drawn, so the two cannot drift apart.
+  // frame's second, from the snapshot that frame shows, and ramps linearly to
+  // the next. The sound is sampled from the trajectory the picture is drawn
+  // from, at the rate it is drawn, so the two cannot drift apart.
   sound(ctx, s, timeline) {
     const N = s.nodes.length;
-    const den = timeline.loop ? timeline.frames : timeline.frames - 1;
-    const rest = FRAMES * N * 2;   // the last snapshot: where every node ends up
     const top = Math.max(...s.nodes.map((nd) => nd.deg));
     // A voice is as loud as its disc is large, so the ear, like the eye, is sent
     // to the nodes doing the most work.
@@ -474,36 +475,38 @@ module.exports = {
     });
 
     for (let k = 0; k < timeline.frames; k++) {
-      const f = snapshotAt(k / den);
-      const at = k / timeline.hz;
+      const sec = k / timeline.hz;
       const ramp = k === 0 ? 'setValueAtTime' : 'linearRampToValueAtTime';
       // Silent while the motion is too slow to hear: the first frame, before the
       // first step, and the last few, as the medium stops everything. Full level
       // is the displacement ceiling, the most the trace can ever read, and not
       // this run's own peak: a calmer system sounds calmer instead of being
       // scaled up to full.
-      const heard = Math.max(0, Math.log(s.energy[f] / STILL)) / Math.log(TEMP0 / STILL);
-      bus.gain[ramp](heard, at);
-      tone.frequency[ramp](DARK * (BRIGHT / DARK) ** heard, at);
+      const heard = Math.max(0, Math.log(s.energy[k] / STILL)) / Math.log(TEMP0 / STILL);
+      bus.gain[ramp](heard, sec);
+      tone.frequency[ramp](DARK * (BRIGHT / DARK) ** heard, sec);
       let mid = 0;
-      for (let i = 0; i < N; i++) mid += pull[i] * s.traj[f * N * 2 + i * 2];
+      for (let i = 0; i < N; i++) mid += pull[i] * at(s, k, i)[0];
       mid /= weight;
       for (let i = 0; i < N; i++) {
-        const o = f * N * 2 + i * 2;
-        // Above its resting place is sharp and below is flat; to one side of that
-        // middle is to that side of the room.
-        const lift = s.traj[rest + i * 2 + 1] - s.traj[o + 1];
-        voices[i].osc.detune[ramp](CENTS * Math.asinh(lift / NEAR), at);
-        voices[i].place.pan[ramp](reach[i] * Math.max(-1, Math.min(1, (s.traj[o] - mid) / EX)), at);
+        const [x, y] = at(s, k, i);
+        // Above where it comes to rest on the last frame is sharp and below is
+        // flat; to one side of that middle is to that side of the room.
+        const lift = at(s, LAST, i)[1] - y;
+        voices[i].osc.detune[ramp](CENTS * Math.asinh(lift / NEAR), sec);
+        voices[i].place.pan[ramp](reach[i] * Math.max(-1, Math.min(1, (x - mid) / EX)), sec);
       }
     }
   },
 };
 
-/** The snapshot a playhead shows. `draw` and `sound` both read through it, so
- *  the picture and the soundtrack cannot sample the trajectory differently. */
-function snapshotAt(t) {
-  return Math.min(FRAMES, Math.max(0, Math.round(t * FRAMES)));
+/** Where node i stands on drawn frame `frame`. The build stores one snapshot
+ *  per drawn frame, so frame k shows snapshot k. `draw` and `sound` both read
+ *  through here, so the picture and the soundtrack cannot sample the trajectory
+ *  differently. */
+function at(s, frame, i) {
+  const o = (frame * s.nodes.length + i) * 2;
+  return [s.traj[o], s.traj[o + 1]];
 }
 
 /** A node's disc radius: size is degree, and the grain is the pen's. */
