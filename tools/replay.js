@@ -225,10 +225,10 @@ function soundPlan(bytes, piece) {
 
 // Serialized into the page. The film's soundtrack is decoded as a player hears
 // it, trimmed by its edit list, and the recipe's is rendered and levelled with
-// the page's loudnessGain, the gain the export applies. For each block of
-// `block` samples it returns the rendered energy and the energy of the
-// difference, over every channel.
-async function compareSound(bytes, recipe, block) {
+// the page's loudnessGain for the film's `codec`, the gain the export applies.
+// For each block of `block` samples it returns the rendered energy and the
+// energy of the difference, over every channel.
+async function compareSound(bytes, recipe, block, codec) {
   const api = window.__artifex;
   if (!Object.prototype.hasOwnProperty.call(api.examples, recipe.piece)) throw new Error('replay: the page has no piece named ' + JSON.stringify(recipe.piece));
   const p = api.piece.validate(api.examples[recipe.piece]);
@@ -236,7 +236,7 @@ async function compareSound(bytes, recipe, block) {
   let decoded;
   try { decoded = await new OfflineAudioContext(2, 1, 48000).decodeAudioData(bytes.slice().buffer); } catch (e) { return { error: String((e && e.message) || e) }; }
   const rendered = await api.render.renderSound(p, solved, { OfflineAudioContext, sampleRate: 48000, channels: 2 });
-  const gain = api.loudnessGain(api.loudness(rendered));
+  const gain = api.loudnessGain(api.loudness(rendered), codec);
   const scale = 10 ** (gain / 20);
   const channels = Math.min(decoded.numberOfChannels, rendered.numberOfChannels), n = Math.min(decoded.length, rendered.length);
   const blocks = [];
@@ -529,7 +529,7 @@ async function replay(file, options = {}) {
     let sound = null;
     if (plan && plan.codec) {
       context.phase = 'soundtrack replay';
-      sound = await evaluate(client, '(' + compareSound.toString() + ')(' + ['window.__replayBytes', recipe, SOUND_BLOCK].join(', ') + ')');
+      sound = await evaluate(client, '(' + compareSound.toString() + ')(' + ['window.__replayBytes', recipe, SOUND_BLOCK, JSON.stringify(plan.codec)].join(', ') + ')');
     }
     if (context.errors.length) throw new Error('browser: page errors:\n' + context.errors.join('\n'));
     return { browser: context.version.Browser, rows, sound };

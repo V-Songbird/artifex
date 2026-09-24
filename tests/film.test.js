@@ -10,7 +10,7 @@ const assert = require('node:assert/strict');
 const { validate, solve, VERSION } = require('../core/piece.js');
 const { playheads } = require('../core/render.js');
 const {
-  exportFilm, muxMp4, readMp4, filmCheck, avcCodecs, aacConfig, rgbaToNV12, kWeighting, measureLoudness,
+  exportFilm, muxMp4, readMp4, filmCheck, avcCodecs, aacConfig, rgbaToNV12, kWeighting, measureLoudness, loudnessGain,
 } = require('../core/film.js');
 const { nullSurface } = require('../tools/bench.js');
 const { fakeAudio, fakeCodecs, fakeCanvas, opusHead, EDGE_AVCC } = require('./fake-media.js');
@@ -1042,12 +1042,12 @@ test('true peak finds the peaks between samples, oversampled four times as BS.17
   assert.ok(Number.isNaN(measureLoudness(stereo(broken)).dbtp), 'a sample that is not a number has no true peak');
 });
 
-test('every film soundtrack reaches -14 LUFS with one static gain, or stops at -1 dBTP', async () => {
+test('every film soundtrack reaches -14 LUFS with one static gain, or stops at its codec ceiling, -1 dBTP for AAC and -1.2 for Opus', async () => {
   // Contexts that render a known soundtrack, and an encoder that keeps what it
   // is given, so the film's own samples are measured, not the report's word.
-  const exported = async (fill) => {
+  const exported = async (fill, codecs = {}) => {
     const { p, solved } = piece({ sound(ctx) { const o = ctx.createOscillator(); o.connect(ctx.destination); o.start(0); } });
-    const { env: e } = env();
+    const { env: e } = env(codecs);
     const Base = e.OfflineAudioContext;
     let rendered = null;
     e.OfflineAudioContext = class extends Base {
@@ -1068,8 +1068,9 @@ test('every film soundtrack reaches -14 LUFS with one static gain, or stops at -
     };
     const out = await exportFilm(p, solved, e);
     // The AAC encoder hears 2112 samples of silence first, the lead the film's
-    // edit list skips; the soundtrack is what follows them.
-    const encoded = kept.map((parts) => Float32Array.from(parts.flatMap((part) => [...part])).subarray(2112));
+    // edit list skips; the soundtrack is what follows them. Opus has no lead.
+    const lead = out.report.sound.codec === 'Opus' ? 0 : 2112;
+    const encoded = kept.map((parts) => Float32Array.from(parts.flatMap((part) => [...part])).subarray(lead));
     return { report: out.report, rendered, encoded };
   };
 
@@ -1100,6 +1101,21 @@ test('every film soundtrack reaches -14 LUFS with one static gain, or stops at -
   assert.equal(quiet.report.sound.short, undefined, 'a soundtrack at -14 LUFS reports no shortfall');
   const near = (await exported((x) => { x.set(tone([[2, -30]])); for (let i = 0; i < x.length; i += 12000) x[i] = 0.18; })).report.sound;
   assert.ok(near.lufs < -14 && near.lufs > -17 && near.short === undefined, `${near.lufs} LUFS reports a shortfall of ${near.short}`);
+
+  // Opus raises true peak more than AAC once encoded, so the same clicks stop
+  // an Opus soundtrack 0.2 dB lower. Its body still aims at -14 LUFS, and its
+  // shortfall is still measured from -14 LUFS.
+  const opus = await exported((x) => { x.set(tone([[2, -40]])); for (let i = 0; i < x.length; i += 12000) x[i] = 0.9; }, { aac: false });
+  const heard = opus.report.sound;
+  assert.equal(heard.codec, 'Opus');
+  assert.ok(Math.abs(heard.gain - (-1.2 - heard.measured.dbtp)) <= 0.011 && Math.abs(heard.gain - (gain - 0.2)) <= 0.011,
+    `the gain ${heard.gain} is the room left under -1.2 dBTP, 0.2 dB under AAC's ${gain}`);
+  assert.ok(Math.abs(measureLoudness(planar(opus.encoded)).dbtp + 1.2) < 0.01 && Math.abs(heard.dbtp + 1.2) < 0.005, 'and the soundtrack peaks at -1.2 dBTP');
+  assert.ok(heard.short === Math.round((-14 - heard.lufs) * 100) / 100 && Math.abs(heard.short - (peaky.report.sound.short + 0.2)) <= 0.011,
+    `${heard.lufs} LUFS is ${-14 - heard.lufs} LU short, and the report says ${heard.short}`);
+  const steady = (await exported((x) => x.set(tone([[2, -30]])), { aac: false })).report.sound;
+  assert.deepEqual([steady.gain, steady.lufs, steady.short], [16, -14, undefined], 'a soundtrack its peaks do not stop reaches -14 LUFS as Opus too');
+  assert.throws(() => loudnessGain({ lufs: -20, dbtp: -10 }, 'opus'), /levelled for AAC \('mp4a'\) or 'Opus', not "opus"/, 'a codec by another name is refused');
 
   // Silence has no loudness to set, nor any shortfall. A sample that is not a
   // finite number is refused wherever it falls: an infinite one early would

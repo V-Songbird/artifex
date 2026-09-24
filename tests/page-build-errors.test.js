@@ -845,10 +845,10 @@ test('the page exposes the film loudness meter and gain that replay reads, as co
     const measured = measureLoudness(b);
     // Spread into this realm: the page's objects come from the sandbox's Object.
     assert.deepEqual({ ...api.loudness(b) }, measured, name + ': the page measures as core/film.js does');
-    assert.equal(api.loudnessGain(measured), loudnessGain(measured), name + ': and sets the same gain');
+    for (const codec of ['mp4a', 'Opus']) assert.equal(api.loudnessGain(measured, codec), loudnessGain(measured, codec), name + ': and sets the same gain for ' + codec);
   }
-  assert.equal(api.loudnessGain(measureLoudness(buffer(silence))), 0, 'silence keeps its level');
+  assert.equal(api.loudnessGain(measureLoudness(buffer(silence)), 'mp4a'), 0, 'silence keeps its level');
   for (const measured of [{ lufs: -20, dbtp: -10 }, { lufs: -8, dbtp: -3 }, { lufs: -30, dbtp: 0 }]) {
-    assert.equal(api.loudnessGain(measured), loudnessGain(measured), JSON.stringify(measured));
+    for (const codec of ['mp4a', 'Opus']) assert.equal(api.loudnessGain(measured, codec), loudnessGain(measured, codec), JSON.stringify(measured) + ' ' + codec);
   }
 });

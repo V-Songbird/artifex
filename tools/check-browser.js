@@ -299,7 +299,8 @@ async function retryBehindSchedule(record, frames, limit = 3) {
 // MP4 path and decodes it: the first, middle and last frames must each match
 // their own drawn frame, as frameMatch judges, and a declared
 // soundtrack must decode to exactly the film's length, start as a fresh render
-// does, and measure -14 LUFS or peak at -1 dBTP, and two more renders of it must
+// does, and measure -14 LUFS or peak at its codec's ceiling, -1 dBTP for AAC
+// or -1.2 dBTP for Opus, and two more renders of it must
 // be the same bits. The export's own verdict is read from the file. The
 // replay manifest is found in the film's bytes by this check's own scan, not
 // readMp4, so a fault shared by the writer and the reader cannot pass: it must
@@ -446,13 +447,21 @@ async function inspectFilm(name, force, retry) {
       throw new Error(name + ': from its first sound, at sample ' + onset + ', the soundtrack decodes ' + startDb.toFixed(1)
         + ' dB from a fresh render, under ' + START_DB + ' dB');
     }
-    // The export levels every soundtrack to -14 LUFS, or to -1 dBTP where its
-    // peaks come first, and the decoded film has to measure so, codec and all.
+    // The export levels every soundtrack to -14 LUFS, or where its peaks come
+    // first to its codec's ceiling, -1 dBTP for AAC and -1.2 dBTP for Opus, and
+    // the decoded film has to measure so, codec and all. Opus moved the examples'
+    // true peak by -0.10 to +0.14 dB in installed Edge, so it is held within
+    // 0.15 dB of its ceiling, AAC within 0.1. The lower ceiling is there to keep
+    // an Opus soundtrack under -1 dBTP once decoded, and settle's stops within
+    // 0.1 LU of -14 LUFS, where the rule above would pass it at any peak.
     const heard = api.loudness(decoded);
-    if (!(Math.abs(heard.lufs + 14) <= 0.1 || (Math.abs(heard.dbtp + 1) <= 0.1 && heard.lufs < -14))) {
+    const opus = report.sound.codec === 'Opus';
+    const [ceiling, within] = opus ? [-1.2, 0.15] : [-1, 0.1];
+    if (!(Math.abs(heard.lufs + 14) <= 0.1 || (Math.abs(heard.dbtp - ceiling) <= within && heard.lufs < -14))) {
       throw new Error(name + ': the decoded soundtrack measures ' + heard.lufs.toFixed(2) + ' LUFS and ' + heard.dbtp.toFixed(2)
-        + ' dBTP, neither -14 LUFS nor -1 dBTP');
+        + ' dBTP, neither -14 LUFS nor ' + ceiling + ' dBTP');
     }
+    if (opus && !(heard.dbtp < -1)) throw new Error(name + ': the decoded Opus soundtrack peaks at ' + heard.dbtp.toFixed(2) + ' dBTP, not under -1 dBTP');
     sound = {
       seconds: +decoded.duration.toFixed(3), samples: decoded.length, peak: +peak.toFixed(3),
       gain: report.sound.gain, lufs: +heard.lufs.toFixed(2), dbtp: +heard.dbtp.toFixed(2),
