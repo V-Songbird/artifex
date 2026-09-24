@@ -12,7 +12,7 @@
 
 'use strict';
 
-const { clamp01, lerp } = require('./num.js');
+const { clamp01, lerp, turn } = require('./num.js');
 
 /** sRGB display value in [0,1] to linear light. */
 function toLinear(c) {
@@ -66,6 +66,73 @@ function mix(a, b, u) {
   ]);
 }
 
+// OKLab, with the matrices Björn Ottosson published with it: "A perceptual
+// color space for image processing" (2020), https://bottosson.github.io/posts/oklab/
+
+/** A colour to OKLCh: [lightness 0..1, chroma, hue in radians from atan2]. */
+function oklch(colour) {
+  const [r, g, b] = rgb(colour).slice(0, 3).map(toLinear);
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  const A = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s;
+  const B = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s;
+  return [0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s, Math.hypot(A, B), Math.atan2(B, A)];
+}
+
+/** OKLCh back to linear light [r, g, b], which may lie outside [0,1]. */
+function linearOf(L, C, h) {
+  const A = C * Math.cos(h);
+  const B = C * Math.sin(h);
+  const l = (L + 0.3963377774 * A + 0.2158037573 * B) ** 3;
+  const m = (L - 0.1055613458 * A - 0.0638541728 * B) ** 3;
+  const s = (L - 0.0894841775 * A - 1.2914855480 * B) ** 3;
+  return [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
+  ];
+}
+
+// A colour inside sRGB comes back from the round trip less than 2e-7 outside it.
+const inGamut = (lin) => lin.every((v) => v > -1e-6 && v < 1 + 1e-6);
+
+/**
+ * Mix two colours along OKLCh, so a dissolve KEEPS ITS COLOUR on the way.
+ *
+ * `mix` travels a straight line through the light, and between complementary
+ * colours that line crosses grey: yellow to blue passes through a flat khaki.
+ * Here lightness and chroma move evenly and the hue turns the short way round,
+ * so yellow to blue passes through green instead. That is a colour neither end
+ * has, which is the price, and why this is a choice and `mix` stays the default.
+ *
+ * A grey has no hue and takes the other colour's, so it fades straight in. Where
+ * the turn leaves what sRGB can show, chroma gives way, never lightness or hue.
+ */
+function mixOklch(a, b, u) {
+  const x = rgb(a);
+  const y = rgb(b);
+  const k = clamp01(u);
+  const p = oklch(a);
+  const q = oklch(b);
+  // Rounding leaves an sRGB grey under 1e-7 of chroma and a random hue; one
+  // 8-bit step off grey already has 1e-3.
+  if (p[1] < 1e-4) p[2] = q[2];
+  if (q[1] < 1e-4) q[2] = p[2];
+  const L = lerp(p[0], q[0], k);
+  const h = p[2] + turn(p[2], q[2]) * k;
+  let C = lerp(p[1], q[1], k);
+  if (!inGamut(linearOf(L, C, h))) {
+    let lo = 0;
+    for (let i = 0; i < 24; i++) {
+      const c = (lo + C) / 2;
+      if (inGamut(linearOf(L, c, h))) lo = c; else C = c;
+    }
+    C = lo;
+  }
+  return hex([...linearOf(L, C, h).map(toSRGB), lerp(x[3], y[3], k)]);
+}
+
 /** Relative luminance, as WCAG defines it: linear light, weighted. */
 function luma(colour) {
   const c = rgb(colour);
@@ -95,4 +162,4 @@ function readableOn(ground, options) {
   return best;
 }
 
-module.exports = { rgb, hex, mix, luma, contrast, readableOn, toLinear, toSRGB };
+module.exports = { rgb, hex, mix, mixOklch, oklch, luma, contrast, readableOn, toLinear, toSRGB };
