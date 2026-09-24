@@ -10,9 +10,11 @@ const { spawn, spawnSync } = require('node:child_process');
 const { setTimeout: delay } = require('node:timers/promises');
 const {
   parseArgs, findEdge, connectCDP, evaluate, servePage, runBrowserCheck, stopBrowser, removeProfile, main, filmsToExport, FORCED, sheetReady,
-  retryBehindSchedule, frameMatch, soundMatch, checkPage, inspectPiece, inspectFilm, evaluateInPieces, PIECE_CHARS, routeVerdict,
+  retryBehindSchedule, frameMatch, soundMatch, loudnessMatch, checkPage, inspectPiece, inspectFilm, evaluateInPieces, PIECE_CHARS, routeVerdict,
   SHOT_BYTES, bandRows, sheetPieces, sheetClip,
 } = require('../tools/check-browser.js');
+const { muxMp4 } = require('../core/film.js');
+const { EDGE_AVCC } = require('./fake-media.js');
 
 class FakeSocket extends EventTarget {
   static latest;
@@ -318,8 +320,8 @@ test('the browser check accepts a fallback colour route only when asked', () => 
 function pageOf(films) {
   const answer = (expression) => {
     const called = (fn) => expression.startsWith('(' + fn + ')(');
-    // inspectFilm runs with frameMatch and soundMatch handed in; the film's name is its first argument.
-    const film = '((frameMatch, soundMatch) => (' + inspectFilm + ')(';
+    // inspectFilm runs with frameMatch, soundMatch and loudnessMatch handed in; the film's name is its first argument.
+    const film = '((frameMatch, soundMatch, loudnessMatch) => (' + inspectFilm + ')(';
     const name = () => JSON.parse(/^"[^"]*"/.exec(expression.slice(film.length))[0]);
     if (expression.startsWith('document.readyState')) return true;
     if (expression === 'window.__artifex.names') return ['a'];
@@ -369,6 +371,16 @@ test('a default browser run requires every MP4 film on the encoder route, and --
     { message: 'browser: readout: with WebGL2 hidden the colour was converted on the ENCODER, not the CPU' });
   // A WebM film is recorded, not converted, so it has no route to take.
   assert.equal((await check({ readout: { offered: 'webm', frames: 48 } }, { force: 'no-h264' })).films.length, 1);
+});
+
+test('a run forced to refuse AAC exports every film with sound, and every other forced run the first', async () => {
+  const context = { errors: [], phase: 'page navigation', signal: new AbortController().signal, version: { Browser: 'Edge/1' } };
+  const films = (conversion) => ({ readout: { offered: 'mp4', frames: 48, conversion }, settle: { offered: 'mp4', frames: 48, conversion } });
+  const names = async (options, conversion = 'encoder') => (await checkPage(pageOf(films(conversion)), context, options)).films.map((film) => film.name);
+  assert.deepEqual(await names({ force: 'no-aac' }), ['readout', 'settle'], 'without AAC every soundtrack is decoded as Opus, settle\'s at its ceiling');
+  assert.deepEqual(await names({ force: 'no-webgl2' }, 'cpu'), ['readout']);
+  assert.deepEqual(await names({ force: 'no-h264' }), ['readout']);
+  assert.deepEqual(await names({}), ['readout', 'settle']);
 });
 
 // A sheet part as screenshots of it: every row weighs `weigh(row)` bytes of PNG,
@@ -585,11 +597,49 @@ function filmPage(frames = 3, hz = 4) {
   return { globals, count };
 }
 
+// filmPage's film offered as MP4 with its replay manifest and a soundtrack the
+// export reports as `sound` and the page's meter hears as `heard`: a tone
+// rendered the same every time and decoded at the export's gain.
+function soundFilmPage(sound, heard) {
+  const { globals } = filmPage();
+  const api = globals.window.__artifex;
+  const length = 36000, samples = (scale) => Float32Array.from({ length }, (_, i) => scale * 0.1 * Math.sin(i / 10));
+  const buffer = (scale) => ({ numberOfChannels: 2, length, sampleRate: 48000, duration: length / 48000, getChannelData: () => samples(scale) });
+  const manifest = { piece: 'a', seed: 1, film: { frames: 3, hz: 4, loop: false, scale: 1 } };
+  const video = { width: 32, height: 24, timescale: 12000, delta: 3000, avcC: EDGE_AVCC, samples: [0, 1, 2].map((i) => ({ data: Uint8Array.of(i, 1, 2, 3), key: !i })) };
+  Object.assign(api, {
+    manifest: () => ({ piece: 'a', seed: 1, t: 0.5 }),
+    filmOffer: async () => ({ format: 'mp4' }),
+    film: async () => ({ blob: new Blob([muxMp4({ manifest, video })]), width: 32, height: 24, frames: 3, seconds: 0.75, sound }),
+    loudness: () => heard,
+  });
+  api.examples.a.sound = {};
+  api.render.renderSound = async () => buffer(1);
+  globals.OfflineAudioContext = class { async decodeAudioData() { return buffer(10 ** (sound.gain / 20)); } };
+  globals.document.getElementById = (id) => ({ checkVisibility: () => id === 'film1' });
+  return globals;
+}
+
+test('the browser check carries a shortfall into its film report, and refuses a film whose decoded loudness loudnessMatch refuses', async () => {
+  const vm = require('node:vm');
+  // As the page runs it, with frameMatch, soundMatch and loudnessMatch handed in, for an MP4 film.
+  const run = (sound, heard, force) => vm.runInNewContext(`((frameMatch, soundMatch, loudnessMatch) => (${inspectFilm})('a'${force ? `, '${force}'` : ''}))(${frameMatch}, ${soundMatch}, ${loudnessMatch})`,
+    soundFilmPage(sound, heard));
+  const peaky = await run({ codec: 'mp4a', gain: 6, lufs: -18.2, dbtp: -1, short: 4.2 }, { lufs: -18.21, dbtp: -1.02 });
+  assert.deepEqual([peaky.sound.gain, peaky.sound.lufs, peaky.sound.dbtp, peaky.sound.short], [6, -18.21, -1.02, 4.2], 'the level decoded, and the shortfall the export reports');
+  const level = await run({ codec: 'mp4a', gain: 6, lufs: -14, dbtp: -3 }, { lufs: -14.01, dbtp: -3 });
+  assert.equal('short' in JSON.parse(JSON.stringify(level.sound)), false, 'a film at -14 LUFS reports no shortfall');
+  await assert.rejects(run({ codec: 'mp4a', gain: 6, lufs: -14, dbtp: -3 }, { lufs: -14.3, dbtp: -3 }),
+    { message: 'a: the decoded soundtrack measures -14.30 LUFS and -3.00 dBTP, neither -14 LUFS nor -1 dBTP' });
+  await assert.rejects(run({ codec: 'Opus', gain: 6, lufs: -14.05, dbtp: -1.2 }, { lufs: -14.04, dbtp: -0.94 }, 'no-aac'),
+    { message: 'a: the decoded Opus soundtrack peaks at -0.94 dBTP, not under -1 dBTP' });
+});
+
 test('the browser check scores each decoded frame by the pixels its VideoFrame holds, and closes every frame', async () => {
   const vm = require('node:vm');
   const { globals, count } = filmPage();
-  // As the page runs it, with frameMatch and soundMatch handed in, for a forced WebM film.
-  const film = await vm.runInNewContext(`((frameMatch, soundMatch) => (${inspectFilm})('a', 'no-h264', async (record) => ({ report: await record(), refusals: [] })))(${frameMatch}, ${soundMatch})`, globals);
+  // As the page runs it, with frameMatch, soundMatch and loudnessMatch handed in, for a forced WebM film.
+  const film = await vm.runInNewContext(`((frameMatch, soundMatch, loudnessMatch) => (${inspectFilm})('a', 'no-h264', async (record) => ({ report: await record(), refusals: [] })))(${frameMatch}, ${soundMatch}, ${loudnessMatch})`, globals);
   // Through Array.from: the page's arrays belong to another realm.
   assert.deepEqual(Array.from(film.decoded, (d) => [d.frame, d.psnrDb]), [[0, 99], [1, 99], [2, 99]], 'each frame read as the film holds it');
   assert.ok(film.decoded.every((d) => d.neighbourDb < 30), 'and unlike its neighbours');
@@ -633,6 +683,49 @@ test('two renders of a soundtrack match only when every sample holds the same bi
     `differ first in channel 1 at sample 3: 0.125 (0x3e000000) against ${near} (0x3e000001)`, 'the channel, sample and both values of the first difference');
   assert.match(same(render([0, 1]), render([-0, 1])), /channel 0 at sample 0: 0 \(0x0\) against 0 \(0x80000000\)/, 'a negative zero is other bits');
   assert.equal(same(render(quiet), render(quiet.slice(1))), 'hold 1 x 4 and 1 x 3 samples', 'a render of another length');
+});
+
+test('a decoded soundtrack measures -14 LUFS or its codec\'s ceiling, Opus stays under -1 dBTP, and the report names a shortfall past 3 LU', () => {
+  // As the page runs it, from its source text alone.
+  const match = new Function(`return (${loudnessMatch});`)();
+  const heard = (lufs, dbtp) => ({ lufs, dbtp });
+  const aac = (lufs, short) => ({ codec: 'mp4a', lufs, ...(short !== undefined && { short }) });
+  const opus = (lufs, short) => ({ codec: 'Opus', lufs, ...(short !== undefined && { short }) });
+
+  // -14 LUFS within 0.1, at any peak under the ceiling.
+  assert.equal(match(heard(-14.01, -2.77), aac(-14)), null, 'readout as AAC');
+  assert.equal(match(heard(-14.06, -1.03), aac(-14.05)), null, 'settle as AAC');
+  assert.equal(match(heard(-14.3, -3), aac(-14.3)), 'the decoded soundtrack measures -14.30 LUFS and -3.00 dBTP, neither -14 LUFS nor -1 dBTP',
+    'quieter, and not at the ceiling');
+  // Or quieter, at the ceiling: -1 dBTP within 0.1 for AAC.
+  assert.equal(match(heard(-18.21, -1.02), aac(-18.2, 4.2)), null, 'a peaky soundtrack at the AAC ceiling');
+  assert.equal(match(heard(-14.2, -0.97), aac(-14.2)), null, 'AAC may decode a hair over -1 dBTP');
+  assert.match(match(heard(-17.5, -1.13), aac(-17.5, 3.5)), /^the decoded soundtrack .* neither -14 LUFS nor -1 dBTP$/, 'over 0.1 dB under the AAC ceiling');
+  assert.match(match(heard(-13.5, -1), aac(-13.5)), /-13\.50 LUFS and -1\.00 dBTP, neither/, 'louder than -14 LUFS is never the ceiling\'s doing');
+  // -1.2 dBTP within 0.15 for Opus.
+  assert.equal(match(heard(-14.24, -1.3), opus(-14.25)), null, 'settle as Opus, stopped at its ceiling');
+  assert.equal(match(heard(-14.24, -1.34), opus(-14.25)), null, 'within 0.15 dB of -1.2 dBTP');
+  assert.match(match(heard(-14.24, -1.36), opus(-14.25)), /neither -14 LUFS nor -1\.2 dBTP$/, 'over 0.15 dB under it');
+  assert.match(match(heard(-14.24, -1.3), aac(-14.25)), /neither -14 LUFS nor -1 dBTP$/, 'the same soundtrack is not at the AAC ceiling');
+  // An Opus soundtrack under -1 dBTP whatever its loudness; AAC has no such rule.
+  assert.equal(match(heard(-14.04, -0.94), opus(-14.05)), 'the decoded Opus soundtrack peaks at -0.94 dBTP, not under -1 dBTP', 'at -14 LUFS');
+  assert.equal(match(heard(-14.01, -1), opus(-14)), 'the decoded Opus soundtrack peaks at -1.00 dBTP, not under -1 dBTP', 'at -1 dBTP itself');
+  assert.equal(match(heard(-14.04, -0.94), aac(-14.05)), null, 'as AAC');
+
+  // The report names a shortfall exactly when the level it encoded at is more
+  // than 3 LU under -14 LUFS. No example is that far short; a peaky one is.
+  assert.equal(match(heard(-18.41, -1.21), opus(-18.4, 4.4)), null, 'a peaky soundtrack as Opus');
+  assert.equal(match(heard(-18.21, -1.02), aac(-18.2)), 'the export encoded the soundtrack at -18.2 LUFS and reports no shortfall, 4.20 LU under -14 LUFS');
+  assert.match(match(heard(-18.41, -1.21), opus(-18.4)), /reports no shortfall, 4\.40 LU under -14 LUFS$/);
+  assert.equal(match(heard(-16.51, -1.01), aac(-16.5)), null, 'within 3 LU it says nothing');
+  assert.equal(match(heard(-16.51, -1.01), aac(-16.5, 2.5)), 'the export encoded the soundtrack at -16.5 LUFS and reports a shortfall of 2.5 LU, within 3 LU of -14 LUFS');
+  assert.match(match(heard(-14.01, -2.77), aac(-14, 0)), /a shortfall of 0 LU/, 'nor at the target');
+  assert.equal(match(heard(-17.02, -1.02), aac(-17.01, 3.01)), null);
+  assert.match(match(heard(-17.02, -1.02), aac(-17.01)), /no shortfall, 3\.01 LU/, 'a hundredth past 3 LU');
+  // The report rounds the level to two decimals and measures the shortfall
+  // before rounding, so at exactly -17 LUFS it may be a hair past 3 LU or not.
+  assert.equal(match(heard(-17.01, -1.02), aac(-17, 3)), null, 'a shortfall at -17.00 LUFS');
+  assert.equal(match(heard(-17.01, -1.02), aac(-17)), null, 'none at -17.00 LUFS');
 });
 
 test('a forced WebM run records again only when the page refuses a recording as behind schedule, three recordings at most', async () => {
