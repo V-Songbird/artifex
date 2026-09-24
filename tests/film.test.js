@@ -1093,11 +1093,20 @@ test('every film soundtrack reaches -14 LUFS with one static gain, or stops at -
   assert.ok(Math.abs(measureLoudness(planar(peaky.encoded)).dbtp + 1) < 0.01 && Math.abs(dbtp + 1) < 0.005, 'and the soundtrack peaks at -1 dBTP');
   assert.ok(lufs < -14, `short of -14 LUFS at ${lufs}`);
 
-  // Silence has no loudness to set. A sample that is not a finite number is
-  // refused wherever it falls: an infinite one early would otherwise read as
-  // silence and be encoded, and one later would give a gain of -Infinity.
+  // More than 3 LU under the target, the report says by how many; a soundtrack
+  // at the target, or stopped within 3 LU of it by softer clicks, says nothing.
+  assert.ok(lufs < -17 && peaky.report.sound.short === Math.round((-14 - lufs) * 100) / 100,
+    `${lufs} LUFS is ${-14 - lufs} LU short, and the report says ${peaky.report.sound.short}`);
+  assert.equal(quiet.report.sound.short, undefined, 'a soundtrack at -14 LUFS reports no shortfall');
+  const near = (await exported((x) => { x.set(tone([[2, -30]])); for (let i = 0; i < x.length; i += 12000) x[i] = 0.18; })).report.sound;
+  assert.ok(near.lufs < -14 && near.lufs > -17 && near.short === undefined, `${near.lufs} LUFS reports a shortfall of ${near.short}`);
+
+  // Silence has no loudness to set, nor any shortfall. A sample that is not a
+  // finite number is refused wherever it falls: an infinite one early would
+  // otherwise read as silence and be encoded, and one later would give a gain
+  // of -Infinity.
   const silent = await exported(() => {});
-  assert.deepEqual([silent.report.sound.gain, silent.report.sound.lufs], [0, null]);
+  assert.deepEqual([silent.report.sound.gain, silent.report.sound.lufs, silent.report.sound.short], [0, null, undefined]);
   for (const bad of [NaN, Infinity, -Infinity]) {
     for (const at of [7, 90000]) {
       await assert.rejects(exported((x) => { x.set(tone([[2, -30]])); x[at] = bad; }), /not finite numbers/, `${bad} at sample ${at}`);

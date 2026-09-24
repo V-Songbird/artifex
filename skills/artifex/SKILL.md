@@ -483,8 +483,9 @@ solved trajectory.
   soundtrack one gain, up to -14 LUFS unless its true peak reaches -1 dBTP
   first, and applies no compression. Set voices against each other, not the
   overall level. Peaks far above the body of the mix stop the gain early, so
-  such a film plays quieter than -14 LUFS; `npm run browser` reports each
-  decoded film's loudness and true peak.
+  such a film plays quieter than -14 LUFS. More than 3 LU under it, the
+  export report's `sound.short` says by how many LU; `npm run browser`
+  reports each decoded film's loudness and true peak.
 - **Sum voices two at a time.** Installed Edge adds up three or more
   connections into one input in an order that changes from render to render,
   so such a graph renders other last bits each time, and its film other audio
