@@ -69,4 +69,5 @@ jobs:
       - name: Require every mutation shard
         env:
           RESULT: ${{ needs.mutations.result }}
-        run: node -e "if (process.env.RESULT !== 'success') { console.error('Mutation shards did not all succeed: ' + process.env.RESULT); process.exit(1); }"
+        run: |
+          node -e "if (process.env.RESULT !== 'success') { console.error('Mutation shards did not all succeed: ' + process.env.RESULT); process.exit(1); }"
