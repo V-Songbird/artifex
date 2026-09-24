@@ -36,7 +36,10 @@ jobs:
           node-version-file: .nvmrc
           package-manager-cache: false
       - name: Run mutation checks
-        run: node tests/negative.js --shard ${{ matrix.shard }}/8
+        # Through npm, which sets npm_execpath for tests that run npm themselves;
+        # bash forwards `--` on Windows, where a PowerShell npm shim may not.
+        shell: bash
+        run: npm run negative -- --shard ${{ matrix.shard }}/8
 
   check:
     name: Check (${{ matrix.os }})
