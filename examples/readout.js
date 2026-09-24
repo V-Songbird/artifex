@@ -29,6 +29,7 @@ const { mix } = require('../core/colour.js');
 const { stroke } = require('../core/path.js');
 const { span, shots, shotAt } = require('../core/time.js');
 const { layer } = require('../core/layer.js');
+const { sumInto } = require('../core/sound.js');
 
 const DIGITS = (
   '1415926535' + '8979323846' + '2643383279' + '5028841971' + '6939937510'
@@ -191,6 +192,7 @@ module.exports = {
     air.connect(ctx.destination);
     const voice = VOICES[ACCENTS.indexOf(s.accent)];
     const film = shots(SCORE, timeline);
+    const notes = [];
     const note = (at, pitch, decay, gain, pan, overtone) => {
       const env = ctx.createGain();
       env.gain.setValueAtTime(0, at);
@@ -199,7 +201,7 @@ module.exports = {
       const place = ctx.createStereoPanner();
       place.pan.value = pan;
       env.connect(place);
-      place.connect(out);
+      notes.push(place);
       for (const [mul, level] of [[1, 1], [2, overtone]]) {
         if (!level) continue;
         const osc = ctx.createOscillator();
@@ -224,6 +226,8 @@ module.exports = {
       note(at, ROOT_NOTE + DEGREES[c.digit], voice.decay * (c.wide ? 1.6 : 1), 0.2,
         (c.col / (COLS - 1)) * 1.2 - 0.6, c.digit >= 7 ? voice.octave * 2 : voice.octave);
     }
+    // Two at a time, so every render adds the notes up in the same order.
+    sumInto(ctx, notes, out);
   },
 };
 

@@ -253,6 +253,24 @@ function frameMatch(frame, scores, floorDb = 30) {
   return null;
 }
 
+// Two renders of one soundtrack, compared bit for bit. Installed Edge adds up
+// three or more connections into one input in an order that changes between
+// renders; the examples sum their voices two at a time, so it renders each to
+// the same bits every time. Returns where the two first differ, or null.
+function soundMatch(a, b) {
+  if (a.numberOfChannels !== b.numberOfChannels || a.length !== b.length) {
+    return 'hold ' + a.numberOfChannels + ' x ' + a.length + ' and ' + b.numberOfChannels + ' x ' + b.length + ' samples';
+  }
+  for (let c = 0; c < a.numberOfChannels; c++) {
+    const x = a.getChannelData(c), y = b.getChannelData(c);
+    const xs = new Uint32Array(x.buffer, x.byteOffset, x.length), ys = new Uint32Array(y.buffer, y.byteOffset, y.length);
+    for (let i = 0; i < x.length; i++) {
+      if (xs[i] !== ys[i]) return 'differ first in channel ' + c + ' at sample ' + i + ': ' + x[i] + ' (0x' + xs[i].toString(16) + ') against ' + y[i] + ' (0x' + ys[i].toString(16) + ')';
+    }
+  }
+  return null;
+}
+
 // Serialized into the page for a forced WebM run. The page refuses a recording
 // that fell behind its schedule, which a loaded machine causes; this records
 // again, at most `limit` recordings in all, and names each refusal with the
@@ -282,7 +300,7 @@ async function retryBehindSchedule(record, frames, limit = 3) {
 // their own drawn frame, as frameMatch judges, and a declared
 // soundtrack must decode to exactly the film's length, start as a fresh render
 // does, and measure -14 LUFS or peak at -1 dBTP, and two more renders of it must
-// agree within 1e-6. The export's own verdict is read from the file. The
+// be the same bits. The export's own verdict is read from the file. The
 // replay manifest is found in the film's bytes by this check's own scan, not
 // readMp4, so a fault shared by the writer and the reader cannot pass: it must
 // be the page's recipe with the frames drawn in place of the playhead.
@@ -403,16 +421,11 @@ async function inspectFilm(name, force, retry) {
     if (Math.abs(decoded.length - want) > 1) {
       throw new Error(name + ': the soundtrack decodes to ' + decoded.length + ' samples against the film\'s ' + want);
     }
-    // Edge adds up a node's three or more inputs in an order that changes
-    // between renders, so two renders agree only to the last bits of a float.
+    // Two renders must be the same bits, as soundMatch judges.
     const [a, b] = [await api.render.renderSound(p, solved, { OfflineAudioContext }),
       await api.render.renderSound(p, solved, { OfflineAudioContext })];
-    let apart = 0;
-    for (let c = 0; c < a.numberOfChannels; c++) {
-      const x = a.getChannelData(c), y = b.getChannelData(c);
-      for (let i = 0; i < x.length; i++) apart = Math.max(apart, Math.abs(x[i] - y[i]));
-    }
-    if (!(apart <= 1e-6)) throw new Error(name + ': two renders of the soundtrack differ by ' + apart);
+    const apart = soundMatch(a, b);
+    if (apart) throw new Error(name + ': two renders of the soundtrack ' + apart);
     // A codec's priming can swallow or shift the start of a soundtrack: from its
     // first sound, 1024 decoded samples must follow a fresh render at the gain
     // the export applied. In installed Edge the examples decode 29 to 52 dB from
@@ -441,7 +454,7 @@ async function inspectFilm(name, force, retry) {
         + ' dBTP, neither -14 LUFS nor -1 dBTP');
     }
     sound = {
-      seconds: +decoded.duration.toFixed(3), samples: decoded.length, peak: +peak.toFixed(3), renderDiff: apart,
+      seconds: +decoded.duration.toFixed(3), samples: decoded.length, peak: +peak.toFixed(3),
       gain: report.sound.gain, lufs: +heard.lufs.toFixed(2), dbtp: +heard.dbtp.toFixed(2),
       onset, startDb: +startDb.toFixed(1),
     };
@@ -664,8 +677,9 @@ async function checkPage(client, context, options) {
   for (const name of options.force ? chosen.slice(0, 1) : chosen) {
     context.phase = 'film export ' + name;
     // A WebM film comes back whole, as base64, and can pass the 4 MiB a reply may carry.
-    const film = await evaluateInPieces(client, '((frameMatch) => (' + inspectFilm.toString() + ')(' + JSON.stringify(name)
-      + (options.force ? ', ' + JSON.stringify(options.force) + ', ' + retryBehindSchedule.toString() : '') + '))(' + frameMatch.toString() + ')');
+    const film = await evaluateInPieces(client, '((frameMatch, soundMatch) => (' + inspectFilm.toString() + ')(' + JSON.stringify(name)
+      + (options.force ? ', ' + JSON.stringify(options.force) + ', ' + retryBehindSchedule.toString() : '') + '))('
+      + frameMatch.toString() + ', ' + soundMatch.toString() + ')');
     const route = routeVerdict(options, film);
     if (route) throw new Error('browser: ' + route);
     if (film.webm) {
@@ -832,6 +846,6 @@ if (require.main === module) main().catch((error) => { console.error(error.messa
 
 module.exports = {
   parseArgs, findEdge, connectCDP, evaluate, servePage, inspectPiece, filmsToExport, inspectFilm, runBrowserCheck, checkPage,
-  stopBrowser, removeProfile, main, FORCED, retryBehindSchedule, sheetReady, captureSheet, frameMatch, withEdge, waitFor, routeVerdict,
+  stopBrowser, removeProfile, main, FORCED, retryBehindSchedule, sheetReady, captureSheet, frameMatch, soundMatch, withEdge, waitFor, routeVerdict,
   evaluateInPieces, PIECE_CHARS, SHOT_BYTES, bandRows, sheetPieces, sheetClip,
 };

@@ -25,6 +25,7 @@ const { lerp } = require('../core/num.js');
 const { mix, mixOklch } = require('../core/colour.js');
 const { fill } = require('../core/path.js');
 const { span, ease, tween, shots } = require('../core/time.js');
+const { sumInto } = require('../core/sound.js');
 
 const W = 960;
 const H = 540;
@@ -215,6 +216,7 @@ module.exports = {
     air.frequency.value = 3600;
     out.connect(air);
     air.connect(ctx.destination);
+    const notes = [];
     for (const c of s.cues.changes) {
       const at = c.onset / timeline.hz;
       const decay = 2.4 - (c.note - 40) * 0.035;
@@ -229,10 +231,12 @@ module.exports = {
       osc.frequency.value = hertz(c.note);
       osc.connect(env);
       env.connect(place);
-      place.connect(out);
+      notes.push(place);
       osc.start(at);
       osc.stop(at + decay + 0.05);
     }
+    // Two at a time, so every render adds the notes up in the same order.
+    sumInto(ctx, notes, out);
   },
 };
 

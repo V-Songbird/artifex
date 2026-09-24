@@ -10,7 +10,7 @@ const { spawn, spawnSync } = require('node:child_process');
 const { setTimeout: delay } = require('node:timers/promises');
 const {
   parseArgs, findEdge, connectCDP, evaluate, servePage, runBrowserCheck, stopBrowser, removeProfile, main, filmsToExport, FORCED, sheetReady,
-  retryBehindSchedule, frameMatch, checkPage, inspectPiece, inspectFilm, evaluateInPieces, PIECE_CHARS, routeVerdict,
+  retryBehindSchedule, frameMatch, soundMatch, checkPage, inspectPiece, inspectFilm, evaluateInPieces, PIECE_CHARS, routeVerdict,
   SHOT_BYTES, bandRows, sheetPieces, sheetClip,
 } = require('../tools/check-browser.js');
 
@@ -318,8 +318,8 @@ test('the browser check accepts a fallback colour route only when asked', () => 
 function pageOf(films) {
   const answer = (expression) => {
     const called = (fn) => expression.startsWith('(' + fn + ')(');
-    // inspectFilm runs with frameMatch handed in; the film's name is its first argument.
-    const film = '((frameMatch) => (' + inspectFilm + ')(';
+    // inspectFilm runs with frameMatch and soundMatch handed in; the film's name is its first argument.
+    const film = '((frameMatch, soundMatch) => (' + inspectFilm + ')(';
     const name = () => JSON.parse(/^"[^"]*"/.exec(expression.slice(film.length))[0]);
     if (expression.startsWith('document.readyState')) return true;
     if (expression === 'window.__artifex.names') return ['a'];
@@ -588,8 +588,8 @@ function filmPage(frames = 3, hz = 4) {
 test('the browser check scores each decoded frame by the pixels its VideoFrame holds, and closes every frame', async () => {
   const vm = require('node:vm');
   const { globals, count } = filmPage();
-  // As the page runs it, with frameMatch handed in, for a forced WebM film.
-  const film = await vm.runInNewContext(`((frameMatch) => (${inspectFilm})('a', 'no-h264', async (record) => ({ report: await record(), refusals: [] })))(${frameMatch})`, globals);
+  // As the page runs it, with frameMatch and soundMatch handed in, for a forced WebM film.
+  const film = await vm.runInNewContext(`((frameMatch, soundMatch) => (${inspectFilm})('a', 'no-h264', async (record) => ({ report: await record(), refusals: [] })))(${frameMatch}, ${soundMatch})`, globals);
   // Through Array.from: the page's arrays belong to another realm.
   assert.deepEqual(Array.from(film.decoded, (d) => [d.frame, d.psnrDb]), [[0, 99], [1, 99], [2, 99]], 'each frame read as the film holds it');
   assert.ok(film.decoded.every((d) => d.neighbourDb < 30), 'and unlike its neighbours');
@@ -615,6 +615,24 @@ test('a decoded frame matches its drawn frame only when it scores at least 30 dB
   assert.equal(match(84, [[83, 30.2], [84, 30], [85, 12]]), 'looks most like drawn frame 83', 'a shifted frame');
   assert.equal(match(84, [[83, 21], [84, 29.9], [85, 21]]), 'resembles its drawn frame by 29.9 dB, under 30 dB', 'a garbled frame');
   assert.equal(match(0, [[0, 30], [1, 18]]), null, 'the floor itself matches');
+});
+
+test('two renders of a soundtrack match only when every sample holds the same bits', () => {
+  // As the page runs it, from its source text alone.
+  const same = new Function(`return (${soundMatch});`)();
+  const render = (...channels) => ({
+    numberOfChannels: channels.length, length: channels[0].length, getChannelData: (c) => Float32Array.from(channels[c]),
+  });
+  const quiet = [0.25, -0.5, 0, 0.125];
+  assert.equal(same(render(quiet, quiet), render(quiet, quiet)), null, 'the same bits');
+  // Edge's own difference between renders of a wider sum: one float32 step,
+  // far inside the 1e-6 the check once allowed.
+  const near = Math.fround(0.125 + 2 ** -26);
+  assert.ok(near !== 0.125 && near - 0.125 < 1e-6);
+  assert.equal(same(render(quiet, quiet), render(quiet, [0.25, -0.5, 0, near])),
+    `differ first in channel 1 at sample 3: 0.125 (0x3e000000) against ${near} (0x3e000001)`, 'the channel, sample and both values of the first difference');
+  assert.match(same(render([0, 1]), render([-0, 1])), /channel 0 at sample 0: 0 \(0x0\) against 0 \(0x80000000\)/, 'a negative zero is other bits');
+  assert.equal(same(render(quiet), render(quiet.slice(1))), 'hold 1 x 4 and 1 x 3 samples', 'a render of another length');
 });
 
 test('a forced WebM run records again only when the page refuses a recording as behind schedule, three recordings at most', async () => {

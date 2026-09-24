@@ -1194,10 +1194,9 @@ test('a soundtrack of seeded noise renders in the audio fake, and its record rea
 });
 
 test('every soundtrack builds the same graph each time it renders one solved state', async () => {
-  // A browser repeats the rendered samples only to their last bits, because it
-  // may add up a node's inputs in another order each time. Everything on the
-  // piece's side must repeat exactly: the nodes, their settings, every scheduled
-  // value and every connection.
+  // A browser can render the same samples twice only from the same graph.
+  // Everything on the piece's side must repeat exactly: the nodes, their
+  // settings, every scheduled value and every connection.
   const { renderSound } = require('../core/render.js');
   const { fakeAudio } = require('./fake-media.js');
   const graph = (record) => {
@@ -1223,6 +1222,25 @@ test('every soundtrack builds the same graph each time it renders one solved sta
     }
     assert.ok(renders[0].length > 0, `${name} builds a graph`);
     assert.ok(JSON.stringify(renders[1]) === JSON.stringify(renders[0]), `${name}: a second render of one solved state built another graph`);
+  }
+});
+
+test('no node or param in an example soundtrack takes more than two inputs', async () => {
+  // Installed Edge adds up three or more inputs in an order that changes between
+  // renders, so the same graph renders other last bits each time; two add up the
+  // same either way round. The examples sum their voices two at a time, and one
+  // browser renders each of their soundtracks to the same bytes every time.
+  const { renderSound } = require('../core/render.js');
+  const { fakeAudio } = require('./fake-media.js');
+  const sounding = NAMES.filter((name) => validate(EXAMPLES[name]).sound);
+  assert.ok(sounding.length >= 3, `only ${sounding.join(', ')} declares sound`);
+  for (const name of sounding) {
+    const p = validate(EXAMPLES[name]);
+    const audio = fakeAudio();
+    await renderSound(p, solve(p, p.seed), { OfflineAudioContext: audio.Context });
+    const arrive = new Map();
+    for (const n of audio.record.nodes) for (const t of n.to) arrive.set(t, (arrive.get(t) || 0) + 1);
+    for (const [t, k] of arrive) assert.ok(k <= 2, `${name}: a ${t.kind} takes ${k} inputs`);
   }
 });
 

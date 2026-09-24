@@ -128,6 +128,7 @@ require('./core/field.js')   // sampleGrid, gradient, curl, warp, threshold,
                              // isolines, streamline, streamlines
 require('./core/time.js')    // span, ease, tween, shots, shotAt
 require('./core/layer.js')   // layer
+require('./core/sound.js')   // sumInto
 ```
 
 **`noise2` is value noise and `gradient2` is gradient noise.** The derivative of
@@ -484,13 +485,15 @@ solved trajectory.
   overall level. Peaks far above the body of the mix stop the gain early, so
   such a film plays quieter than -14 LUFS; `npm run browser` reports each
   decoded film's loudness and true peak.
-- **Sound repeats to its last bits, not bytewise.** Installed Edge adds up a
-  node's three or more inputs in an order that changes from render to render,
-  so two renders of `readout` or `settle` in one page differ in about half or
-  four fifths of their samples, by at most 9e-8. A graph whose nodes take at most two inputs, such as voices
-  summed two at a time, renders identically. Compare soundtracks by
-  measurement: `npm run browser` requires two renders to agree within 1e-6.
-  Engines differ further, like pixels.
+- **Sum voices two at a time.** Installed Edge adds up three or more
+  connections into one input in an order that changes from render to render,
+  so such a graph renders other last bits each time, and its film other audio
+  bytes. Two add up the same either way round. Connect many voices to one node
+  with `sumInto(ctx, voices, into)` from `core/sound.js`, and one browser
+  renders the soundtrack and its film to the same bytes every time, as it does
+  for `readout`, `settle` and `cues`. Compare a soundtrack with a wider sum by
+  measurement. `npm run browser` requires two renders of each example to be
+  the same bits. Engines differ further, like pixels.
 
 ## Art-direction preset: focal composition
 
