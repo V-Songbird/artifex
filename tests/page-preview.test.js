@@ -2,9 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const vm = require('node:vm');
-const { html, bundle } = require('../tools/build-page.js');
-const { nullSurface } = require('../tools/bench.js');
+const { fakePage } = require('./fake-media.js');
 
 function registry(module) {
   module.exports = {
@@ -39,42 +37,19 @@ function previewModule(module) {
 }
 
 function page() {
-  const elements = new Map(), frames = new Map(), activity = { cpu: [], gpu: [], saved: [] };
-  let nextFrame = 0;
-  function element() {
-    return { children: [], dataset: {}, value: '', textContent: '', width: 80, height: 40,
-      classList: { add() {}, remove() {}, toggle() {} },
-      appendChild(child) { this.children.push(child); },
-      set innerHTML(value) { this.children = []; this.markup = value; },
-      get innerHTML() { return this.markup || ''; },
-      getContext() {
-        const g = nullSurface({ w: this.width, h: this.height });
-        g.fillRect = (...args) => activity.cpu.push(args);
-        g.drawImage = (image) => activity.gpu.push(image);
-        return g;
-      },
-      toBlob(callback) { callback(new Blob(['cpu png'])); },
-      click() { activity.saved.push(this.download); },
-    };
-  }
-  const png = element(); png.dataset.png = '1';
-  const sandbox = {
-    window: { requests: [], sessions: [] }, Blob,
-    document: {
-      getElementById(id) { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); },
-      createElement: element, querySelectorAll: () => [png],
+  const activity = { cpu: [], gpu: [], saved: [] };
+  // Every element is the shared stand-in canvas; a CPU frame is recorded by its
+  // rectangle fills and a GPU frame by the image drawn onto it.
+  const p = fakePage({
+    modules: { 'examples/index.js': registry, 'core/webgpu-preview.js': previewModule },
+    width: 80, height: 40, window: { requests: [], sessions: [] }, downloads: activity.saved,
+    onContext(g) {
+      const { fillRect } = g;
+      g.fillRect = function (...args) { activity.cpu.push(args); return fillRect.apply(this, args); };
+      g.drawImage = (image) => activity.gpu.push(image);
     },
-    history: { replaceState() {} }, location: { search: '' }, performance: { now: () => 1 },
-    requestAnimationFrame(callback) { frames.set(++nextFrame, callback); return nextFrame; },
-    cancelAnimationFrame(id) { frames.delete(id); },
-    URL: { createObjectURL: () => 'blob:fixture', revokeObjectURL() {} },
-    setTimeout(callback) { callback(); },
-  };
-  const overrides = "\n__def('examples/index.js', " + registry.toString() + ');'
-    + "\n__def('core/webgpu-preview.js', " + previewModule.toString() + ');';
-  vm.runInNewContext(html(bundle() + overrides).match(/<script>([\s\S]*)<\/script>/)[1], sandbox);
-  return { api: sandbox.window.__artifex, requests: sandbox.window.requests, sessions: sandbox.window.sessions,
-    elements, frames, activity, png };
+  });
+  return { api: p.api, requests: p.window.requests, sessions: p.window.sessions, elements: p.elements, frames: p.frames, activity, png: p.png };
 }
 
 const tick = () => new Promise(setImmediate);
@@ -90,6 +65,7 @@ test('page keeps CPU default, preview opt-in, and PNG on the reference renderer'
   const count = p.activity.cpu.length;
   p.png.onclick();
   assert.equal(p.activity.cpu.length, count + 1, 'PNG redraws with the CPU');
+  await tick();
   assert.equal(p.activity.saved[0], 'pixels-1@1x.png');
   assert.equal('preview' in p.api.manifest(), false, 'reference recipes do not claim GPU identity');
   p.api.select('still');

@@ -6,7 +6,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
-const { runSuite, mutationVerdict, terminateSuite, stillRunning, removeCopy, judgeMutation } = require('./negative.js');
+const { EventEmitter } = require('node:events');
+const {
+  runSuite, mutationVerdict, terminateSuite, removeCopy, judgeMutation, selectMutations, main, RUN_PREFIX, SUITE_TEMP, COPIED,
+} = require('./negative.js');
 
 const PASS_TAP = `TAP version 13
 # Subtest: checks the value
@@ -27,8 +30,11 @@ function captured(stdout, status = 0, extra = {}) {
   return runSuite('.', () => ({ stdout, stderr: '', status, signal: null, ...extra }));
 }
 
+// Short, like the runner's own names: a runner test nests a whole run inside a copy.
+const FIXTURE_PREFIX = 'artifex-rt-';
+
 function fixture(t, source) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'artifex-runner-test-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), FIXTURE_PREFIX));
   t.after(() => removeCopy(dir));
   fs.mkdirSync(path.join(dir, 'tests'));
   fs.writeFileSync(path.join(dir, 'tests', 'fixture.test.js'), source);
@@ -258,7 +264,7 @@ test('failed control exits 2, prints its failing assertion and removes only its 
   });`);
   const runner = path.join(dir, 'tests', 'negative.js');
   fs.copyFileSync(path.join(__dirname, 'negative.js'), runner);
-  const tempRoot = path.join(dir, 'temp-area');
+  const tempRoot = path.join(dir, 'temp');
   const unrelated = path.join(tempRoot, 'artifex-negative-unrelated');
   fs.mkdirSync(unrelated, { recursive: true });
   fs.writeFileSync(path.join(unrelated, 'keep.txt'), 'unrelated work');
@@ -289,10 +295,48 @@ test('failed control exits 2, prints its failing assertion and removes only its 
   assert.doesNotMatch(result.stdout, /suite green|\bcaught\b|ESCAPED|MISNAMED/);
   const allocated = JSON.parse(fs.readFileSync(evidence, 'utf8'));
   assert.equal(path.dirname(allocated), tempRoot);
-  assert.match(path.basename(allocated), /^artifex-negative-/);
+  assert.ok(path.basename(allocated).startsWith(RUN_PREFIX), allocated);
   assert.equal(fs.existsSync(allocated), false, 'the failed control must release its own source copy');
   assert.deepEqual(fs.readdirSync(tempRoot), ['artifex-negative-unrelated']);
   assert.equal(fs.readFileSync(path.join(unrelated, 'keep.txt'), 'utf8'), 'unrelated work');
+});
+
+test('a new run removes the copies of stopped runs and keeps their evidence and everything else', (t) => {
+  const dir = fixture(t, `require('node:test')('deliberately failing control', () => { throw Error('red'); });`);
+  const runner = path.join(dir, 'tests', 'negative.js');
+  fs.copyFileSync(path.join(__dirname, 'negative.js'), runner);
+  const tempRoot = path.join(dir, 'temp');
+  const gone = spawnSync(process.execPath, ['-e', '']).pid;
+  const seeded = {
+    [`${RUN_PREFIX}${gone}-stopped`]: ['control', 'm3', path.join('infrastructure', 'm3')],
+    [`${RUN_PREFIX}${gone}-copies`]: ['control', 'm0'],
+    [`${RUN_PREFIX}${process.pid}-live`]: ['m1'],
+    'artifex-negative-AbC123': ['m2'],
+    [`artifex-negative-${gone}-older`]: ['m4'],
+    'artifex-negative-unrelated': ['keep'],
+    'artifex-rt-other': ['tests'],
+  };
+  for (const [name, entries] of Object.entries(seeded)) {
+    for (const entry of entries) {
+      fs.mkdirSync(path.join(tempRoot, name, entry), { recursive: true });
+      fs.writeFileSync(path.join(tempRoot, name, entry, 'file'), 'kept');
+    }
+  }
+  const env = { ...process.env, TEMP: tempRoot, TMP: tempRoot, TMPDIR: tempRoot };
+  delete env.NODE_TEST_CONTEXT;
+  const result = spawnSync(process.execPath, [runner], { cwd: dir, encoding: 'utf8', env, windowsHide: true });
+  assert.equal(result.status, 2, result.stderr);
+  const list = (name) => (fs.existsSync(path.join(tempRoot, name)) ? fs.readdirSync(path.join(tempRoot, name)).sort() : null);
+  assert.deepEqual(list(`${RUN_PREFIX}${gone}-stopped`), ['infrastructure'], 'a stopped run keeps only its evidence');
+  assert.equal(fs.readFileSync(path.join(tempRoot, `${RUN_PREFIX}${gone}-stopped`, 'infrastructure', 'm3', 'file'), 'utf8'), 'kept');
+  assert.equal(list(`${RUN_PREFIX}${gone}-copies`), null, 'a stopped run without evidence is removed');
+  assert.deepEqual(list(`${RUN_PREFIX}${process.pid}-live`), ['m1'], 'a live run is never touched');
+  assert.deepEqual(list('artifex-negative-AbC123'), ['m2'], 'a root without a runner pid is not this sweep\'s');
+  assert.deepEqual(list(`artifex-negative-${gone}-older`), ['m4'], 'a root named before the short prefix is not this sweep\'s');
+  assert.deepEqual(list('artifex-negative-unrelated'), ['keep']);
+  assert.deepEqual(list('artifex-rt-other'), ['tests']);
+  assert.deepEqual(fs.readdirSync(tempRoot).sort(), Object.keys(seeded).filter((name) => !name.endsWith('-copies')).sort(),
+    'the run removed its own root and nothing else');
 });
 
 test('mutation suite deadlines have a finite default and reject invalid overrides before launch', async () => {
@@ -349,13 +393,17 @@ test('real hanging suite returns timeout metadata instead of a mutation verdict'
 test('timed-out control stops its actual process tree, keeps its evidence and preserves unrelated temporary work', (t) => {
   const dir = fixture(t, '');
   const pidsFile = path.join(dir, 'owned-pids.json');
+  const fixtureFile = path.join(dir, 'suite-fixture.json');
+  // Like a runner test, the killed suite made a temporary fixture it never removes.
   fs.writeFileSync(path.join(dir, 'tests', 'fixture.test.js'), `const {spawn}=require('node:child_process');
+    const fs=require('node:fs'), made=fs.mkdtempSync(require('node:path').join(require('node:os').tmpdir(),${JSON.stringify(FIXTURE_PREFIX)}));
+    fs.writeFileSync(${JSON.stringify(fixtureFile)},JSON.stringify(made));
     const child=spawn(process.execPath,['-e','setInterval(() => {}, 1000)'],{stdio:'ignore',windowsHide:true});
-    require('node:fs').writeFileSync(${JSON.stringify(pidsFile)},JSON.stringify([process.ppid,process.pid,child.pid]));
+    fs.writeFileSync(${JSON.stringify(pidsFile)},JSON.stringify([process.ppid,process.pid,child.pid]));
     setInterval(() => {}, 1000);`);
   const runner = path.join(dir, 'tests', 'negative.js');
   fs.copyFileSync(path.join(__dirname, 'negative.js'), runner);
-  const tempRoot = path.join(dir, 'temp-area');
+  const tempRoot = path.join(dir, 'temp');
   const unrelated = path.join(tempRoot, 'artifex-negative-unrelated');
   fs.mkdirSync(unrelated, { recursive: true });
   fs.writeFileSync(path.join(unrelated, 'keep.txt'), 'unrelated work');
@@ -377,6 +425,7 @@ test('timed-out control stops its actual process tree, keeps its evidence and pr
   // that never started. Lengthen the deadline until the whole tree has started;
   // every attempt must still time out and release its own copy.
   for (const deadline of [1500, 6000, 24000]) {
+    fs.rmSync(fixtureFile, { force: true });
     const env = { ...process.env, TEMP: tempRoot, TMP: tempRoot, TMPDIR: tempRoot, ARTIFEX_NEGATIVE_TIMEOUT_MS: String(deadline) };
     delete env.NODE_TEST_CONTEXT;
     const result = spawnSync(process.execPath, ['--require', observer, runner], {
@@ -396,28 +445,46 @@ test('timed-out control stops its actual process tree, keeps its evidence and pr
     assert.deepEqual(fs.readdirSync(kept).sort(), ['result.json', 'stderr.txt', 'stdout.tap']);
     const saved = JSON.parse(fs.readFileSync(path.join(kept, 'result.json'), 'utf8'));
     assert.deepEqual([saved.timedOut, saved.error.code, saved.timeoutMs], [true, 'ETIMEDOUT', deadline]);
+    if (fs.existsSync(fixtureFile)) {
+      const made = JSON.parse(fs.readFileSync(fixtureFile, 'utf8'));
+      assert.ok(made.startsWith(allocated + path.sep), 'the suite made its fixture inside the run: ' + made);
+      assert.equal(fs.existsSync(made), false, 'the killed suite leaves no fixture behind');
+    }
     fs.rmSync(allocated, { recursive: true, force: true });
     assert.deepEqual(fs.readdirSync(tempRoot), ['artifex-negative-unrelated']);
     if (ownedPids.length) break;
   }
+  assert.ok(fs.existsSync(fixtureFile), 'the killed suite made a fixture');
   assert.equal(ownedPids.length, 3, 'the real test worker and its descendant must have started');
   for (const pid of ownedPids) assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
   assert.equal(fs.readFileSync(path.join(unrelated, 'keep.txt'), 'utf8'), 'unrelated work');
 });
 
-test('owned teardown waits for named processes and fails only while one still runs', async (t) => {
-  const exited = spawnSync(process.execPath, ['-e', '']).pid;
-  const live = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true });
-  t.after(() => live.kill('SIGKILL'));
-  assert.deepEqual(await stillRunning([exited], 1000), []);
+test('owned teardown is judged by its own process, never by the kill command', async (t) => {
+  // Every kill targets a helper this test owns; each fake suite process only
+  // decides whether it exited, as a real one does after or during the kill.
+  const helpers = [];
+  t.after(() => { for (const helper of helpers) try { helper.kill('SIGKILL'); } catch { /* already stopped */ } });
+  const owned = () => {
+    const helper = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'],
+      { stdio: 'ignore', windowsHide: true, detached: process.platform !== 'win32' });
+    helpers.push(helper);
+    return helper;
+  };
+  const suite = (exitCode) => Object.assign(new EventEmitter(), { pid: owned().pid, exitCode, signalCode: null });
+  const stuck = suite(null);
   const started = Date.now();
-  assert.deepEqual(await stillRunning([exited, live.pid], 300), [live.pid], 'a named process that keeps running is reported');
-  assert.ok(Date.now() - started >= 300, 'a running process is re-checked until the limit');
-  if (process.platform !== 'win32') return;
-  // taskkill exits nonzero for a member that had already exited; that tree is stopped.
-  assert.equal(await terminateSuite({ pid: exited }), null);
-  assert.match((await terminateSuite({ pid: 'not-a-pid' }))?.message ?? '', /owned tree termination exited/,
-    'a failure that names no process remains a teardown failure');
+  assert.match((await terminateSuite(stuck, 300))?.message ?? '',
+    new RegExp(`owned tree termination left process ${stuck.pid} running 300 ms after the kill`), 'a process still running is a failure');
+  assert.ok(Date.now() - started >= 300, 'the process is awaited for the whole grace period');
+  assert.equal(await terminateSuite(suite(1), 300), null, 'a process that exited by itself has stopped');
+  const exiting = suite(null);
+  // Exit only once teardown is waiting, as when the exit arrives after the kill's.
+  exiting.on('newListener', (event) => { if (event === 'exit') setImmediate(() => exiting.emit('exit', 1, null)); });
+  assert.equal(await terminateSuite(exiting, 5000), null, 'a process seen exiting within the grace period has stopped');
+  const real = owned();
+  assert.equal(await terminateSuite(real), null, 'a real process is stopped');
+  assert.notEqual(real.exitCode ?? real.signalCode, null);
 });
 
 test('an infrastructure result keeps its streams and stays infrastructure after one report-only retry', async (t) => {
@@ -465,4 +532,126 @@ test('misnamed and infrastructure results print what the unintended failure saw'
   const ambiguous = await judgeMutation('.', { why: 'w', expect: 'checks\\nvalue' }, evidence, 1000, execute);
   assert.equal(ambiguous.verdict, 'infra');
   assert.match(ambiguous.text, /checks the value\n +duration_ms: 1\n +error: 'unintended failure'/);
+});
+
+test('mutation filters choose by mutated file and expected title and refuse what matches nothing', () => {
+  const list = [
+    { file: 'examples/readout.js', expect: 'readout: the reading keeps its pace' },
+    { file: 'examples/readout.js', expect: 'readout: every digit is heard' },
+    { file: 'core/film.js', expect: 'film: frames keep their timestamps' },
+  ];
+  assert.deepEqual(selectMutations([], list), { chosen: list, filter: '' }, 'no filter runs everything');
+  assert.deepEqual(selectMutations(['--file', 'examples/readout.js'], list).chosen, list.slice(0, 2));
+  assert.deepEqual(selectMutations(['--file', '.\\examples\\readout.js'], list).chosen, list.slice(0, 2), 'Windows paths name the same file');
+  assert.deepEqual(selectMutations(['--expect', 'digit'], list).chosen, [list[1]]);
+  assert.deepEqual(selectMutations(['--file', 'core/film.js', '--file', 'examples/readout.js'], list).chosen, list, 'a repeated kind widens');
+  const both = selectMutations(['--file', 'examples/readout.js', '--expect', 'pace'], list);
+  assert.deepEqual(both, { chosen: [list[0]], filter: '--file examples/readout.js --expect pace' }, 'both kinds must match');
+  for (const args of [['--file'], ['--file', ''], ['--file', '--expect'], ['--other', 'x'], ['examples/readout.js']]) {
+    assert.throws(() => selectMutations(args, list), /usage: node tests\/negative\.js/, JSON.stringify(args));
+  }
+  assert.throws(() => selectMutations(['--file', 'core/film.js', '--expect', 'digit'], list), /no mutation matches --file core\/film\.js --expect digit/);
+});
+
+/** Run the runner's main on a fixture project with its own mutations, capturing what it prints. */
+async function runMain(t, args, mutations, root) {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'artifex-main-test-'));
+  const saved = ['TEMP', 'TMP', 'TMPDIR'].map((key) => [key, process.env[key]]);
+  for (const [key] of saved) process.env[key] = tempRoot;
+  const lines = [];
+  const log = t.mock.method(console, 'log', (line) => lines.push(String(line)));
+  const error = t.mock.method(console, 'error', (line) => lines.push(String(line)));
+  try {
+    return { code: await main(args, { mutations, root }), output: lines.join('\n'), tempRoot };
+  } finally {
+    log.mock.restore();
+    error.mock.restore();
+    for (const [key, value] of saved) if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    t.after(() => removeCopy(tempRoot));
+  }
+}
+
+/** A fixture project whose suite records which runner copies exist beside the one it runs in. */
+function mutableProject(t) {
+  const root = fixture(t, '');
+  const seen = path.join(root, 'seen.jsonl');
+  fs.writeFileSync(path.join(root, 'tests', 'value.txt'), 'good');
+  fs.writeFileSync(path.join(root, 'tests', 'size.txt'), 'small');
+  fs.writeFileSync(path.join(root, 'tests', 'fixture.test.js'), `const fs = require('node:fs'), path = require('node:path');
+    const test = require('node:test');
+    fs.appendFileSync(${JSON.stringify(seen)}, JSON.stringify({ copy: path.basename(process.cwd()), beside: fs.readdirSync('..') }) + '\\n');
+    test('checks the value', () => { if (fs.readFileSync('tests/value.txt', 'utf8') !== 'good') throw Error('bad value'); });
+    test('checks the size', () => { if (fs.readFileSync('tests/size.txt', 'utf8') === 'big') process.stdout.write('x'.repeat(2 * 1048576)); });`);
+  const observed = () => fs.readFileSync(seen, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  return { root, observed };
+}
+
+test('a filtered run judges only its mutations, still checks every patch text and says it was partial', async (t) => {
+  const { root, observed } = mutableProject(t);
+  const mutations = [
+    { why: 'value goes bad', file: 'tests/value.txt', from: 'good', to: 'bad', expect: 'checks the value' },
+    { why: 'size grows', file: 'tests/size.txt', from: 'small', to: 'big', expect: 'checks the size' },
+    { why: 'a stale patch', file: 'tests/size.txt', from: 'no such text', to: 'x', expect: 'checks the size' },
+  ];
+  const run = await runMain(t, ['--file', 'tests/value.txt'], mutations, root);
+  assert.match(run.output, /^control {2}1 of 3 mutations selected by --file tests\/value\.txt, suite green/m);
+  assert.match(run.output, /^ok {14}value goes bad$/m);
+  assert.match(run.output, /^MUTATION MISS {3}a stale patch$/m, 'an unselected stale mutation still fails loudly');
+  assert.doesNotMatch(run.output, /size grows/, 'an unselected mutation is not judged');
+  assert.match(run.output, /^partial run, 1 of 3 mutations by --file tests\/value\.txt: 1 caught {2}0 escaped {2}0 misnamed {2}1 invalid {2}0 infrastructure$/m);
+  assert.doesNotMatch(run.output, /^\d+ caught/m, 'a partial run never prints the full summary');
+  assert.equal(run.code, 1, 'the stale mutation fails the run');
+  assert.deepEqual(observed().map((o) => o.copy), ['control', 'm0'], 'only the control and the chosen mutation ran');
+  await assert.rejects(runMain(t, ['--file', 'tests/missing.txt'], mutations, root), /no mutation matches --file tests\/missing\.txt/);
+  assert.deepEqual(observed().map((o) => o.copy), ['control', 'm0'], 'a filter that matches nothing runs nothing');
+});
+
+test('the runner holds at most one mutated copy at a time and kept evidence survives each removal', async (t) => {
+  const { root, observed } = mutableProject(t);
+  const mutations = [
+    { why: 'value goes bad', file: 'tests/value.txt', from: 'good', to: 'bad', expect: 'checks the value' },
+    { why: 'size floods the report', file: 'tests/size.txt', from: 'small', to: 'big', expect: 'checks the size' },
+    { why: 'value goes bad again', file: 'tests/value.txt', from: 'good', to: 'worse', expect: 'checks the value' },
+  ];
+  const run = await runMain(t, [], mutations, root);
+  assert.equal(run.code, 1, run.output);
+  assert.match(run.output, /^INFRA {11}size floods the report$/m);
+  assert.match(run.output, /^2 caught {2}0 escaped {2}0 misnamed {2}0 invalid {2}1 infrastructure$/m, 'verdicts are unchanged');
+  const seen = observed();
+  assert.deepEqual(seen.map((o) => o.copy), ['control', 'm0', 'm1', 'm1', 'm2'], 'the control, each mutation and one report-only retry ran');
+  for (const { copy, beside } of seen.filter((o) => o.copy !== 'control')) {
+    assert.deepEqual(beside.filter((name) => /^m\d+$/.test(name)), [copy], `only ${copy} existed while it ran`);
+    assert.ok(beside.includes('control'), 'the control stays until the run ends');
+  }
+  assert.ok(seen.at(-1).beside.includes('infrastructure'), 'the evidence kept for m1 existed while m2 ran');
+  const [runRoot] = fs.readdirSync(run.tempRoot).filter((name) => name.startsWith(RUN_PREFIX));
+  const evidence = path.join(run.tempRoot, runRoot, 'infrastructure');
+  assert.deepEqual(fs.readdirSync(path.join(run.tempRoot, runRoot)), ['infrastructure'], 'every copy is gone and the evidence stays');
+  assert.deepEqual(fs.readdirSync(evidence).sort(), ['m1', 'm1-retry']);
+  assert.ok(run.output.includes(`kept in ${path.join(evidence, 'm1')}`), 'the report names the kept evidence');
+  assert.ok(fs.statSync(path.join(evidence, 'm1', 'stdout.tap')).size > 0);
+});
+
+test('every path a mutation run creates stays under the Windows limit with a 120-character TEMP', () => {
+  const temp = 'X:\\' + 'a'.repeat(117);
+  assert.equal(temp.length, 120);
+  // The widest Windows PID, and mkdtemp's six random characters.
+  const root = RUN_PREFIX + '4294967295-XXXXXX';
+  const copy = 'm' + 9999;
+  // The deepest chain: a runner test's fixture inside a mutated copy, holding a
+  // whole run of its own whose control copy makes a fixture in its temp.
+  const nested = path.win32.join(temp, root, copy, SUITE_TEMP, FIXTURE_PREFIX + 'XXXXXX', 'temp', root, 'control', SUITE_TEMP, FIXTURE_PREFIX + 'XXXXXX');
+  assert.ok(nested.length < 260, nested.length + ': ' + nested);
+  // And every file of the copied tree, in a copy and in the nested run's control copy.
+  const files = [];
+  const walk = (relative) => {
+    const full = path.join(__dirname, '..', relative);
+    if (fs.statSync(full).isDirectory()) for (const name of fs.readdirSync(full)) walk(path.join(relative, name));
+    else files.push(relative);
+  };
+  for (const name of COPIED) walk(name);
+  const longest = files.reduce((a, b) => (b.length > a.length ? b : a));
+  assert.ok(path.win32.join(temp, root, copy, longest).length < 260, longest);
+  const nestedControl = path.win32.join(temp, root, copy, SUITE_TEMP, FIXTURE_PREFIX + 'XXXXXX', 'temp', root, 'control');
+  assert.ok(path.win32.join(nestedControl, 'tests', 'fixture.test.js').length < 260);
 });

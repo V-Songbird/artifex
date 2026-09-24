@@ -194,6 +194,14 @@ piece and its helpers in the user's project rather than modifying the plugin's e
 Automated checks cover mechanical properties; composition also requires visual
 review. The sheet uses seeds 1 through N so an identified seed can be reproduced.
 
+Look at the picture, not only the numbers. Add `--png` to any of these commands and it
+also writes a PNG of the sheet beside the HTML (`my-piece-seeds.png`, or one image
+per piece for several), taken in installed Edge once every cell has drawn or failed:
+1280 pixels wide, wider for a sweep with many columns. An image too heavy for one
+browser reply (about 3 MB of PNG) is written top to bottom as `<name>-1-of-<n>.png`
+and on, each file one screenshot. Open each image and look at every cell before you
+report the piece.
+
 After the review, name the default the piece fell back on, in visual terms:
 "every stroke leaves the same point and sweeps the same way, like a bouquet",
 not "it looks generic". Add it to the piece's [looks to leave out](#ask-which-looks-to-leave-out),
@@ -401,8 +409,7 @@ copies the layer on a raster canvas from its second frame on and runs
 `paintGround(g, s)` everywhere else, so an SVG keeps its paths. `paintGround`
 reads the solved state and never the playhead, and the layer must be opaque;
 otherwise it is drawn every time. It pays where frames are rasterized on the
-CPU, so measure with forced raster before adopting it. `drift` and `readout`
-use it.
+CPU. `drift` and `readout` use it.
 
 The surface is **Canvas2D-shaped** in all four, so one `draw` reaches all of
 them unchanged.
@@ -462,12 +469,16 @@ solved trajectory.
   `state`; never re-derive them in `sound` from different constants.
 - **Noise comes from the seed.** Fill buffers from `rng(seed)`; an unseeded
   generator makes the soundtrack a function of when it was rendered.
-- **Leave headroom.** Sum the gains you schedule; `npm run browser` reports the
-  decoded peak of every film it exports.
+- **Mix the balance; the film sets the level.** The MP4 export gives every
+  soundtrack one gain, up to -14 LUFS unless its true peak reaches -1 dBTP
+  first, and applies no compression. Set voices against each other, not the
+  overall level. Peaks far above the body of the mix stop the gain early, so
+  such a film plays quieter than -14 LUFS; `npm run browser` reports each
+  decoded film's loudness and true peak.
 - **Sound repeats to its last bits, not bytewise.** Installed Edge adds up a
   node's three or more inputs in an order that changes from render to render,
-  so two renders of `readout` or `settle` in one page differ in most samples,
-  by at most 9e-8. A graph whose nodes take at most two inputs, such as voices
+  so two renders of `readout` or `settle` in one page differ in about half or
+  four fifths of their samples, by at most 9e-8. A graph whose nodes take at most two inputs, such as voices
   summed two at a time, renders identically. Compare soundtracks by
   measurement: `npm run browser` requires two renders to agree within 1e-6.
   Engines differ further, like pixels.
@@ -551,8 +562,9 @@ produced one beautiful seed. Render nine and look at all of them.
   `getImageData`, before timing a frame.
 - **A film whose colour tag disagrees with its samples shifts every colour.**
   Limited-range video read as full range lifts black to grey and dims white. The
-  MP4 export converts every frame to limited-range BT.709 and tags it so; keep
-  that range and tag through any re-encode.
+  MP4 export converts every frame to limited-range BT.709 and tags it so, in the
+  container and in the H.264 stream; keep that range and both tags through any
+  re-encode.
 - **A declared parameter must affect the output.** Sweep each parameter at min,
   value and max: cyclic parameters may produce the same output at both endpoints.
   Check that the build or draw actually reads its validated value.

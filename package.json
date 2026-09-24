@@ -12,6 +12,7 @@
     "page": "node tools/build-page.js",
     "browser": "node tools/check-browser.js",
     "seeds": "node tools/contact-sheet.js",
+    "replay": "node tools/replay.js",
     "examples": "node tools/render-examples.js",
     "bench": "node tools/bench.js"
   },

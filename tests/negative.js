@@ -48,6 +48,13 @@ const MUTATIONS = [
     expect: 'GPU preview discards stale initialization and stale queued frames',
   },
   {
+    why: 'a GPU preview step past its deadline is never given up',
+    file: 'core/webgpu-preview.js',
+    from: "        timer = setTimeout(() => { expired = true; reject(new Error('GPU preview ' + label + ' timed out')); }, timeoutMs);",
+    to: '',
+    expect: 'GPU preview times out and destroys a device delivered after the deadline',
+  },
+  {
     why: 'the raster recorder ignores pixel bytes, so changed images have identical digests',
     file: 'tests/examples.test.js',
     from: '    hash.update(image.data);',
@@ -553,6 +560,13 @@ const MUTATIONS = [
     expect: 'a film is read from the blocks its FILE holds, by walking it rather than scanning it',
   },
   {
+    why: 'EBML sizes go back to marker plus value less the marker, which floating point rounds for 8-byte sizes',
+    file: 'tools/build-page.js',
+    from: '  for (let i = 1; i < sizeLen; i++) { size = size * 256 + bytes[at + idLen + i]; unknown = unknown && bytes[at + idLen + i] === 0xFF; }',
+    to: '  for (let i = 1; i < sizeLen; i++) { size = size * 256 + bytes[at + idLen + i]; unknown = unknown && bytes[at + idLen + i] === 0xFF; }\n  size = size + 2 ** (7 * sizeLen) - 2 ** (7 * sizeLen);',
+    expect: 'every EBML size is read exactly, at every length up to 8 bytes',
+  },
+  {
     why: 'a saved WebM states its length in milliseconds whatever unit its file declares',
     file: 'tools/build-page.js',
     from: '    const units = (seconds * 1e9) / scale;',
@@ -562,7 +576,7 @@ const MUTATIONS = [
   {
     why: 'an added Duration leaves Info its old size, so a reader stops short of it',
     file: 'tools/build-page.js',
-    from: '    grow(e);',
+    from: '  if (parent) ebmlResize(src, parent, parent.size + added.length);',
     to: '',
     expect: 'a recorded WebM is saved with its length, and every other byte as recorded',
   },
@@ -1052,7 +1066,7 @@ const MUTATIONS = [
   {
     why: 'a soundtrack far shorter than its film passes the file check',
     file: 'core/film.js',
-    from: '    if (heard < seconds - grain || heard > seconds + 2 * grain) {',
+    from: '    if (!covered || heard > seconds + 2 * grain) {',
     to: '    if (false) {',
     expect: 'the film check refuses a file that disagrees with its frame grid, and says how',
   },
@@ -1076,6 +1090,132 @@ const MUTATIONS = [
     from: '  if (primaries !== 1 || transfer !== 1 || matrix !== 1 || fullRange) {',
     to: '  if (false) {',
     expect: 'every film is tagged limited-range BT.709, and the check refuses any other tag',
+  },
+  {
+    why: 'the H.264 stream names a video format other than unspecified',
+    file: 'core/film.js',
+    from: 'put(1, 1); put(5, 3); put(0, 1);',
+    to: 'put(1, 1); put(0, 3); put(0, 1);',
+    expect: 'every sequence parameter set says limited-range BT.709 and keeps every other field its encoder wrote',
+  },
+  {
+    why: 'the H.264 stream says full range, so a player that ignores colr spreads every colour past black and white',
+    file: 'core/film.js',
+    from: 'put(5, 3); put(0, 1); put(1, 1);',
+    to: 'put(5, 3); put(1, 1); put(1, 1);',
+    expect: 'every sequence parameter set says limited-range BT.709 and keeps every other field its encoder wrote',
+  },
+  {
+    why: 'the H.264 stream writes its colours without the flag that announces them',
+    file: 'core/film.js',
+    from: 'put(0, 1); put(1, 1); put(1, 8);',
+    to: 'put(0, 1); put(0, 1); put(1, 8);',
+    expect: 'every sequence parameter set says limited-range BT.709 and keeps every other field its encoder wrote',
+  },
+  {
+    why: 'the H.264 stream says BT.601 primaries',
+    file: 'core/film.js',
+    from: 'put(1, 1); put(1, 8); put(1, 8); put(1, 8); };',
+    to: 'put(1, 1); put(6, 8); put(1, 8); put(1, 8); };',
+    expect: 'every sequence parameter set says limited-range BT.709 and keeps every other field its encoder wrote',
+  },
+  {
+    why: 'the H.264 stream says the sRGB transfer',
+    file: 'core/film.js',
+    from: 'put(1, 1); put(1, 8); put(1, 8); put(1, 8); };',
+    to: 'put(1, 1); put(1, 8); put(13, 8); put(1, 8); };',
+    expect: 'every sequence parameter set says limited-range BT.709 and keeps every other field its encoder wrote',
+  },
+  {
+    why: 'the H.264 stream says the BT.601 matrix',
+    file: 'core/film.js',
+    from: 'put(1, 1); put(1, 8); put(1, 8); put(1, 8); };',
+    to: 'put(1, 1); put(1, 8); put(1, 8); put(6, 8); };',
+    expect: 'every sequence parameter set says limited-range BT.709 and keeps every other field its encoder wrote',
+  },
+  {
+    why: 'a VUI added to an SPS without one misses a flag, so every field after it shifts',
+    file: 'core/film.js',
+    from: 'signal(); put(0, 6);',
+    to: 'signal(); put(0, 5);',
+    expect: 'every sequence parameter set says limited-range BT.709 and keeps every other field its encoder wrote',
+  },
+  {
+    why: "the avcC keeps the encoder's SPS, so a player that ignores colr guesses the colours",
+    file: 'core/film.js',
+    from: '  const avcC = avcCBt709(video.avcC);',
+    to: '  const avcC = video.avcC;',
+    expect: 'every sequence parameter set says limited-range BT.709 and keeps every other field its encoder wrote',
+  },
+  {
+    why: "an SPS a sample repeats keeps the encoder's colours, so a stream that restarts there says two things",
+    file: 'core/film.js',
+    from: 'samples: video.samples.map((s) => sampleBt709(s.data, (avcC[4] & 3) + 1)),',
+    to: 'samples: video.samples.map((s) => s.data),',
+    expect: 'a sequence parameter set a sample repeats is tagged too, and a sample that is not whole NAL units is left alone',
+  },
+  {
+    why: 'the rewritten SPS is not escaped, so its zero runs read as a start code',
+    file: 'core/film.js',
+    from: '    if (zeros >= 2 && b <= 3) { out.push(3); zeros = 0; }\n',
+    to: '',
+    expect: 'every sequence parameter set says limited-range BT.709 and keeps every other field its encoder wrote',
+  },
+  {
+    why: 'the SPS is read with its emulation-prevention bytes, so the signal type lands in the wrong place',
+    file: 'core/film.js',
+    from: '    if (i + 2 < nal.length && nal[i] === 0 && nal[i + 1] === 0 && nal[i + 2] === 3) { out.push(0, 0); i += 2; continue; }\n',
+    to: '',
+    expect: 'every sequence parameter set says limited-range BT.709 and keeps every other field its encoder wrote',
+  },
+  {
+    why: "the SPS layout skips POC type 1's cycle, so such a stream is tagged in the wrong place",
+    file: 'core/film.js',
+    from: 'for (let i = 0, n = ue(); i < n; i++) se(); }',
+    to: 'ue(); }',
+    expect: 'every sequence parameter set says limited-range BT.709 and keeps every other field its encoder wrote',
+  },
+  {
+    why: 'the SPS layout ignores scaling lists, so such a stream is tagged in the wrong place',
+    file: 'core/film.js',
+    from: 'for (let i = 0; i < (chroma !== 3 ? 8 : 12); i++) {',
+    to: 'for (let i = 0; i < 0; i++) {',
+    expect: 'every sequence parameter set says limited-range BT.709 and keeps every other field its encoder wrote',
+  },
+  {
+    why: 'the SPS layout takes a 4:4:4 profile for one without chroma fields',
+    file: 'core/film.js',
+    from: 'const HIGH_PROFILES = [100, 110, 122, 244,',
+    to: 'const HIGH_PROFILES = [100, 110, 122,',
+    expect: 'every sequence parameter set says limited-range BT.709 and keeps every other field its encoder wrote',
+  },
+  {
+    why: 'the reader skips an SPS a sample repeats, so a film whose samples say full range passes the check',
+    file: 'core/film.js',
+    from: '              if ((bytes[p + x.nalLength] & 31) === 7) x.sps.push(',
+    to: '              if (false) x.sps.push(',
+    expect: 'the film check refuses an H.264 stream whose colour description is missing or disagrees with colr',
+  },
+  {
+    why: 'the file check reads only the first SPS',
+    file: 'core/film.js',
+    from: 'const stream = v.sps.find(',
+    to: 'const stream = v.sps.slice(0, 1).find(',
+    expect: 'the film check refuses an H.264 stream whose colour description is missing or disagrees with colr',
+  },
+  {
+    why: 'the file check lets through an H.264 stream that states no colours',
+    file: 'core/film.js',
+    from: '  if (!v.sps.length || stream === null) {',
+    to: '  if (false) {',
+    expect: 'the film check refuses an H.264 stream whose colour description is missing or disagrees with colr',
+  },
+  {
+    why: 'the file check lets through an H.264 stream that disagrees with colr',
+    file: 'core/film.js',
+    from: '  if (stream) {',
+    to: '  if (false) {',
+    expect: 'the film check refuses an H.264 stream whose colour description is missing or disagrees with colr',
   },
   {
     why: 'the conversion uses the BT.601 red weight, so every colour shifts against a BT.709 tag',
@@ -1120,10 +1260,87 @@ const MUTATIONS = [
     expect: 'every frame reaches the encoder as BT.709 limited-range NV12, whatever the encoder reports',
   },
   {
+    why: 'the encoder route is never tried, so every export pays for the conversion',
+    file: 'core/film.js',
+    from: '  if (env.VideoDecoder && env.EncodedVideoChunk) {',
+    to: '  if (false) {',
+    expect: 'the encoder converts frames itself where both probes and every colour space it reports prove limited-range BT.709',
+  },
+  {
+    why: 'the probe leaves its last colour on the canvas, so a piece that fills in the colour it finds draws another film on the encoder route',
+    file: 'core/film.js',
+    from: '  g.save();\n  g.clearRect(0, 0, w, h);',
+    to: '  g.clearRect(0, 0, w, h);',
+    expect: 'the encoder converts frames itself where both probes and every colour space it reports prove limited-range BT.709',
+  },
+  {
+    why: 'a browser that makes no frame of the copy fails the export instead of converting it',
+    file: 'core/film.js',
+    from: "    try { film = await pass('encoder'); } catch (e) { film = null; }",
+    to: "    film = await pass('encoder');",
+    expect: 'an encoder that writes full range, changes range part-way or reports anything else gets its frames converted',
+  },
+  {
+    why: "the film keeps the probes' one-frame shift, so every frame is stamped a frame late",
+    file: 'core/film.js',
+    from: 'chunks.map((x) => ({ ...x, timestamp: x.timestamp - shift }))',
+    to: 'chunks.map((x) => ({ ...x }))',
+    expect: 'the encoder converts frames itself where both probes and every colour space it reports prove limited-range BT.709',
+  },
+  {
+    why: "a probe's chunk stays in the film",
+    file: 'core/film.js',
+    from: 'await probeCells(env, config, avcC, chunks.pop());',
+    to: 'await probeCells(env, config, avcC, chunks[chunks.length - 1]);',
+    expect: 'the encoder converts frames itself where both probes and every colour space it reports prove limited-range BT.709',
+  },
+  {
+    why: 'the first probe goes unchecked, so a full-range encoder is handed the whole film before the last probe stops it',
+    file: 'core/film.js',
+    from: '      if (copy && !await probe(0)) return null;',
+    to: '      if (copy) await probe(0);',
+    expect: 'an encoder that writes full range, changes range part-way or reports anything else gets its frames converted',
+  },
+  {
+    why: 'the last probe goes unchecked, so an encoder that changes range without saying so writes the rest of the film in full range',
+    file: 'core/film.js',
+    from: '      if (copy && !(await probe(shift + stamp(heads.length)) && spaces.every(limited709))) return null;',
+    to: '      if (copy && !spaces.every(limited709)) return null;',
+    expect: 'an encoder that writes full range, changes range part-way or reports anything else gets its frames converted',
+  },
+  {
+    why: 'a probe passes at any level, so a full-range encoder is trusted',
+    file: 'core/film.js',
+    from: 'Math.abs(v - want[k][j]) <= 2',
+    to: 'Math.abs(v - want[k][j]) <= 64',
+    expect: 'an encoder that writes full range, changes range part-way or reports anything else gets its frames converted',
+  },
+  {
+    why: 'the colour spaces the encoder reports go unread, so one that says full range is trusted on its probes',
+    file: 'core/film.js',
+    from: "const limited709 = (space) => !!space && space.primaries === 'bt709' && space.matrix === 'bt709' && space.fullRange === false;",
+    to: 'const limited709 = () => true;',
+    expect: 'an encoder that writes full range, changes range part-way or reports anything else gets its frames converted',
+  },
+  {
+    why: 'a reported matrix goes unread, so an encoder that says BT.601 is trusted',
+    file: 'core/film.js',
+    from: " && space.matrix === 'bt709' && space.fullRange === false;",
+    to: ' && space.fullRange === false;',
+    expect: 'an encoder that writes full range, changes range part-way or reports anything else gets its frames converted',
+  },
+  {
+    why: 'a change of range the encoder reports is noticed only after the last frame',
+    file: 'core/film.js',
+    from: '        if (copy && !spaces.every(limited709)) return null;\n',
+    to: '',
+    expect: 'an encoder that writes full range, changes range part-way or reports anything else gets its frames converted',
+  },
+  {
     why: 'frames are stamped by the wall clock instead of their place on the frame grid',
     file: 'core/film.js',
-    from: 'timestamp: Math.round((i * 1e6) / hz), duration: Math.round(1e6 / hz),',
-    to: 'timestamp: Math.round(now() * 1000), duration: Math.round(1e6 / hz),',
+    from: '        const frame = frameAt(shift + stamp(i));',
+    to: '        const frame = frameAt(shift + Math.round(now() * 1000));',
     expect: 'every drawn frame is encoded once, at its own timestamp, however slowly it draws',
   },
   {
@@ -1290,9 +1507,130 @@ const MUTATIONS = [
   {
     why: "an AAC encoder's reported priming is ignored, so a player plays it as sound",
     file: 'core/film.js',
-    from: 'priming: Math.max(0, Math.round((-first * rate) / 1e6))',
-    to: 'priming: 0',
-    expect: 'an AAC encoder that stamps its first packet before zero has that priming skipped by the edit',
+    from: 'priming: lead + Math.max(0, Math.round((-first * rate) / 1e6))',
+    to: 'priming: lead',
+    expect: 'an AAC soundtrack follows a 2112-sample silent lead, and its edit skips the lead and any priming the encoder reports',
+  },
+  {
+    why: "an AAC soundtrack starts in the encoder's first frame, whose first ~500 samples no decoder rebuilds",
+    file: 'core/film.js',
+    from: 'const AAC_LEAD = 2112;',
+    to: 'const AAC_LEAD = 0;',
+    expect: 'an AAC soundtrack follows a 2112-sample silent lead, and its edit skips the lead and any priming the encoder reports',
+  },
+  {
+    why: "the AAC lead is a whole number of packets, so Edge's video element starts the soundtrack's packet cold and loses its first 448 samples",
+    file: 'core/film.js',
+    from: 'const AAC_LEAD = 2112;',
+    to: 'const AAC_LEAD = 2048;',
+    expect: 'an AAC soundtrack follows a 2112-sample silent lead, and its edit skips the lead and any priming the encoder reports',
+  },
+  {
+    why: 'the edit does not skip the AAC lead, so every player starts the soundtrack 44 ms late',
+    file: 'core/film.js',
+    from: 'priming: lead + Math.max(',
+    to: 'priming: Math.max(',
+    expect: 'an AAC soundtrack follows a 2112-sample silent lead, and its edit skips the lead and any priming the encoder reports',
+  },
+  {
+    why: "the soundtrack is stamped from zero on top of the lead, so the encoder's timeline overlaps itself",
+    file: 'core/film.js',
+    from: 'timestamp: Math.round(((lead + at) * 1e6) / rate), data,',
+    to: 'timestamp: Math.round((at * 1e6) / rate), data,',
+    expect: 'an AAC soundtrack follows a 2112-sample silent lead, and its edit skips the lead and any priming the encoder reports',
+  },
+  {
+    why: 'a soundtrack that fails lets the frames run on to the end of the film',
+    file: 'core/film.js',
+    from: '        if (soundFailure) throw soundFailure;\n',
+    to: '',
+    expect: 'a soundtrack that fails stops the frames and fails the export with its own message',
+  },
+  {
+    why: 'the soundtrack is made before the frames again, so they wait for it',
+    file: 'core/film.js',
+    from: '  soundtrack.then(() => { soundPending = false; }',
+    to: '  await soundtrack.catch(() => {});\n  soundtrack.then(() => { soundPending = false; }',
+    expect: 'the frames draw while the soundtrack renders and encodes, and do not wait for it',
+  },
+  {
+    why: "the frames never yield while the soundtrack is made, so its steps on the page's thread wait for the last frame",
+    file: 'core/film.js',
+    from: '        if (soundPending) await pause();\n',
+    to: '',
+    expect: 'the frames draw while the soundtrack renders and encodes, and do not wait for it',
+  },
+  {
+    why: 'a browser that encodes neither soundtrack codec is not refused before the frames draw',
+    file: 'core/film.js',
+    from: '  if (piece.sound && !soundCodec) throw new Error(',
+    to: '  if (false) throw new Error(',
+    expect: 'a piece with sound gets a soundtrack exactly as long as its film, or no film at all',
+  },
+  {
+    why: 'the file is written without waiting for the soundtrack',
+    file: 'core/film.js',
+    from: '  const { sound, level } = await soundtrack;',
+    to: '  const { sound, level } = { sound: null, level: null };',
+    expect: 'a piece with sound gets a soundtrack exactly as long as its film, or no film at all',
+  },
+  {
+    why: 'an encoder route that returns frames short keeps its film, which the frame count then refuses whole',
+    file: 'core/film.js',
+    from: '      if (copy && chunks.length !== heads.length) return null;\n',
+    to: '',
+    expect: 'a film the encoder route returns frames short of is encoded again, converted, and keeps every frame',
+  },
+  {
+    why: 'a frame-count refusal no longer names the route that ran',
+    file: 'core/film.js',
+    from: "      + (expected.route ? `, from the ${expected.route} route` : '')\n",
+    to: '',
+    expect: 'a film refused for its frame count names the route and the frames its encoder returned nothing for',
+  },
+  {
+    why: 'a frame-count refusal no longer names the frames the encoder returned nothing for',
+    file: 'core/film.js',
+    from: '  const missing = heads.map((_, i) => stamp(i)).filter((t) => !returned.has(t));',
+    to: '  const missing = [];',
+    expect: 'a film refused for its frame count names the route and the frames its encoder returned nothing for',
+  },
+  {
+    why: 'a pass hands back its film without its own times, so the report cannot time the pass that made it',
+    file: 'core/film.js',
+    from: '(x) => ({ ...x, timestamp: x.timestamp - shift })), drawMs, convertMs, waitMs };',
+    to: '(x) => ({ ...x, timestamp: x.timestamp - shift })) };',
+    expect: 'a film saved after the encoder route is discarded reports the times of the pass that made it',
+  },
+  {
+    why: 'a probe the encoder returned nothing for decodes the last chunk it finds, a frame of the film',
+    file: 'core/film.js',
+    from: '      if (!chunks.length || chunks[chunks.length - 1].timestamp !== timestamp) return false;\n',
+    to: '',
+    expect: 'a probe the encoder returns nothing for fails the encoder route, and no frame is decoded in its place',
+  },
+  {
+    why: 'the shared stand-in canvas reads nothing back, so every film that converts its frames draws nothing',
+    file: 'tests/fake-media.js',
+    from: '      getImageData(x, y, w, h) {\n        const px = pixels(), data = new Uint8ClampedArray(w * h * 4);\n'
+      + '        for (let j = 0; j < h; j++) data.set(px.subarray(((y + j) * canvas.width + x) * 4, ((y + j) * canvas.width + x + w) * 4), j * w * 4);\n'
+      + '        return { width: w, height: h, data };\n      },\n',
+    to: '',
+    expect: 'every frame reaches the encoder as BT.709 limited-range NV12, whatever the encoder reports',
+  },
+  {
+    why: "the Opus stand-in forgets Edge's pre-skip packets, so the tests' soundtracks end before their edits",
+    file: 'tests/fake-media.js',
+    from: "this.held = config.codec === 'opus' ? 312 : 0;",
+    to: 'this.held = 0;',
+    expect: 'the audio stand-ins emit as many packets as the Edge encoders do',
+  },
+  {
+    why: 'the file check lets a soundtrack end up to a packet before its edit, so its last samples go missing',
+    file: 'core/film.js',
+    from: 'const covered = (a.duration - edit.mediaTime) * movie.timescale >= edit.duration * a.timescale;',
+    to: 'const covered = heard >= seconds - grain;',
+    expect: 'the film check refuses a soundtrack that ends before its edit, however little',
   },
   {
     why: 'the file check lets the movie run past the film',
@@ -1330,6 +1668,62 @@ const MUTATIONS = [
     expect: 'the film check refuses a movie, a track header or a soundtrack edit that disagrees with the film',
   },
   {
+    why: 'K-weighting loses its high shelf, so bright sound measures as quiet as dull',
+    file: 'core/film.js',
+    from: '  const Vh = 10 ** (3.999843853973347 / 20);',
+    to: '  const Vh = 1;',
+    expect: 'loudness follows BS.1770-4: K-weighting, 400 ms blocks, and gates of power at -70 LUFS and 10 LU down',
+  },
+  {
+    why: 'loudness has no absolute gate, so near-silence counts as sound to be raised',
+    file: 'core/film.js',
+    from: '  const heard = blocks.filter((z) => lufs(z) > -70);',
+    to: '  const heard = blocks.filter((z) => z > 0);',
+    expect: 'loudness follows BS.1770-4: K-weighting, 400 ms blocks, and gates of power at -70 LUFS and 10 LU down',
+  },
+  {
+    why: 'loudness has no relative gate, so quiet passages pull a loud film down',
+    file: 'core/film.js',
+    from: '  const floor = lufs(mean(heard)) - 10;',
+    to: '  const floor = -70;',
+    expect: 'loudness follows BS.1770-4: K-weighting, 400 ms blocks, and gates of power at -70 LUFS and 10 LU down',
+  },
+  {
+    why: 'the gates average decibels instead of power',
+    file: 'core/film.js',
+    from: '  const mean = (zs) => zs.reduce((s, z) => s + z, 0) / zs.length;',
+    to: '  const mean = (zs) => 10 ** (zs.reduce((s, z) => s + Math.log10(z), 0) / zs.length);',
+    expect: 'loudness follows BS.1770-4: K-weighting, 400 ms blocks, and gates of power at -70 LUFS and 10 LU down',
+  },
+  {
+    why: 'true peak reads only the samples, so a peak between them is missed',
+    file: 'core/film.js',
+    from: '      for (let p = 0; p < 4; p++) {',
+    to: '      for (let p = 0; p < 1; p++) {',
+    expect: 'true peak finds the peaks between samples, oversampled four times as BS.1770-4 Annex 2 filters them',
+  },
+  {
+    why: 'the film gain chases -14 LUFS past the -1 dBTP ceiling',
+    file: 'core/film.js',
+    from: 'Math.min(LOUDNESS.target - measured.lufs, LOUDNESS.ceiling - measured.dbtp)',
+    to: 'LOUDNESS.target - measured.lufs',
+    expect: 'every film soundtrack reaches -14 LUFS with one static gain, or stops at -1 dBTP',
+  },
+  {
+    why: 'the film reports a gain it never applies to the soundtrack it encodes',
+    file: 'core/film.js',
+    from: '    for (let i = 0; i < x.length; i++) x[i] *= scale;',
+    to: '    for (let i = 0; i < x.length; i++) x[i] *= 1;',
+    expect: 'every film soundtrack reaches -14 LUFS with one static gain, or stops at -1 dBTP',
+  },
+  {
+    why: 'a soundtrack of samples that are not finite numbers is encoded instead of refused',
+    file: 'core/film.js',
+    from: '    if (!buffer.getChannelData(c).every(Number.isFinite)) {',
+    to: '    if (false) {',
+    expect: 'every film soundtrack reaches -14 LUFS with one static gain, or stops at -1 dBTP',
+  },
+  {
     why: 'a WebM export too slow for real time is blamed on lost pictures again',
     file: 'tools/build-page.js',
     from: '  const slow = pace && pace.worstLagMs > budget',
@@ -1344,31 +1738,192 @@ const MUTATIONS = [
     expect: 'the MP4 film is refused by name without an encoder, and a still offers none',
   },
   {
+    why: 'an SVG saved from the page cannot name the recipe that made it, though the same SVG from the API can',
+    file: 'tools/build-page.js',
+    from: '  g.setManifest(recipe());',
+    to: '',
+    expect: 'an SVG saved from the page names the recipe manifest() names, in the bytes renderVector writes',
+  },
+  {
+    why: 'the PNG manifest reader looks for its nulls past the chunk, and on a cut file never stops',
+    file: 'tools/build-page.js',
+    from: "      if (at >= end) throw new Error('the artifex-manifest chunk ends before its text');",
+    to: '',
+    expect: 'a PNG cut short inside its manifest chunk, or a chunk without its text, is refused by name',
+  },
+  {
+    why: 'the manifest chunk\'s CRC is left uncomplemented, so an image tool reports the PNG as corrupt',
+    file: 'tools/build-page.js',
+    from: '  return ~crc >>> 0;',
+    to: '  return crc >>> 0;',
+    expect: 'a PNG carries its recipe in one iTXt chunk before IEND, and every other byte as encoded',
+  },
+  {
+    why: 'a PNG saved from the page is saved as encoded, so a print master cannot name its recipe',
+    file: 'tools/build-page.js',
+    from: "        save(new Blob([pngWithManifest(new Uint8Array(buf), manifest)], { type: 'image/png' }), filename);",
+    to: "        save(new Blob([new Uint8Array(buf)], { type: 'image/png' }), filename);",
+    expect: 'a PNG saved from the page names its recipe and the scale it was drawn at',
+  },
+  {
+    why: 'a PNG master\'s recipe leaves out its scale, and a piece may draw finer detail at a higher one',
+    file: 'tools/build-page.js',
+    from: '    var manifest = Object.assign(recipe(), { scale: k });',
+    to: '    var manifest = recipe();',
+    expect: 'a PNG saved from the page names its recipe and the scale it was drawn at',
+  },
+  {
     why: 'the WebM export hands the recorder its alpha plane, and Edge scales that film on another path',
     file: 'tools/build-page.js',
-    from: "    var f = new VideoFrame(off, { timestamp: Math.round((i * 1000000) / hz), alpha: 'discard' });",
-    to: '    var f = new VideoFrame(off, { timestamp: Math.round((i * 1000000) / hz) });',
+    from: "    var f = new VideoFrame(copy, { timestamp: Math.round((i * 1000000) / hz), alpha: 'discard' });",
+    to: '    var f = new VideoFrame(copy, { timestamp: Math.round((i * 1000000) / hz) });',
     expect: 'the WebM export records frames without alpha and saves the film with its length',
+  },
+  {
+    why: 'the WebM recorder takes frames from the canvas the piece draws on, so a piece that reads it back switches the film to full range mid-way',
+    file: 'tools/build-page.js',
+    from: "    var f = new VideoFrame(copy, { timestamp: Math.round((i * 1000000) / hz), alpha: 'discard' });",
+    to: "    var f = new VideoFrame(off, { timestamp: Math.round((i * 1000000) / hz), alpha: 'discard' });",
+    expect: 'the WebM export records a copy of each frame, on a canvas no piece reads back',
   },
   {
     why: 'the WebM export saves the film as recorded, so a player shows it as 0.001 s long',
     file: 'tools/build-page.js',
-    from: "  var blob = new Blob([webmWithDuration(bytes, heads.length / hz)], { type: 'video/webm' });",
-    to: "  var blob = new Blob([bytes], { type: 'video/webm' });",
+    from: "  var blob = new Blob([webmWithManifest(webmWithDuration(bytes, heads.length / hz), manifest)], { type: 'video/webm' });",
+    to: "  var blob = new Blob([webmWithManifest(bytes, manifest)], { type: 'video/webm' });",
     expect: 'the WebM export records frames without alpha and saves the film with its length',
+  },
+  {
+    why: 'an Opus film is saved without the warning, and its author learns only in a player that plays it silent',
+    file: 'tools/build-page.js',
+    from: "    + (codec === 'Opus' ? ' This browser encodes no AAC, so the soundtrack is Opus: play the film where Opus in MP4 is supported, or it plays silent.' : '');",
+    to: "    + '';",
+    expect: 'the MP4 note names the soundtrack codec and the colour route, and warns about Opus',
+  },
+  {
+    why: 'the WebM export saves the film without its recipe, so a fallback film cannot say what made it',
+    file: 'tools/build-page.js',
+    from: "  var blob = new Blob([webmWithManifest(webmWithDuration(bytes, heads.length / hz), manifest)], { type: 'video/webm' });",
+    to: "  var blob = new Blob([webmWithDuration(bytes, heads.length / hz)], { type: 'video/webm' });",
+    expect: 'the WebM export names the recipe an MP4 of the same film names',
+  },
+  {
+    why: 'every Tags part claims one byte more than it holds, so a reader runs into the next part',
+    file: 'tools/build-page.js',
+    from: '    for (let i = 7, v = body.length; i > 0; i--, v = Math.floor(v / 256)) size[i] = v % 256;',
+    to: '    for (let i = 7, v = body.length + 1; i > 0; i--, v = Math.floor(v / 256)) size[i] = v % 256;',
+    expect: 'a WebM carries its recipe in one Tags element before the first Cluster, and every other byte as saved',
+  },
+  {
+    why: 'a Segment of known size keeps its old size after the Tags go in, so a reader stops short of the last Cluster',
+    file: 'tools/build-page.js',
+    from: '  if (segment && !segment.unknown) ebmlResize(src, segment, segment.size + total);',
+    to: '',
+    expect: 'a WebM carries its recipe in one Tags element before the first Cluster, and every other byte as saved',
+  },
+  {
+    why: 'stored positions keep their recorded values, so the Cues Edge writes name the Tags where the first Cluster was',
+    file: 'tools/build-page.js',
+    from: '        let v = move(uint(c.body, c.size)), n = c.size;',
+    to: '        let v = uint(c.body, c.size), n = c.size;',
+    expect: 'a WebM insertion moves every stored position with the element it names',
+  },
+  {
+    why: 'a moved position keeps its field width, so its high byte is lost and it points into the Tags',
+    file: 'tools/build-page.js',
+    from: '        while (v >= 256 ** n) n++;',
+    to: '',
+    expect: 'a WebM insertion moves every stored position with the element it names',
+  },
+  {
+    why: 'a SeekHead or Cues that grows moves nothing after it, so every position past it falls short',
+    file: 'tools/build-page.js',
+    from: '  const move = (P) => P + (P >= at - base ? added.length : 0) + index.reduce((sum, e, i) => sum + (e.at - base < P ? grown[i] : 0), 0);',
+    to: '  const move = (P) => P + (P >= at - base ? added.length : 0);',
+    expect: 'a WebM insertion moves every stored position with the element it names',
+  },
+  {
+    why: 'a CueCodecState, CueReference or misplaced CRC-32 inside an index is copied as it was, and goes stale',
+    file: 'tools/build-page.js',
+    from: '      if (c.id in REFUSED) refuse(c.id);',
+    to: '',
+    expect: 'a WebM that stores a position the insertion cannot move is refused by name',
+  },
+  {
+    why: 'a Cluster that stores its own position is saved with it, pointing short of where the Cluster now sits',
+    file: 'tools/build-page.js',
+    from: '    if (e.id === 0xA7) refuse(e.id);',
+    to: '',
+    expect: 'a WebM that stores a position the insertion cannot move is refused by name',
+  },
+  {
+    why: 'the page leaves Info\'s CRC-32 as recorded after writing the Duration, so a checking reader finds Info corrupt',
+    file: 'tools/build-page.js',
+    from: '        if (c.id === CRC && c.size === 4) new DataView(out.buffer, out.byteOffset).setUint32(c.body, crc32(out.subarray(c.body + 4, e.body + e.size)), true);',
+    to: '',
+    expect: 'a WebM keeps every CRC-32 matching its element when the page writes its length',
+  },
+  {
+    why: 'Info\'s CRC-32 is stored big-endian, where EBML stores it little-endian',
+    file: 'tools/build-page.js',
+    from: '        if (c.id === CRC && c.size === 4) new DataView(out.buffer, out.byteOffset).setUint32(c.body, crc32(out.subarray(c.body + 4, e.body + e.size)), true);',
+    to: '        if (c.id === CRC && c.size === 4) new DataView(out.buffer, out.byteOffset).setUint32(c.body, crc32(out.subarray(c.body + 4, e.body + e.size)), false);',
+    expect: 'a WebM keeps every CRC-32 matching its element when the page writes its length',
+  },
+  {
+    why: 'writing the Duration keeps a CRC-32 over the whole Segment as recorded, and it goes stale',
+    file: 'tools/build-page.js',
+    from: "        if (ebmlHead(out, e.body).id === CRC) throw new Error('the recorded WebM carries a CRC-32 over its Segment, which writing its length would leave stale');",
+    to: '',
+    expect: 'a WebM keeps every CRC-32 matching its element when the page writes its length',
+  },
+  {
+    why: 'an insertion keeps a CRC-32 over the whole Segment as recorded, and it goes stale',
+    file: 'tools/build-page.js',
+    from: '      if (ebmlHead(bytes, e.body).id === 0xBF) refuse(0xBF);',
+    to: '',
+    expect: 'a WebM keeps every CRC-32 matching its element when the page writes its length',
+  },
+  {
+    why: 'a rebuilt SeekHead or Cues keeps the CRC-32 it was recorded with, so a checking reader finds it corrupt',
+    file: 'tools/build-page.js',
+    from: '      body = [0xBF, 0x84, sum & 255, (sum >>> 8) & 255, (sum >>> 16) & 255, sum >>> 24, ...body];',
+    to: '      body = [...bytes.subarray(e.body, e.body + 6), ...body];',
+    expect: 'a WebM SeekHead or Cues that opens with a CRC-32 keeps it matching through the page\'s edits',
+  },
+  {
+    why: 'a rebuilt SeekHead or Cues loses its CRC-32',
+    file: 'tools/build-page.js',
+    from: '      if (q === e.body && c.id === 0xBF && c.size === 4) { summed = true; q = c.body + c.size; continue; }',
+    to: '      if (q === e.body && c.id === 0xBF && c.size === 4) { q = c.body + c.size; continue; }',
+    expect: 'a WebM SeekHead or Cues that opens with a CRC-32 keeps it matching through the page\'s edits',
+  },
+  {
+    why: 'a finalized recording\'s SeekHead leaves the Tags out, so a reader that finds elements through it misses the recipe',
+    file: 'tools/build-page.js',
+    from: '    return webmInsert(bytes, p, tags, null, true);',
+    to: '    return webmInsert(bytes, p, tags, null);',
+    expect: 'a WebM SeekHead lists the Tags the page adds, and a reader that follows it finds the recipe',
+  },
+  {
+    why: 'the Seek entry for the Tags points past them, at the first Cluster',
+    file: 'tools/build-page.js',
+    from: '      let v = move(at - base) - added.length;',
+    to: '      let v = move(at - base);',
+    expect: 'a WebM SeekHead lists the Tags the page adds, and a reader that follows it finds the recipe',
   },
   {
     why: 'the page offers the WebM recorder where the MP4 film encodes',
     file: 'tools/build-page.js',
-    from: "      document.getElementById('webm').hidden = format !== 'webm';",
+    from: "      document.getElementById('webm').hidden = choice.format !== 'webm';",
     to: "      document.getElementById('webm').hidden = false;",
     expect: 'a browser that encodes the film H.264 offers only the MP4 export',
   },
   {
     why: 'the WebM fallback never appears, so a browser without H.264 offers no film it can make',
     file: 'tools/build-page.js',
-    from: "    var format = !p.time ? null : answers[0] && answers[1] ? 'mp4' : 'webm';",
-    to: "    var format = !p.time ? null : 'mp4';",
+    from: "  if (!encodesH264) return { format: 'webm', reason: 'h264' };",
+    to: "  if (!encodesH264) return { format: 'mp4', reason: null };",
     expect: 'where H.264 cannot encode the film, the page offers the WebM recorder instead',
   },
   {
@@ -1391,6 +1946,76 @@ const MUTATIONS = [
     from: '  if (p.time && p.sound) {',
     to: '  if (p.time) {',
     expect: 'a piece without sound keeps the MP4 film where neither AAC nor Opus encodes',
+  },
+  {
+    why: 'the page tells a script the soundtrack is to blame where H.264 is',
+    file: 'tools/build-page.js',
+    from: "  if (!encodesH264) return { format: 'webm', reason: 'h264' };",
+    to: "  if (!encodesH264) return { format: 'webm', reason: 'soundtrack' };",
+    expect: 'the page tells a script why it offers WebM, from the decision its note is written from',
+  },
+  {
+    why: 'pausing the transport leaves its soundtrack playing',
+    file: 'tools/build-page.js',
+    from: '  cancelAnimationFrame(raf);\n  silence();',
+    to: '  cancelAnimationFrame(raf);',
+    expect: 'playing a piece with sound plays its soundtrack from the playhead, and every transport change stops it',
+  },
+  {
+    why: 'a soundtrack rendered after the transport stopped starts playing anyway',
+    file: 'tools/build-page.js',
+    from: '    if (!playing || transport !== transportRevision || solved !== s || soundtrack !== entry) return;',
+    to: '    if (false) return;',
+    expect: 'playing a piece with sound plays its soundtrack from the playhead, and every transport change stops it',
+  },
+  {
+    why: 'the transport soundtrack starts from its beginning wherever the playhead is',
+    file: 'tools/build-page.js',
+    from: '    v.start(0, Math.min(at, buffer.duration));',
+    to: '    v.start(0, 0);',
+    expect: 'playing a piece with sound plays its soundtrack from the playhead, and every transport change stops it',
+  },
+  {
+    why: 'the transport wraps and its soundtrack does not start again',
+    file: 'tools/build-page.js',
+    from: '    if (laps > lap) { lap = laps; playSound(transport); }',
+    to: '    if (laps > lap) { lap = laps; }',
+    expect: 'playing a piece with sound plays its soundtrack from the playhead, and every transport change stops it',
+  },
+  {
+    why: 'the transport counts a lap as soon as it starts, and starts its soundtrack twice',
+    file: 'tools/build-page.js',
+    from: '    var laps = Math.floor((now - t0) / dur);',
+    to: '    var laps = Math.ceil((now - t0) / dur);',
+    expect: 'playing a piece with sound plays its soundtrack from the playhead, and every transport change stops it',
+  },
+  {
+    why: 'the transport laps at the declared duration, past the frame grid and the soundtrack',
+    file: 'tools/build-page.js',
+    from: 'function lapMs(p) { return (render.playheads(p).length / p.time.hz) * 1000; }',
+    to: 'function lapMs(p) { return p.time.duration * 1000; }',
+    expect: 'a transport lap lasts the frame grid, and a frame stamped before the click reads playhead 0',
+  },
+  {
+    why: 'a frame stamped before the play click gives the transport a negative playhead',
+    file: 'tools/build-page.js',
+    from: '    t = Math.max(0, (now - t0) % dur) / dur;',
+    to: '    t = ((now - t0) % dur) / dur;',
+    expect: 'a transport lap lasts the frame grid, and a frame stamped before the click reads playhead 0',
+  },
+  {
+    why: 'a new solve while playing goes silent',
+    file: 'tools/build-page.js',
+    from: '  if (playing) playSound(transportRevision);',
+    to: '',
+    expect: 'playing a piece with sound plays its soundtrack from the playhead, and every transport change stops it',
+  },
+  {
+    why: 'the play click makes an audio context for a piece without sound',
+    file: 'tools/build-page.js',
+    from: "  if (current.sound && typeof AudioContext === 'function') {",
+    to: "  if (typeof AudioContext === 'function') {",
+    expect: 'playing a piece with sound plays its soundtrack from the playhead, and every transport change stops it',
   },
   {
     why: 'the readout melody follows the seed instead of the data',
@@ -1478,11 +2103,11 @@ const MUTATIONS = [
     expect: 'failed control exits 2, prints its failing assertion and removes only its owned temporary directory',
   },
   {
-    why: 'teardown stops re-checking a named process that is still running',
+    why: 'teardown accepts a suite process that still runs after the kill',
     file: 'tests/negative.js',
-    from: '    alive = alive' + '.filter(running);',
-    to: '    alive = [];',
-    expect: 'owned teardown waits for named processes and fails only while one still runs',
+    from: 'resolve(new Error(`owned tree ' + 'termination left',
+    to: 'resolve(null && new Error(`owned tree termination left',
+    expect: 'owned teardown is judged by its own process, never by the kill command',
   },
   {
     why: 'the settle detune glides on a schedule from where each node started, not from where it is',
@@ -1574,6 +2199,712 @@ const MUTATIONS = [
     from: "  fs.writeFileSync(path.join(dir, 'stdout.tap')" + ', result.stdout);',
     to: '',
     expect: 'an infrastructure result keeps its streams and stays infrastructure after one report-only retry',
+  },
+  {
+    why: 'the browser stop accepts an owned Edge that never exited',
+    file: 'tools/check-browser.js',
+    from: '  if (!stopped) throw',
+    to: '  if (false) throw',
+    expect: 'browser stop waits for the owned Edge to exit and fails while it keeps running',
+  },
+  {
+    why: 'a finished browser stop holds the command open until its bound',
+    file: 'tools/check-browser.js',
+    from: '  bound.abort();',
+    to: '',
+    expect: 'browser stop waits for the owned Edge to exit and fails while it keeps running',
+  },
+  {
+    why: 'the browser profile removal gives up at the first busy file',
+    file: 'tools/check-browser.js',
+    from: "      if (!['EBUSY', 'EPERM', 'ENOTEMPTY'].includes(error.code) || Date.now() >= deadline) throw error;",
+    to: '      throw error;',
+    expect: 'browser profile removal retries a busy owned profile and refuses anything else',
+  },
+  {
+    why: 'the browser profile removal accepts a path nested under an owned profile name',
+    file: 'tools/check-browser.js',
+    from: "  if (!/^artifex-browser-[^/\\\\]+$/.test(relative)) throw",
+    to: '  if (!/^artifex-browser-/.test(relative)) throw',
+    expect: 'browser profile removal retries a busy owned profile and refuses anything else',
+  },
+  {
+    why: 'a browser run whose checks passed loses its report when only cleanup fails',
+    file: 'tools/check-browser.js',
+    from: 'catch (error) { failure = error; report = error.report; }',
+    to: 'catch (error) { failure = error; }',
+    expect: 'a run whose checks passed prints its report before a cleanup-only failure',
+  },
+  {
+    why: 'a killed suite writes its fixtures to the system temporary directory instead of its copy',
+    file: 'tests/negative.js',
+    from: '  if (fs.existsSync(temp)) env.TEMP = ' + 'env.TMP = env.TMPDIR = temp;',
+    to: '',
+    expect: 'timed-out control stops its actual process tree, keeps its evidence and preserves unrelated temporary work',
+  },
+  {
+    why: 'a new run never sweeps the copies of stopped runs',
+    file: 'tests/negative.js',
+    from: '  await sweepStale' + 'Runs();',
+    to: '',
+    expect: 'a new run removes the copies of stopped runs and keeps their evidence and everything else',
+  },
+  {
+    why: 'the sweep removes the copies of a run that is still going',
+    file: 'tests/negative.js',
+    from: '|| owner === process.pid || ' + 'running(owner)) continue;',
+    to: '|| owner === process.pid) continue;',
+    expect: 'a new run removes the copies of stopped runs and keeps their evidence and everything else',
+  },
+  {
+    why: 'the sweep removes the evidence a stopped run kept for its report',
+    file: 'tests/negative.js',
+    from: "if (entry !== 'infrastructure') await removeCopy(path.join(root" + ', entry), 0)',
+    to: 'await removeCopy(path.join(root, entry), 0)',
+    expect: 'a new run removes the copies of stopped runs and keeps their evidence and everything else',
+  },
+  {
+    why: 'teardown misses a suite process that exits during the grace period',
+    file: 'tests/negative.js',
+    from: "      child.once('exit', " + 'exited);',
+    to: '',
+    expect: 'owned teardown is judged by its own process, never by the kill command',
+  },
+  {
+    why: 'a browser stop whose kill cannot start is accepted',
+    file: 'tools/check-browser.js',
+    from: '  await kill(child, deadline);',
+    to: '  await kill(child, deadline).catch(() => {});',
+    expect: 'browser stop waits for the owned Edge to exit and fails while it keeps running',
+  },
+  {
+    why: 'a filtered run judges the mutations its filter left out',
+    file: 'tests/negative.js',
+    from: '      if (!chosen.includes(m)) ' + 'continue;',
+    to: '',
+    expect: 'a filtered run judges only its mutations, still checks every patch text and says it was partial',
+  },
+  {
+    why: 'a filtered run prints the full run summary',
+    file: 'tests/negative.js',
+    from: 'console.log(filter ' + '? `',
+    to: 'console.log(false ? `',
+    expect: 'a filtered run judges only its mutations, still checks every patch text and says it was partial',
+  },
+  {
+    why: 'a filtered run skips the patch-text check of the other mutations',
+    file: 'tests/negative.js',
+    from: '      if (problem) { console.log(problem); ' + 'invalid++; }',
+    to: '',
+    expect: 'a filtered run judges only its mutations, still checks every patch text and says it was partial',
+  },
+  {
+    why: 'every mutated copy stays until the run ends',
+    file: 'tests/negative.js',
+    from: '      try { await removeCopy(dir); } ' + 'catch (error) {',
+    to: '      if (false) try { await removeCopy(dir); } catch (error) {',
+    expect: 'the runner holds at most one mutated copy at a time and kept evidence survives each removal',
+  },
+  {
+    why: 'the browser check leaves one example that declares sound without a film',
+    file: 'tools/check-browser.js',
+    from: '  const sounding = examples.filter((example) => example.sound);',
+    to: '  const sounding = examples.filter((example) => example.sound).slice(1);',
+    expect: 'the browser check exports a film for every example that declares sound, else the first with a timeline',
+  },
+  {
+    why: 'the sheet image is taken before every planned cell exists',
+    file: 'tools/check-browser.js',
+    from: '  return !!sheet && sheet.cells.length === expected',
+    to: '  return !!sheet && sheet.cells.length >= 1',
+    expect: 'a sheet image waits until every planned cell has rendered or failed',
+  },
+  {
+    why: 'the sheet image is taken while a cell has neither drawn nor failed',
+    file: 'tools/check-browser.js',
+    from: "    && sheet.cells.every((cell) => cell.error !== null || typeof cell.markCount === 'number');",
+    to: '    && true;',
+    expect: 'a sheet image waits until every planned cell has rendered or failed',
+  },
+  {
+    why: 'npm run seeds ignores --png',
+    file: 'tools/contact-sheet.js',
+    from: "    if (arg === '--png') png = true;",
+    to: "    if (arg === '--png') png = false;",
+    expect: 'contact sheet: --png names the image beside the sheet, sizes it and counts the cells it waits for',
+  },
+  {
+    why: 'a wide sweep image cuts off its last columns',
+    file: 'tools/contact-sheet.js',
+    from: '  return paramNames.length ? Math.max(1280, 48 + count * 220 + (count - 1) * 14) : 1280;',
+    to: '  return 1280;',
+    expect: 'contact sheet: --png names the image beside the sheet, sizes it and counts the cells it waits for',
+  },
+  {
+    why: 'the run root takes a long name, so a nested run passes the Windows path limit',
+    file: 'tests/negative.js',
+    from: "const RUN_PREFIX = 'artifex-" + "neg-';",
+    to: "const RUN_PREFIX = 'artifex-negative-mutation-run-';",
+    expect: 'every path a mutation run creates stays under the Windows limit with a 120-character TEMP',
+  },
+  {
+    why: 'a run forced to refuse AAC refuses nothing, so the film keeps AAC and the Opus fallback goes unchecked',
+    file: 'tools/check-browser.js',
+    from: '(/^mp4a\\./.test(config.codec)',
+    to: '(/^mp4a-never\\./.test(config.codec)',
+    expect: 'each forced condition takes away one codec or context, from its source text, and leaves the rest to the browser',
+  },
+  {
+    why: 'a run forced to hide WebGL2 leaves it, so the colour is converted on the GPU and the CPU route goes unchecked',
+    file: 'tools/check-browser.js',
+    from: "return type === 'webgl2' ? null : get.call(this, type, ...rest);",
+    to: 'return get.call(this, type, ...rest);',
+    expect: 'each forced condition takes away one codec or context, from its source text, and leaves the rest to the browser',
+  },
+  {
+    why: 'the browser check takes a second --force, so a verdict can name only one of the conditions it ran under',
+    file: 'tools/check-browser.js',
+    from: "arg === '--force' && !options.force && ",
+    to: "arg === '--force' && ",
+    expect: 'the browser check forces one named export fallback per run, and the default run none',
+  },
+  {
+    why: "a forced run's summary reads as the default run's",
+    file: 'tools/check-browser.js',
+    from: "(report.forced ? ' with ' + FORCED[report.forced].means : '')",
+    to: "''",
+    expect: 'a forced run names its condition in its summary and report, and the default summary is unchanged',
+  },
+  {
+    why: 'a forced WebM run records a fourth time, so a machine too loaded to record passes on persistence',
+    file: 'tools/check-browser.js',
+    from: 'refusals.length + 1 >= limit',
+    to: 'refusals.length >= limit',
+    expect: 'a forced WebM run records again only when the page refuses a recording as behind schedule, three recordings at most',
+  },
+  {
+    why: 'a forced WebM run records again after any refusal, so a recording that lost pictures is tried until one passes',
+    file: 'tools/check-browser.js',
+    from: 'const behind = /fell (\\d+) ms behind its schedule/.exec(error.message);',
+    to: 'const behind = /fell (\\d+) ms behind its schedule|$/.exec(error.message);',
+    expect: 'a forced WebM run records again only when the page refuses a recording as behind schedule, three recordings at most',
+  },
+  {
+    why: 'the browser check accepts a decoded frame that looks more like its neighbour, so a film shifted by a frame passes',
+    file: 'tools/check-browser.js',
+    from: 'if (best[1] > own)',
+    to: 'if (false)',
+    expect: 'a decoded frame matches its drawn frame only when it scores at least 30 dB and no neighbour scores higher',
+  },
+  {
+    why: 'the browser check refuses a held frame that ties with its neighbour, so every film with a still stretch fails',
+    file: 'tools/check-browser.js',
+    from: 'if (best[1] > own)',
+    to: 'if (best[1] >= own)',
+    expect: 'a decoded frame matches its drawn frame only when it scores at least 30 dB and no neighbour scores higher',
+  },
+  {
+    why: 'the browser check accepts decoded frames down to 20 dB from their drawing, so a garbled film that is garbled alike in every frame passes',
+    file: 'tools/check-browser.js',
+    from: 'floorDb = 30',
+    to: 'floorDb = 20',
+    expect: 'a decoded frame matches its drawn frame only when it scores at least 30 dB and no neighbour scores higher',
+  },
+  {
+    why: 'a default browser run passes a film whose encoder route fell back to the GPU or CPU',
+    file: 'tools/check-browser.js',
+    from: "  if (film.conversion === 'encoder' || options.allowFallback) return null;",
+    to: "  return null;",
+    expect: 'one function decides the colour route every film must take, for every run option',
+  },
+  {
+    why: 'the browser check ignores --allow-fallback, so a machine without a usable GPU can never pass',
+    file: 'tools/check-browser.js',
+    from: "film.conversion === 'encoder' || options.allowFallback)",
+    to: "film.conversion === 'encoder')",
+    expect: 'one function decides the colour route every film must take, for every run option',
+  },
+  {
+    why: 'a run forced without AAC stops requiring the encoder route',
+    file: 'tools/check-browser.js',
+    from: "film.conversion === 'encoder' || options.allowFallback)",
+    to: "film.conversion === 'encoder' || options.allowFallback || options.force)",
+    expect: 'one function decides the colour route every film must take, for every run option',
+  },
+  {
+    why: 'a run that hides WebGL2 accepts a film the encoder or the GPU converted',
+    file: 'tools/check-browser.js',
+    from: "film.conversion === 'cpu' ? null :",
+    to: "true ? null :",
+    expect: 'one function decides the colour route every film must take, for every run option',
+  },
+  {
+    why: 'the browser check computes a route verdict for each film and never acts on it',
+    file: 'tools/check-browser.js',
+    from: "    if (route) throw new Error('browser: ' + route);\n",
+    to: "",
+    expect: 'a default browser run requires every MP4 film on the encoder route, and --allow-fallback accepts the GPU or CPU',
+  },
+  {
+    why: 'the browser report does not record that a run accepted a fallback colour route',
+    file: 'tools/check-browser.js',
+    from: '...(options.allowFallback && { allowFallback: true }), pieces,',
+    to: 'pieces,',
+    expect: 'a default browser run requires every MP4 film on the encoder route, and --allow-fallback accepts the GPU or CPU',
+  },
+  {
+    why: 'the browser check takes --allow-fallback and still requires the encoder route',
+    file: 'tools/check-browser.js',
+    from: "else if (arg === '--allow-fallback') options.allowFallback = true;",
+    to: "else if (arg === '--allow-fallback') options.allowFallback = false;",
+    expect: 'the browser check accepts a fallback colour route only when asked',
+  },
+  {
+    why: 'a run that accepted a fallback colour route reads as a default run in its summary',
+    file: 'tools/check-browser.js',
+    from: "(report.allowFallback ? (report.forced ? ',' : '') + ' accepting a fallback colour route' : '')",
+    to: "''",
+    expect: 'a run that accepts a fallback colour route says so in its summary',
+  },
+  {
+    why: 'replay compares a file made by another library version',
+    file: 'tools/replay.js',
+    from: '  if (manifest.artifex !== VERSION) {',
+    to: '  if (false) {',
+    expect: 'a file made by another version, for another piece, box or outputs is refused, never compared',
+  },
+  {
+    why: 'replay compares a file with a module of another piece',
+    file: 'tools/replay.js',
+    from: '  if (piece.name !== manifest.piece) {',
+    to: '  if (false) {',
+    expect: 'a file made by another version, for another piece, box or outputs is refused, never compared',
+  },
+  {
+    why: 'replay compares a file drawn at a box the piece no longer has',
+    file: 'tools/replay.js',
+    from: '  if (!same(manifest.size, { w: piece.size.w, h: piece.size.h })) {',
+    to: '  if (false) {',
+    expect: 'a file made by another version, for another piece, box or outputs is refused, never compared',
+  },
+  {
+    why: 'an SVG replay reports a match whatever the bytes',
+    file: 'tools/replay.js',
+    from: '  if (at === saved.length && at === again.length) return { match: true',
+    to: '  if (true) return { match: true',
+    expect: 'an SVG whose drawing or recipe differs is named by its first differing byte',
+  },
+  {
+    why: "an SVG replay draws the piece's own seed instead of the recipe's",
+    file: 'tools/replay.js',
+    from: 'renderVector(piece, { seed: manifest.seed, params: manifest.params, t: manifest.t })',
+    to: 'renderVector(piece, { params: manifest.params, t: manifest.t })',
+    expect: 'an SVG replays byte for byte from the manifest it carries',
+  },
+  {
+    why: 'a film replay compares a film cut on another frame grid',
+    file: 'tools/replay.js',
+    from: '    if (grid[k] !== now[k]) throw',
+    to: '    if (false) throw',
+    expect: 'a film is checked against its frame grid, size and frame count before any browser starts',
+  },
+  {
+    why: 'a film replay compares a film of another size',
+    file: 'tools/replay.js',
+    from: '  if (video.width !== size.w || video.height !== size.h) {',
+    to: '  if (false) {',
+    expect: 'a film is checked against its frame grid, size and frame count before any browser starts',
+  },
+  {
+    why: 'a film frame far from its redraw still matches',
+    file: 'tools/replay.js',
+    from: '    if (!(r.psnr >= FILM_FLOOR_DB)) {',
+    to: '    if (false) {',
+    expect: 'a film matches only where every compared frame is within the floor of its redraw and closest to its own',
+  },
+  {
+    why: 'a film frame closer to its neighbour than to itself still matches',
+    file: 'tools/replay.js',
+    from: '    const closer = r.neighbours.find((n) => n.psnr > r.psnr);',
+    to: '    const closer = null;',
+    expect: 'a film matches only where every compared frame is within the floor of its redraw and closest to its own',
+  },
+  {
+    why: 'a film whose pictures match replays as a match whatever its soundtrack',
+    file: 'tools/replay.js',
+    from: '  if (heard && !heard.match) return heard;',
+    to: '',
+    expect: 'a film whose pictures match still differs by its soundtrack, and pictures are named first',
+  },
+  {
+    why: 'a soundtrack cut short replays as a match',
+    file: 'tools/replay.js',
+    from: '  if (s.length[0] !== s.length[1]) return',
+    to: '  if (false) return',
+    expect: 'a film soundtrack matches only where it decodes to its recipe, levelled as the export levels it',
+  },
+  {
+    why: 'a soundtrack block under its codec floor passes',
+    file: 'tools/replay.js',
+    from: '    if (!(db >= floor)) {',
+    to: '    if (false) {',
+    expect: 'a soundtrack block is judged against its codec floor unless the difference is under the gate',
+  },
+  {
+    why: 'the soundtrack gate skips a block by its rendered level, so sound where the recipe is silent passes',
+    file: 'tools/replay.js',
+    from: '    if (error / samples < 10 ** (SOUND_GATE_DB / 10)) continue;',
+    to: '    if (signal / samples < 10 ** (SOUND_GATE_DB / 10)) continue;',
+    expect: 'a soundtrack block is judged against its codec floor unless the difference is under the gate',
+  },
+  {
+    why: 'replay compares a film soundtrack with its recipe unlevelled',
+    file: 'tools/replay.js',
+    from: '  const scale = 10 ** (gain / 20);',
+    to: '  const scale = 1;',
+    expect: 'a film soundtrack matches only where it decodes to its recipe, levelled as the export levels it',
+  },
+  {
+    why: 'a film that lost its soundtrack replays as one whose piece has none',
+    file: 'tools/replay.js',
+    from: '  if (!track) return {',
+    to: '  if (!track) return null; if (false) return {',
+    expect: 'a film and its piece must agree on whether there is a soundtrack, in a codec the export writes',
+  },
+  {
+    why: 'replay levels a soundtrack by a rule of its own, to -14 LUFS past the -1 dBTP ceiling the export stops at',
+    file: 'tools/replay.js',
+    from: '  const gain = api.loudnessGain(api.loudness(rendered));',
+    to: '  const gain = -14 - api.loudness(rendered).lufs;',
+    expect: 'replay levels a soundtrack with the gain the export applies',
+  },
+  {
+    why: 'an AAC soundtrack is held only to the floor Opus noise needs',
+    file: 'tools/replay.js',
+    from: 'const SOUND_FLOOR_DB = { mp4a: 25, Opus: 15 };',
+    to: 'const SOUND_FLOOR_DB = { mp4a: 15, Opus: 15 };',
+    expect: 'a soundtrack block is judged against its codec floor unless the difference is under the gate',
+  },
+  {
+    why: 'the shared stand-in canvas reads back image data without its size, which a browser always gives',
+    file: 'tests/fake-media.js',
+    from: 'return { width: w, height: h, data };',
+    to: 'return { data };',
+    expect: 'contact sheet: metrics forward native state and methods and count only successful paint calls',
+  },
+  {
+    why: 'the shared stand-in canvas gives a 2D context that does not name its canvas, which a browser always does',
+    file: 'tests/fake-media.js',
+    from: '      canvas,\n',
+    to: '',
+    expect: 'contact sheet: metrics forward native state and methods and count only successful paint calls',
+  },
+  {
+    why: 'the shared stand-in canvas fills at the colour\'s alpha alone, so a piece\'s globalAlpha never reaches the pixels',
+    file: 'tests/fake-media.js',
+    from: '(px, p) => blend(px, p, [r, gr, b], (a / 255) * this.globalAlpha));',
+    to: '(px, p) => blend(px, p, [r, gr, b], a / 255));',
+    expect: 'the shared stand-in canvas paints under transforms, globalAlpha and region copies as a canvas does',
+  },
+  {
+    why: 'the shared stand-in canvas leaves out a pixel whose centre lies on a rectangle\'s top or left edge',
+    file: 'tests/fake-media.js',
+    from: 'if (u >= u0 && u < u1 && v >= v0 && v < v1)',
+    to: 'if (u > u0 && u < u1 && v > v0 && v < v1)',
+    expect: 'the shared stand-in canvas paints under transforms, globalAlpha and region copies as a canvas does',
+  },
+  {
+    why: 'the shared stand-in canvas fills rectangles without the transform, so a scaled frame paints at scale 1',
+    file: 'tests/fake-media.js',
+    from: 'cover(this.getTransform(), x, y, w, h, (px, p) => blend(',
+    to: 'cover({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }, x, y, w, h, (px, p) => blend(',
+    expect: 'the shared stand-in canvas paints under transforms, globalAlpha and region copies as a canvas does',
+  },
+  {
+    why: 'the shared stand-in canvas copies a source region from the image\'s corner instead of the region',
+    file: 'tests/fake-media.js',
+    from: 'const [X, Y, u, v] = [x0 + i, y0 + j, sx + i, sy + j];',
+    to: 'const [X, Y, u, v] = [x0 + i, y0 + j, i, j];',
+    expect: 'the shared stand-in canvas paints under transforms, globalAlpha and region copies as a canvas does',
+  },
+  {
+    why: 'the shared stand-in canvas draws an image at full opacity whatever globalAlpha says',
+    file: 'tests/fake-media.js',
+    from: '(from[s + 3] / 255) * this.globalAlpha);',
+    to: 'from[s + 3] / 255);',
+    expect: 'the shared stand-in canvas paints under transforms, globalAlpha and region copies as a canvas does',
+  },
+  {
+    why: 'the shared stand-in canvas makes a new context on every getContext, losing the transform and the state a canvas keeps',
+    file: 'tests/fake-media.js',
+    from: 'if (made) return type === madeType ? made : null;',
+    to: 'if (false) return made;',
+    expect: 'the shared stand-in canvas paints under transforms, globalAlpha and region copies as a canvas does',
+  },
+  {
+    why: 'the shared stand-in canvas paints source-over under any composite operation, so a lighter or multiply mark passes as a plain one',
+    file: 'tests/fake-media.js',
+    from: "if (g.globalCompositeOperation !== 'source-over') throw",
+    to: 'if (false) throw',
+    expect: 'the shared stand-in canvas paints under transforms, globalAlpha and region copies as a canvas does',
+  },
+  {
+    why: 'replay finds no recipe in a PNG the page saved',
+    file: 'tools/replay.js',
+    from: '  png: pngManifest,',
+    to: '  png: () => null,',
+    expect: 'a PNG from the page is checked against its scale, size and playhead before any browser starts',
+  },
+  {
+    why: 'a PNG replay compares a PNG drawn at another scale',
+    file: 'tools/replay.js',
+    from: '  if (got.w !== size.w || got.h !== size.h) throw new Error(`replay: the PNG is',
+    to: '  if (false) throw new Error(`replay: the PNG is',
+    expect: 'a PNG from the page is checked against its scale, size and playhead before any browser starts',
+  },
+  {
+    why: 'a PNG replay redraws a playhead that is no frame of the piece',
+    file: 'tools/replay.js',
+    from: "  if (at < 0) throw new Error(`replay: the PNG's playhead",
+    to: "  if (false) throw new Error(`replay: the PNG's playhead",
+    expect: 'a PNG from the page is checked against its scale, size and playhead before any browser starts',
+  },
+  {
+    why: 'a PNG far from its redraw still matches',
+    file: 'tools/replay.js',
+    from: '  if (!(own.psnr >= PNG_FLOOR_DB)) {',
+    to: '  if (false) {',
+    expect: 'a PNG matches when identical to its redraw, or within the floor and closest to its own frame',
+  },
+  {
+    why: 'a PNG closer to a neighbouring frame than to its own still matches',
+    file: 'tools/replay.js',
+    from: '  const closer = rows.find((r) => r.frame !== at && r.psnr > own.psnr);',
+    to: '  const closer = null;',
+    expect: 'a PNG matches when identical to its redraw, or within the floor and closest to its own frame',
+  },
+  {
+    why: 'a WebM replay seeks each frame on the frame grid, where the recorder\'s clock can have put its neighbour',
+    file: 'tools/replay.js',
+    from: '  return { frames, seeks: frames.map((i) => (times[i] + end(i)) / 2000) };',
+    to: '  return { frames, seeks: frames.map((i) => (i + 0.5) / grid.hz) };',
+    expect: 'a WebM from the page is checked like a film, and each frame is sought within its own block',
+  },
+  {
+    why: 'a WebM replay compares a film cut on another frame grid',
+    file: 'tools/replay.js',
+    from: "  const off = ['frames', 'hz', 'loop'].find((k) => grid[k] !== now[k]);",
+    to: "  const off = null;",
+    expect: 'a WebM from the page is checked like a film, and each frame is sought within its own block',
+  },
+  {
+    why: 'a WebM replay compares a film missing frames',
+    file: 'tools/replay.js',
+    from: '  if (times.length !== grid.frames) throw',
+    to: '  if (false) throw',
+    expect: 'a WebM from the page is checked like a film, and each frame is sought within its own block',
+  },
+  {
+    why: 'a WebM replay compares a film of another size',
+    file: 'tools/replay.js',
+    from: '  if (got.w !== size.w || got.h !== size.h) throw new Error(`replay: the film is',
+    to: '  if (false) throw new Error(`replay: the film is',
+    expect: 'a WebM from the page is checked like a film, and each frame is sought within its own block',
+  },
+  {
+    why: "the film replay indexes the page's examples with any name, inherited or missing",
+    file: 'tools/replay.js',
+    from: 'async function compareFilm(bytes, recipe, frames) {\n  const api = window.__artifex;\n  if (!Object.prototype.hasOwnProperty.call(api.examples, recipe.piece)) throw',
+    to: 'async function compareFilm(bytes, recipe, frames) {\n  const api = window.__artifex;\n  if (false) throw',
+    expect: 'every page function refuses a piece name that is not its own the same way',
+  },
+  {
+    why: "the soundtrack replay indexes the page's examples with any name, inherited or missing",
+    file: 'tools/replay.js',
+    from: 'async function compareSound(bytes, recipe, block) {\n  const api = window.__artifex;\n  if (!Object.prototype.hasOwnProperty.call(api.examples, recipe.piece)) throw',
+    to: 'async function compareSound(bytes, recipe, block) {\n  const api = window.__artifex;\n  if (false) throw',
+    expect: 'every page function refuses a piece name that is not its own the same way',
+  },
+  {
+    why: 'a file goes into the page as one message, which Edge closes the connection on past 100 MB',
+    file: 'tools/replay.js',
+    from: 'Buffer.from(bytes.subarray(at, at + piece))',
+    to: 'Buffer.from(bytes.subarray(at))',
+    expect: 'a file too large for one message reaches the page whole, one piece per message',
+  },
+  {
+    why: "a piece lost on the way leaves zeros in the page's file and the replay carries on",
+    file: 'tools/replay.js',
+    from: '  if (held !== bytes.length) throw',
+    to: '  if (false) throw',
+    expect: 'a file too large for one message reaches the page whole, one piece per message',
+  },
+  {
+    why: 'the SVG manifest reader leaves quotes escaped, so no recipe parses',
+    file: 'core/surface-vector.js',
+    from: "  const text = found[1].replace(/&(amp|lt|gt|quot);/g, (_, k) => ({ amp: '&', lt: '<', gt: '>', quot: '\"' })[k]);",
+    to: "  const text = found[1].replace(/&(amp|lt|gt);/g, (_, k) => ({ amp: '&', lt: '<', gt: '>' })[k]);",
+    expect: 'a render carries a manifest of how to make it again',
+  },
+  {
+    why: 'the browser check reads a decoded frame by drawing the video element, which Edge can convert away from the pixels the film carries',
+    file: 'tools/check-browser.js',
+    from: '    try { got = pixels(frame); } finally { frame.close(); }',
+    to: '    try { got = pixels(video); } finally { frame.close(); }',
+    expect: 'the browser check scores each decoded frame by the pixels its VideoFrame holds, and closes every frame',
+  },
+  {
+    why: 'the browser check leaves every VideoFrame it reads open, holding decoder memory',
+    file: 'tools/check-browser.js',
+    from: '    try { got = pixels(frame); } finally { frame.close(); }',
+    to: '    try { got = pixels(frame); } finally { /* left open */ }',
+    expect: 'the browser check scores each decoded frame by the pixels its VideoFrame holds, and closes every frame',
+  },
+  {
+    why: 'replay reads a decoded film frame by drawing the video element, which Edge can convert away from the pixels the film carries',
+    file: 'tools/replay.js',
+    from: "    // software-decoded frame's colours differently from the pixels it carries.\n    const frame = new VideoFrame(video);\n    let got;\n"
+      + '    try { got = shrink(frame); } finally { frame.close(); }',
+    to: "    // software-decoded frame's colours differently from the pixels it carries.\n    const frame = new VideoFrame(video);\n    let got;\n"
+      + '    try { got = shrink(video); } finally { frame.close(); }',
+    expect: 'replay scores each decoded film frame by the pixels its VideoFrame holds, and closes every frame',
+  },
+  {
+    why: 'replay leaves every VideoFrame it reads open, holding decoder memory',
+    file: 'tools/replay.js',
+    from: "    // software-decoded frame's colours differently from the pixels it carries.\n    const frame = new VideoFrame(video);\n    let got;\n"
+      + '    try { got = shrink(frame); } finally { frame.close(); }',
+    to: "    // software-decoded frame's colours differently from the pixels it carries.\n    const frame = new VideoFrame(video);\n    let got;\n"
+      + '    try { got = shrink(frame); } finally { /* left open */ }',
+    expect: 'replay scores each decoded film frame by the pixels its VideoFrame holds, and closes every frame',
+  },
+  {
+    why: 'the browser check reads a film back in one reply, which Node\'s WebSocket refuses past 4 MiB',
+    file: 'tools/check-browser.js',
+    from: "    const film = await evaluateInPieces(client, '((frameMatch) => (' + inspectFilm.toString() + ')(' + JSON.stringify(name)",
+    to: "    const film = await evaluate(client, '((frameMatch) => (' + inspectFilm.toString() + ')(' + JSON.stringify(name)",
+    expect: 'a forced WebM run reads back a recording past 4 MiB whole',
+  },
+  {
+    why: 'each piece runs to the end of the value, so the first reply carries it all',
+    file: 'tools/check-browser.js',
+    from: "  for (let at = 0; at < length; at += piece) text += await evaluate(client, 'globalThis.__artifexValue.slice(' + at + ', ' + (at + piece) + ')');",
+    to: "  for (let at = 0; at < length; at += piece) text += await evaluate(client, 'globalThis.__artifexValue.slice(' + at + ')');",
+    expect: 'a value past the 4 MiB a reply may carry crosses from the page whole, in pieces',
+  },
+  {
+    why: 'the pieces overlap by a character, so the value arrives garbled',
+    file: 'tools/check-browser.js',
+    from: "  for (let at = 0; at < length; at += piece) text += await evaluate(client, 'globalThis.__artifexValue.slice(' + at + ', ' + (at + piece) + ')');",
+    to: "  for (let at = 0; at < length; at += piece - 1) text += await evaluate(client, 'globalThis.__artifexValue.slice(' + at + ', ' + (at + piece) + ')');",
+    expect: 'a value past the 4 MiB a reply may carry crosses from the page whole, in pieces',
+  },
+  {
+    why: 'the page keeps its copy of a value after the last piece is read',
+    file: 'tools/check-browser.js',
+    from: "  await evaluate(client, 'delete globalThis.__artifexValue');",
+    to: '',
+    expect: 'a value past the 4 MiB a reply may carry crosses from the page whole, in pieces',
+  },
+  {
+    why: 'a screenshot band is sized for two bytes a pixel, so a sheet that does not compress passes the reply limit',
+    file: 'tools/check-browser.js',
+    from: '  return Math.floor(SHOT_BYTES / (1 + 4 * width));',
+    to: '  return Math.floor(SHOT_BYTES / (1 + 2 * width));',
+    expect: 'a band holds as many rows as fit in one reply even if no pixel compresses',
+  },
+  {
+    why: 'a piece may weigh the whole 4 MiB, leaving nothing for the reply or a whole shot heavier than its bands',
+    file: 'tools/check-browser.js',
+    from: 'const SHOT_BYTES = Math.floor(((4 * 1024 * 1024 - 65536) * 3) / 4);',
+    to: 'const SHOT_BYTES = Math.floor((4 * 1024 * 1024 * 3) / 4);',
+    expect: 'a band holds as many rows as fit in one reply even if no pixel compresses',
+  },
+  {
+    why: 'bands join a piece whatever they weigh, so a heavy part is shot whole and the reply fails',
+    file: 'tools/check-browser.js',
+    from: '    if (last && last.bytes + bytes <= SHOT_BYTES) {',
+    to: '    if (last) {',
+    expect: 'a sheet part too heavy for one screenshot reply is shot in pieces that each fit, top to bottom',
+  },
+  {
+    why: 'a piece forgets what its bands weigh, so it grows past the reply limit',
+    file: 'tools/check-browser.js',
+    from: '{ last.rows += count; last.bytes += bytes; }',
+    to: '{ last.rows += count; }',
+    expect: 'a sheet part too heavy for one screenshot reply is shot in pieces that each fit, top to bottom',
+  },
+  {
+    why: 'every piece is shot from the top of the part, so later files repeat the first rows',
+    file: 'tools/check-browser.js',
+    from: '    piece.png = await shoot(piece.from, piece.rows);',
+    to: '    piece.png = await shoot(0, piece.rows);',
+    expect: 'a sheet part too heavy for one screenshot reply is shot in pieces that each fit, top to bottom',
+  },
+  {
+    why: 'every piece keeps the part name, so each file overwrites the one before',
+    file: 'tools/check-browser.js',
+    from: '    piece.file = pieces.length === 1 ? file :',
+    to: '    piece.file = true ? file :',
+    expect: 'a sheet part too heavy for one screenshot reply is shot in pieces that each fit, top to bottom',
+  },
+  {
+    why: 'every sheet part is weighed in bands first, so a small sheet takes screenshots it does not need',
+    file: 'tools/check-browser.js',
+    from: '  if (rows <= band) return [{ file, from: 0, rows, png: await shoot(0, rows) }];',
+    to: '',
+    expect: 'a sheet part that fits in one screenshot reply keeps its one file and screenshot',
+  },
+  {
+    why: 'a scaled piece asks exactly its rows, so Edge can give one row fewer and a sheet file loses its last row',
+    file: 'tools/check-browser.js',
+    from: 'height: scale < 1 ? (count + 0.5) / scale : count, scale };',
+    to: 'height: scale < 1 ? count / scale : count, scale };',
+    expect: 'a whole sheet part keeps its clip, and a scaled piece asks half a row more',
+  },
+  {
+    why: 'an unscaled piece asks half a row more, which moves its pixels',
+    file: 'tools/check-browser.js',
+    from: 'height: scale < 1 ? (count + 0.5) / scale : count, scale };',
+    to: 'height: (count + 0.5) / scale, scale };',
+    expect: 'a whole sheet part keeps its clip, and a scaled piece asks half a row more',
+  },
+  {
+    why: 'a whole scaled part takes the piece clip, so every scaled sheet file changes its pixels',
+    file: 'tools/check-browser.js',
+    from: '  if (count === Math.round(height * scale)) return { x: 0, y: top, width, height, scale };',
+    to: '',
+    expect: 'a whole sheet part keeps its clip, and a scaled piece asks half a row more',
+  },
+  {
+    why: 'every piece is clipped from the top of its part, so later files repeat the first rows',
+    file: 'tools/check-browser.js',
+    from: '  return { x: 0, y: top + from / scale,',
+    to: '  return { x: 0, y: top,',
+    expect: 'a whole sheet part keeps its clip, and a scaled piece asks half a row more',
+  },
+  {
+    why: 'the page stops exposing the loudness meter, so replay can no longer measure a decoded film and only Edge would notice',
+    file: 'tools/build-page.js',
+    from: '  loudness: film.measureLoudness,\n',
+    to: '',
+    expect: 'the page exposes the film loudness meter and gain that replay reads, as core/film.js gives them',
+  },
+  {
+    why: 'the page stops exposing the loudness gain, so replay can no longer level a soundtrack as the export did and only Edge would notice',
+    file: 'tools/build-page.js',
+    from: '  loudnessGain: film.loudnessGain,\n',
+    to: '',
+    expect: 'the page exposes the film loudness meter and gain that replay reads, as core/film.js gives them',
+  },
+  {
+    why: 'replay closes a WebM frame only after a read that succeeds, so a read that throws leaves the VideoFrame open',
+    file: 'tools/replay.js',
+    from: '      video.currentTime = seeks[n];\n    });\n    await new Promise((resolve) => setTimeout(resolve, 60));\n'
+      + '    const frame = new VideoFrame(video);\n    let got;\n    try { got = shrink(frame); } finally { frame.close(); }\n',
+    to: '      video.currentTime = seeks[n];\n    });\n    await new Promise((resolve) => setTimeout(resolve, 60));\n'
+      + '    const frame = new VideoFrame(video);\n    const got = shrink(frame);\n    frame.close();\n',
+    expect: 'a WebM frame whose read throws still closes the VideoFrame it was read through',
   },
 
 ];
@@ -1718,46 +3049,73 @@ function suiteDeadline(value = process.env.ARTIFEX_NEGATIVE_TIMEOUT_MS) {
   return timeout;
 }
 
-/** Terminate only this child's Windows tree or its private POSIX process group. */
-function terminateSuite(child) {
-  if (process.platform !== 'win32') {
-    try { process.kill(-child.pid, 'SIGKILL'); return Promise.resolve(null); }
-    catch (error) { return Promise.resolve(error.code === 'ESRCH' ? null : error); }
-  }
+/**
+ * Stop only this child's Windows tree or its private POSIX process group, and
+ * judge the stop by the child alone: it has exited, or is seen exiting within
+ * `graceMs` of the kill ending. taskkill's exit code and localized output
+ * decide nothing, because taskkill also fails when a member exits by itself
+ * mid-kill. Node runs each Windows child in a kill-on-close job, so the
+ * child's own descendants end with it. A kill that cannot start fails.
+ */
+function terminateSuite(child, graceMs = 5000) {
   return new Promise((resolve) => {
-    let detail = '';
+    const judge = (said) => {
+      if (child.exitCode !== null || child.signalCode !== null) { resolve(null); return; }
+      const exited = () => { clearTimeout(grace); resolve(null); };
+      const grace = setTimeout(() => {
+        child.removeListener('exit', exited);
+        resolve(new Error(`owned tree termination left process ${child.pid} running ${graceMs} ms after the kill${said}`));
+      }, graceMs);
+      child.once('exit', exited);
+    };
+    if (process.platform !== 'win32') {
+      try { process.kill(-child.pid, 'SIGKILL'); } catch (error) {
+        if (error.code !== 'ESRCH') { resolve(error); return; }
+      }
+      judge('');
+      return;
+    }
+    let detail = '', failed = false;
     // Under CPU load taskkill itself can take seconds to start.
     const killer = spawn('taskkill.exe', ['/pid', String(child.pid), '/T', '/F'], {
       windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout: 20000, killSignal: 'SIGKILL',
     });
+    // Kept only to explain a failure in the report.
     for (const stream of [killer.stdout, killer.stderr]) stream.on('data', (chunk) => {
       detail = (detail + chunk.toString('utf8')).slice(-2000);
     });
-    killer.once('error', resolve);
-    killer.once('close', async (code) => {
-      if (code === 0) { resolve(null); return; }
-      // taskkill also fails for a member that exited by itself after its tree
-      // snapshot, which load makes common. Teardown failed only when a process it
-      // names is still running once termination settles. The runner itself is
-      // named as the root's parent.
-      const pids = [...new Set(detail.match(/\d+/g) || [])].map(Number).filter((pid) => pid > 0 && pid !== process.pid);
-      resolve(pids.length && !(await stillRunning(pids, 5000)).length ? null : new Error(`owned tree termination exited ${code}: ${detail.trim()}`));
+    killer.once('error', (error) => { failed = true; resolve(error); });
+    killer.once('close', (code) => {
+      if (!failed) judge(`; taskkill exited ${code}${detail.trim() ? ': ' + detail.trim() : ''}`);
     });
   });
 }
 
-/** The PIDs still running after up to `limitMs`; Windows completes a terminated process's exit asynchronously. */
-async function stillRunning(pids, limitMs) {
-  const running = (pid) => {
-    try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; }
-  };
-  const deadline = Date.now() + limitMs;
-  let alive = pids.filter(running);
-  while (alive.length && Date.now() < deadline) {
-    await sleep(50);
-    alive = alive.filter(running);
+// Short names for what a run creates. Windows' mkdtemp and process working
+// directories fail past 260 characters, and a runner test nests a whole run of
+// its own inside a copy: <TEMP>/<run>/<copy>/t/<fixture>/.../<run>/control/t/...
+const RUN_PREFIX = 'artifex-neg-';
+const SUITE_TEMP = 't';
+
+/** Whether a PID still runs; EPERM means it exists but belongs to someone else. */
+function running(pid) {
+  try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; }
+}
+
+/**
+ * Remove the copies left by runs whose runner process is gone, stopped before
+ * its own cleanup. Only this runner's pid-named roots are considered, and
+ * their kept infrastructure evidence stays for whoever reads their report.
+ */
+async function sweepStaleRuns(tempRoot = os.tmpdir()) {
+  for (const name of fs.readdirSync(tempRoot)) {
+    const owner = Number(new RegExp('^' + RUN_PREFIX + '(\\d+)-').exec(name)?.[1]);
+    if (!owner || owner === process.pid || running(owner)) continue;
+    const root = path.join(tempRoot, name);
+    // A copy an orphaned process still holds stays until a later run.
+    for (const entry of fs.readdirSync(root)) if (entry !== 'infrastructure') await removeCopy(path.join(root, entry), 0).catch(() => {});
+    if (!fs.readdirSync(root).length) await removeCopy(root, 0).catch(() => {});
   }
-  return alive;
 }
 
 /** Remove a copy whose stopped processes may still hold it: Windows releases their handles after they exit. */
@@ -1840,6 +3198,10 @@ async function runSuite(dir, execute = executeSuite, timeout) {
   // Inheriting child-v8 makes Node skip the requested files with exit 0.
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
+  // A runner copy gives its suite a temporary directory inside itself, so
+  // removing the copy also removes what a killed suite never cleaned up.
+  const temp = path.join(dir, SUITE_TEMP);
+  if (fs.existsSync(temp)) env.TEMP = env.TMP = env.TMPDIR = temp;
   try {
     result = await execute(process.execPath, ['--test', '--test-reporter=tap', 'tests/*.test.js'], {
       cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env, timeout: timeoutMs,
@@ -1928,9 +3290,43 @@ async function judgeMutation(dir, m, evidence, timeoutMs, execute = executeSuite
   };
 }
 
-async function main() {
+const USAGE = 'usage: node tests/negative.js [--file <mutated file>]... [--expect <text of the expected test title>]...';
+
+/**
+ * Choose the mutations to run; with no filter, all of them. `--file` matches a
+ * mutated file's repository path and `--expect` text within the expected test
+ * title. Repeating a kind widens it; giving both kinds requires both.
+ */
+function selectMutations(args, mutations = MUTATIONS) {
+  const files = [], expects = [];
+  for (let i = 0; i < args.length; i += 2) {
+    const kind = { '--file': files, '--expect': expects }[args[i]];
+    if (!kind || !args[i + 1] || args[i + 1].startsWith('--')) throw new Error(USAGE);
+    kind.push(args[i + 1]);
+  }
+  const normal = (file) => file.replace(/\\/g, '/').replace(/^\.\//, '');
+  const chosen = mutations.filter((m) => (!files.length || files.some((file) => normal(file) === m.file))
+    && (!expects.length || expects.some((text) => m.expect.includes(text))));
+  const filter = [...files.map((file) => `--file ${file}`), ...expects.map((text) => `--expect ${text}`)].join(' ');
+  if (filter && !chosen.length) throw new Error(`no mutation matches ${filter}`);
+  return { chosen, filter };
+}
+
+/** A patch text must match its file exactly once, or the mutation is not the experiment written. */
+function patchProblem(src, m) {
+  const hits = src.split(m.from).length - 1;
+  if (hits === 0) return `MUTATION MISS   ${m.why}\n                patch text not found in ${m.file}`;
+  if (hits > 1) return `MUTATION AMBIG  ${m.why}\n                patch text matches ${hits} times in ${m.file}`;
+  return null;
+}
+
+async function main(args = process.argv.slice(2), { mutations = MUTATIONS, root = ROOT } = {}) {
+  // A filter is checked before anything is copied.
+  const { chosen, filter } = selectMutations(args, mutations);
   const timeoutMs = suiteDeadline();
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'artifex-negative-'));
+  await sweepStaleRuns();
+  // The runner's pid names the root, so a later run can tell when it was stopped.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `${RUN_PREFIX}${process.pid}-`));
   const evidence = path.join(tmp, 'infrastructure');
   let escaped = 0, misnamed = 0, passed = 0, invalid = 0, infrastructure = 0;
 
@@ -1938,10 +3334,17 @@ async function main() {
     // The control. If the suite is not green to begin with, nothing below means
     // anything -- a mutation cannot be blamed for a failure that was already there.
     const control = path.join(tmp, 'control');
-    const bytes = copyDir(ROOT, control, true);
+    const bytes = copyDir(root, control, true);
+    fs.mkdirSync(path.join(control, SUITE_TEMP));
     const per = (bytes / 1048576).toFixed(2);
     // Report copy volume because the same source is copied for every mutation.
-    console.log(`copy     ${per} MB per mutation, ${((bytes * (MUTATIONS.length + 1)) / 1048576).toFixed(0)} MB in all`);
+    console.log(`copy     ${per} MB per mutation, ${((bytes * (chosen.length + 1)) / 1048576).toFixed(0)} MB in all`);
+    // A filtered run still checks every patch text, so a stale mutation elsewhere fails loudly.
+    for (const m of mutations) {
+      if (chosen.includes(m)) continue;
+      const problem = patchProblem(fs.readFileSync(path.join(root, m.file), 'utf8'), m);
+      if (problem) { console.log(problem); invalid++; }
+    }
     const already = await runSuite(control, undefined, timeoutMs);
     if (already.failure) {
       console.error(`CONTROL INFRASTRUCTURE FAILURE.\n  ${infrastructureDetail(already)}`
@@ -1953,25 +3356,38 @@ async function main() {
       console.error(`CONTROL IS NOT GREEN. Fix the suite before running this.\n${failedDetail(already, '  ')}`);
       return 2;
     }
-    console.log(`control  ${MUTATIONS.length} mutations, suite green before any of them\n`);
+    console.log(filter
+      ? `control  ${chosen.length} of ${mutations.length} mutations selected by ${filter}, suite green before any of them\n`
+      : `control  ${mutations.length} mutations, suite green before any of them\n`);
 
-    for (const [i, m] of MUTATIONS.entries()) {
+    // Indices stay those of the whole list, so evidence paths match a full run's.
+    for (const [i, m] of mutations.entries()) {
+      if (!chosen.includes(m)) continue;
       const dir = path.join(tmp, `m${i}`);
-      copyDir(ROOT, dir, true);
+      copyDir(root, dir, true);
+      fs.mkdirSync(path.join(dir, SUITE_TEMP));
       const file = path.join(dir, m.file);
       const src = fs.readFileSync(file, 'utf8');
 
-      const hits = src.split(m.from).length - 1;
-      if (hits === 0) { console.log(`MUTATION MISS   ${m.why}\n                patch text not found in ${m.file}`); invalid++; continue; }
-      if (hits > 1) { console.log(`MUTATION AMBIG  ${m.why}\n                patch text matches ${hits} times in ${m.file}`); invalid++; continue; }
-
-      fs.writeFileSync(file, src.replace(m.from, m.to));
-      const { verdict, text } = await judgeMutation(dir, m, path.join(evidence, `m${i}`), timeoutMs);
-      console.log(text);
-      if (verdict === 'infra') infrastructure++;
-      else if (verdict === 'escaped') escaped++;
-      else if (verdict === 'misnamed') misnamed++;
-      else passed++;
+      const problem = patchProblem(src, m);
+      if (problem) {
+        console.log(problem);
+        invalid++;
+      } else {
+        fs.writeFileSync(file, src.replace(m.from, m.to));
+        const { verdict, text } = await judgeMutation(dir, m, path.join(evidence, `m${i}`), timeoutMs);
+        console.log(text);
+        if (verdict === 'infra') infrastructure++;
+        else if (verdict === 'escaped') escaped++;
+        else if (verdict === 'misnamed') misnamed++;
+        else passed++;
+      }
+      // Hold at most one mutated copy: its verdict is printed and any evidence
+      // is kept outside it. A copy that cannot be removed is reported.
+      try { await removeCopy(dir); } catch (error) {
+        console.log(`INFRA           copy ${dir} could not be removed\n                ${error.message}`);
+        infrastructure++;
+      }
     }
   } finally {
     // Remove every copy; the run's temp root stays only to hold kept evidence.
@@ -1979,7 +3395,9 @@ async function main() {
     if (!fs.existsSync(evidence)) await removeCopy(tmp);
   }
 
-  console.log(`\n${passed} caught  ${escaped} escaped  ${misnamed} misnamed  ${invalid} invalid  ${infrastructure} infrastructure`);
+  const counts = `${passed} caught  ${escaped} escaped  ${misnamed} misnamed  ${invalid} invalid  ${infrastructure} infrastructure`;
+  // A partial run never prints the full run's summary.
+  console.log(filter ? `\npartial run, ${chosen.length} of ${mutations.length} mutations by ${filter}: ${counts}` : `\n${counts}`);
   if (fs.existsSync(evidence)) console.log(`infrastructure evidence kept in ${evidence}`);
   return escaped + misnamed + invalid + infrastructure === 0 ? 0 : 1;
 }
@@ -1988,4 +3406,6 @@ if (require.main === module) main().then((code) => { process.exitCode = code; },
   console.error(error.message);
   process.exitCode = 2;
 });
-module.exports = { runSuite, mutationVerdict, terminateSuite, stillRunning, removeCopy, judgeMutation };
+module.exports = {
+  runSuite, mutationVerdict, terminateSuite, removeCopy, judgeMutation, selectMutations, main, RUN_PREFIX, SUITE_TEMP, COPIED,
+};

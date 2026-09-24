@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const { renderVector, playheads, drawFrame, renderSound } = require('../core/render.js');
 const { fakeAudio } = require('./fake-media.js');
 const { validate, solve, frameT, frameCount, frameDen, frameIndex } = require('../core/piece.js');
-const { VectorSurface } = require('../core/surface-vector.js');
+const { VectorSurface, svgManifest } = require('../core/surface-vector.js');
 
 function grab(fn) {
   try { fn(); } catch (e) { return e; }
@@ -155,15 +155,6 @@ test('a piece that draws nothing produces a document with no marks', () => {
 
 // ---- the frame lattice, after the walk was found to drop its middle -------
 
-/** Pull the manifest back out of a document, the way any reader would. */
-function manifestOf(svg) {
-  const m = svg.match(/<metadata id="artifex-manifest">([\s\S]*?)<\/metadata>/);
-  if (!m) return null;
-  const text = m[1]
-    .replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-  return JSON.parse(text);
-}
-
 test('a render carries a manifest of how to make it again', () => {
   const knob = { min: 0, max: 4, value: 1, meaning: 'how far the bars lean over' };
   const p = bars({ params: { lean: knob, tilt: { ...knob, meaning: 'how much the ground tips' } } });
@@ -182,7 +173,7 @@ test('a render carries a manifest of how to make it again', () => {
 
   // And it is IN THE FILE, because a plotter file or a print master outlives
   // the session that made it.
-  assert.deepEqual(manifestOf(r.svg), r.manifest);
+  assert.deepEqual(svgManifest(r.svg), r.manifest);
 });
 
 test('the manifest records the frame that was DRAWN, not the one that was asked for', () => {
@@ -195,7 +186,7 @@ test('the manifest records the frame that was DRAWN, not the one that was asked 
   assert.notEqual(r.manifest.t, asked, 'the asked-for playhead does not land on a frame');
   assert.equal(r.manifest.t, frameT(p, asked));
   assert.equal(r.manifest.t, r.t);
-  assert.equal(manifestOf(r.svg).t, frameT(p, asked));
+  assert.equal(svgManifest(r.svg).t, frameT(p, asked));
 
   // A still has one frame, and it is frame zero whatever the slider said.
   assert.equal(renderVector(bars(), { seed: 1, t: 0.9 }).manifest.t, 0);

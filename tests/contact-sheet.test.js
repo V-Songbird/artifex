@@ -4,14 +4,19 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const { createHash } = require('node:crypto');
-const { page, parseArgs, planSheet, pixelBounds, measureFrame } = require('../tools/contact-sheet.js');
+const path = require('node:path');
+const {
+  page, parseArgs, planSheet, pixelBounds, measureFrame, sheetPlans, sheetStem, sheetWidth,
+} = require('../tools/contact-sheet.js');
 const { validate, solve } = require('../core/piece.js');
 const EXAMPLES = require('../examples/index.js');
+const { nullSurface } = require('../tools/bench.js');
+const { fakeCanvas } = require('./fake-media.js');
 const stateDigest = (state) => createHash('sha256').update(JSON.stringify(state)).digest('hex');
 
 test('contact sheet: seed-only arguments and seeds retain their existing meaning', () => {
   assert.deepEqual(parseArgs(['drift', '16', '0.5']), {
-    names: ['drift'], count: 16, at: 0.5, paramNames: [],
+    names: ['drift'], count: 16, at: 0.5, paramNames: [], png: false,
   });
   assert.equal(parseArgs([]).count, 9);
   assert.equal(parseArgs([]).names.length, Object.keys(EXAMPLES).length);
@@ -22,10 +27,10 @@ test('contact sheet: seed-only arguments and seeds retain their existing meaning
 
 test('contact sheet: parameter arguments support strips and grids without consuming positional inputs', () => {
   assert.deepEqual(parseArgs(['drift', '--param', 'reach,turn']), {
-    names: ['drift'], count: 3, at: 1, paramNames: ['reach', 'turn'],
+    names: ['drift'], count: 3, at: 1, paramNames: ['reach', 'turn'], png: false,
   });
   assert.deepEqual(parseArgs(['--param=reach', 'drift', '5', '0.5']), {
-    names: ['drift'], count: 5, at: 0.5, paramNames: ['reach'],
+    names: ['drift'], count: 5, at: 0.5, paramNames: ['reach'], png: false,
   });
   for (const args of [
     ['--param', 'reach'], ['drift', '--param'], ['drift', '--param='],
@@ -82,21 +87,25 @@ test('contact sheet: coverage measures the final pixel bounding rectangle, not o
 });
 
 test('contact sheet: metrics forward native state and methods and count only successful paint calls', () => {
+  const ctx = fakeCanvas({ width: 2, height: 2 }, nullSurface).getContext('2d');
+  ctx.fillStyle = 'white';
+  // Every call must reach the canvas's own context, as a native method requires.
   const operations = [];
-  const ctx = {
-    canvas: { width: 2, height: 2 }, fillStyle: 'white',
-    beginPath() { assert.equal(this, ctx); operations.push('path'); },
-    fill() { assert.equal(this, ctx); operations.push(this.fillStyle); },
-    clearRect() { assert.equal(this, ctx); operations.push('clear'); },
-    getImageData(x, y, w, h) {
-      assert.equal(this, ctx);
-      assert.deepEqual([x, y, w, h], [0, 0, 2, 2]);
-      return { width: w, height: h, data: new Uint8ClampedArray(16).fill(255) };
-    },
+  for (const [name, record] of [['beginPath', () => 'path'], ['fill', () => ctx.fillStyle], ['fillRect', () => ctx.fillStyle], ['clearRect', () => 'clear']]) {
+    const native = ctx[name];
+    ctx[name] = function (...args) { assert.equal(this, ctx); operations.push(record()); return native.apply(this, args); };
+  }
+  const read = ctx.getImageData;
+  ctx.getImageData = function (x, y, w, h) {
+    assert.equal(this, ctx);
+    assert.deepEqual([x, y, w, h], [0, 0, 2, 2]);
+    return read.call(this, x, y, w, h);
   };
   const metrics = measureFrame(ctx, (surface) => {
     surface.fillStyle = 'black';
-    surface.beginPath(); surface.fill(); surface.fill(); surface.clearRect();
+    // The path fill paints no pixels here; the rectangle paints all four, and
+    // clearing one leaves the bounding rectangle whole.
+    surface.beginPath(); surface.fill(); surface.fillRect(0, 0, 2, 2); surface.clearRect(0, 0, 1, 1);
     assert.equal(surface.canvas, ctx.canvas);
   });
   assert.deepEqual(operations, ['path', 'black', 'black', 'clear']);
@@ -115,4 +124,22 @@ test('contact sheet: bundled pages parse in all three modes and preserve the ins
     assert.match(html, /cells: results/);
     assert.match(html, /including backgrounds/);
   }
+});
+
+test('contact sheet: --png names the image beside the sheet, sizes it and counts the cells it waits for', () => {
+  assert.equal(parseArgs(['drift', '9', '0.5', '--png']).png, true);
+  assert.equal(parseArgs(['--png', 'drift', '3', '--param', 'reach,turn']).png, true, 'the option goes anywhere');
+  assert.deepEqual({ ...parseArgs(['drift', '--png', '--param', 'reach']), png: undefined },
+    { ...parseArgs(['drift', '--param', 'reach']), png: undefined }, 'it changes nothing else');
+  const out = path.join(__dirname, '..', 'out');
+  assert.equal(sheetStem(['drift'], []), path.join(out, 'drift-seeds'));
+  assert.equal(sheetStem(['drift'], ['reach', 'turn']), path.join(out, 'drift-param-reach-turn'));
+  assert.equal(sheetStem(Object.keys(EXAMPLES), []), path.join(out, 'seeds'));
+  const external = { directory: path.join(path.sep, 'work', 'piece'), stem: 'my-piece' };
+  assert.equal(sheetStem(['mine'], ['width'], external), path.join(path.sep, 'work', 'piece', 'my-piece-param-width'), 'an external piece writes beside itself');
+  assert.equal(sheetWidth(9, []), 1280, 'seed sheets are 1280 CSS pixels wide');
+  assert.equal(sheetWidth(3, ['reach']), 1280);
+  assert.equal(sheetWidth(9, ['reach']), 48 + 9 * 220 + 8 * 14, 'a wide sweep keeps every column in the image');
+  assert.deepEqual(sheetPlans(['drift'], 3, ['reach', 'turn']).map((plan) => plan.length), [9]);
+  assert.deepEqual(sheetPlans(['drift', 'readout'], 4).map((plan) => plan.length), [4, 4]);
 });

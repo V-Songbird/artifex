@@ -18,6 +18,12 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+// Every awaited GPU step races the session's deadline. A test about something
+// else gets one no machine load reaches: a process descheduled for a moment
+// after arming a 100 ms deadline once failed the stale-frame test. The two
+// tests about deadlines set theirs explicitly.
+const FAR = 60000;
+
 function hardware(options = {}) {
   const events = [], loss = deferred(), handlers = {};
   const limits = { maxTextureDimension2D: 8192, maxBufferSize: 268435456, maxUniformBufferBindingSize: 65536 };
@@ -55,7 +61,7 @@ function hardware(options = {}) {
     requestDevice: () => { events.push('request device'); return options.devicePromise || Promise.resolve(device); } };
   const gpu = { requestAdapter: () => options.adapterPromise || Promise.resolve(options.missing ? null : adapter),
     getPreferredCanvasFormat: () => 'bgra8unorm' };
-  const session = createPreview({ gpu, createCanvas: () => canvas, timeoutMs: options.timeoutMs || 100,
+  const session = createPreview({ gpu, createCanvas: () => canvas, timeoutMs: options.timeoutMs || FAR,
     onLoss: options.onLoss || (() => {}) });
   return { session, device, canvas, events, loss, handlers };
 }
@@ -167,7 +173,13 @@ test('GPU preview is single-flight and reports real loss only for a live session
 test('GPU preview times out and destroys a device delivered after the deadline', async () => {
   const late = deferred(), p = fixture();
   const h = hardware({ devicePromise: late.promise, timeoutMs: 5 });
-  await assert.rejects(h.session.draw(p, solve(p), 0, 80, 40), /timed out/);
+  // A deadline that never fires would leave nothing pending but this promise,
+  // and Node would cancel the test instead of failing it; a guard far past the
+  // deadline makes that a failure that names the cause.
+  let guard;
+  const never = new Promise((resolve, reject) => { guard = setTimeout(() => reject(new Error('the deadline never fired')), 5000); });
+  await assert.rejects(Promise.race([h.session.draw(p, solve(p), 0, 80, 40), never]), /timed out/);
+  clearTimeout(guard);
   late.resolve(h.device);
   await new Promise(setImmediate);
   assert.equal(h.events.filter((e) => e === 'destroy device').length, 1);

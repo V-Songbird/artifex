@@ -14,9 +14,12 @@
 // EVERY FILM IS LIMITED-RANGE BT.709. An encoder handed a canvas converts it to
 // video colour its own way, and the range it picks can change from one export
 // to the next. Platforms that re-encode an upload may ignore a full-range tag
-// and shift every colour. So each drawn frame is converted to BT.709
-// limited-range NV12 before the encoder sees it, the `colr` box says so, and
-// the check refuses a film tagged anything else.
+// and shift every colour. So the encoder converts frames itself only where
+// probes in the same export prove it writes limited-range BT.709; otherwise
+// each drawn frame is converted to BT.709 limited-range NV12 before the encoder
+// sees it. The `colr` box and the H.264 stream's own sequence parameter set
+// both say so, and the check refuses a film tagged anything else or tagged two
+// ways.
 //
 // THE FILM NAMES ITS RECIPE. Like an SVG, every film carries the replay manifest
 // it was drawn from, so a saved file can say which piece, seed and parameters
@@ -69,6 +72,160 @@ function runs(values) {
 // primaries, transfer and matrix (1, 1, 1), full range off.
 const BT709 = { primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false };
 const COLR = box('colr', ascii('nclx'), u16(1), u16(1), u16(1), u8(0));
+
+// The same description inside the H.264 stream, for a player or platform that
+// ignores `colr`: the video signal type of the sequence parameter set's VUI
+// (ITU-T H.264, 7.3.2.1.1 and E.1.1). Edge's encoder writes a VUI without one.
+
+// Profiles whose SPS carries a chroma format, bit depths and scaling lists.
+const HIGH_PROFILES = [100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135];
+
+/** A NAL unit's payload without its header byte or its emulation-prevention bytes. */
+function rbspOf(nal) {
+  const out = [];
+  for (let i = 1; i < nal.length; i++) {
+    if (i + 2 < nal.length && nal[i] === 0 && nal[i + 1] === 0 && nal[i + 2] === 3) { out.push(0, 0); i += 2; continue; }
+    out.push(nal[i]);
+  }
+  return out;
+}
+
+/** A NAL unit under `header`, with an emulation-prevention byte wherever two zeros precede 0 to 3. */
+function nalOf(header, rbsp) {
+  const out = [header];
+  let zeros = 0;
+  for (const b of rbsp) {
+    if (zeros >= 2 && b <= 3) { out.push(3); zeros = 0; }
+    out.push(b);
+    zeros = b === 0 ? zeros + 1 : 0;
+  }
+  return Uint8Array.from(out);
+}
+
+/**
+ * Where an SPS's RBSP keeps its video signal type, in bits: `vui` is
+ * vui_parameters_present_flag, `signal` video_signal_type_present_flag and
+ * `after` the bit past the signal type, both null without a VUI. `colour` is
+ * what the signal type says -- { format, fullRange, primaries, transfer,
+ * matrix }, 2 meaning unspecified -- or null without one.
+ */
+function spsLayout(rbsp) {
+  let at = 0;
+  const u = (n) => {
+    let v = 0;
+    for (let i = 0; i < n; i++, at++) {
+      if (at >= rbsp.length * 8) throw new Error('film: a sequence parameter set ends before its fields do');
+      v = v * 2 + ((rbsp[at >> 3] >> (7 - (at & 7))) & 1);
+    }
+    return v;
+  };
+  const ue = () => { let z = 0; while (!u(1)) z++; return 2 ** z - 1 + u(z); };
+  const se = () => { const k = ue(); return k & 1 ? (k + 1) / 2 : -k / 2; };
+  const profile = u(8);
+  u(16);
+  ue();
+  if (HIGH_PROFILES.includes(profile)) {
+    const chroma = ue();
+    if (chroma === 3) u(1);
+    ue(); ue(); u(1);
+    // Scaling lists are read only to be stepped over.
+    if (u(1)) {
+      for (let i = 0; i < (chroma !== 3 ? 8 : 12); i++) {
+        if (!u(1)) continue;
+        for (let j = 0, last = 8, next = 8; j < (i < 6 ? 16 : 64); j++) {
+          if (next !== 0) next = (last + se() + 256) % 256;
+          last = next === 0 ? last : next;
+        }
+      }
+    }
+  }
+  ue();
+  const poc = ue();
+  if (poc === 0) ue();
+  else if (poc === 1) { u(1); se(); se(); for (let i = 0, n = ue(); i < n; i++) se(); }
+  ue(); u(1); ue(); ue();
+  if (!u(1)) u(1);
+  u(1);
+  if (u(1)) { ue(); ue(); ue(); ue(); }
+  const vui = at;
+  if (!u(1)) return { vui, signal: null, after: null, colour: null };
+  if (u(1) && u(8) === 255) u(32);
+  if (u(1)) u(1);
+  const signal = at;
+  let colour = null;
+  if (u(1)) {
+    const format = u(3), fullRange = u(1) === 1;
+    colour = u(1) ? { format, fullRange, primaries: u(8), transfer: u(8), matrix: u(8) } : { format, fullRange, primaries: 2, transfer: 2, matrix: 2 };
+  }
+  return { vui, signal, after: at, colour };
+}
+
+/**
+ * The SPS NAL unit with its video signal type saying limited-range BT.709:
+ * video format unspecified, full range off, primaries, transfer and matrix 1.
+ * Every other bit is copied as the encoder wrote it. An SPS without a VUI gets
+ * one holding the signal type alone, whose other flags left off infer what an
+ * absent VUI does.
+ */
+function spsBt709(nal) {
+  const rbsp = rbspOf(nal);
+  const l = spsLayout(rbsp);
+  // The rbsp_stop_one_bit is the last bit set.
+  let stop = rbsp.length * 8 - 1;
+  while (stop >= 0 && !((rbsp[stop >> 3] >> (7 - (stop & 7))) & 1)) stop--;
+  if (stop < 0) throw new Error('film: the encoder wrote a sequence parameter set without its stop bit');
+  const bits = [];
+  const copy = (from, to) => { for (let i = from; i < to; i++) bits.push((rbsp[i >> 3] >> (7 - (i & 7))) & 1); };
+  const put = (v, n) => { for (let i = n - 1; i >= 0; i--) bits.push((v >> i) & 1); };
+  const signal = () => { put(1, 1); put(5, 3); put(0, 1); put(1, 1); put(1, 8); put(1, 8); put(1, 8); };
+  if (l.signal === null) {
+    copy(0, l.vui);
+    put(1, 1); put(0, 1); put(0, 1); signal(); put(0, 6);
+    copy(l.vui + 1, stop);
+  } else {
+    copy(0, l.signal); signal(); copy(l.after, stop);
+  }
+  put(1, 1);
+  while (bits.length % 8) bits.push(0);
+  const out = [];
+  for (let i = 0; i < bits.length; i += 8) out.push(bits.slice(i, i + 8).reduce((v, b) => v * 2 + b, 0));
+  return nalOf(nal[0], out);
+}
+
+/** The avcC configuration with each SPS it holds said in limited-range BT.709; the rest unchanged. */
+function avcCBt709(avcC) {
+  const parts = [avcC.subarray(0, 6)];
+  let at = 6;
+  for (let i = 0, n = avcC[5] & 31; i < n; i++) {
+    const sps = spsBt709(avcC.subarray(at + 2, at + 2 + ((avcC[at] << 8) | avcC[at + 1])));
+    parts.push(u16(sps.length), sps);
+    at += 2 + ((avcC[at] << 8) | avcC[at + 1]);
+  }
+  parts.push(avcC.subarray(at));
+  return concat(parts);
+}
+
+/**
+ * A sample of length-prefixed NAL units, with any SPS it repeats said in
+ * limited-range BT.709. A sample that is not whole NAL units is left alone.
+ */
+function sampleBt709(data, size) {
+  const parts = [];
+  let changed = false;
+  for (let at = 0; at < data.length;) {
+    let n = 0;
+    for (let k = 0; k < size; k++) n = n * 256 + data[at + k];
+    if (!(n > 0 && at + size + n <= data.length)) return data;
+    const nal = data.subarray(at + size, at + size + n);
+    if ((nal[0] & 31) === 7) {
+      const sps = spsBt709(nal);
+      parts.push(Uint8Array.from({ length: size }, (_, k) => Math.floor(sps.length / 256 ** (size - 1 - k)) & 255), sps);
+      changed = true;
+    } else parts.push(data.subarray(at, at + size + n));
+    at += size + n;
+  }
+  return changed ? concat(parts) : data;
+}
 
 // The replay manifest rides in moov/udta, the user-data box, as a `uuid` box,
 // the ISO/IEC 14496-12 form for a private box type:
@@ -185,7 +342,8 @@ function opusSamples(packet) {
  * One MP4 file: moov first, so a player can start before it has the whole file.
  *
  * `video`: { width, height, timescale, delta, samples: [{ data, key, offset }],
- * avcC }, tagged limited-range BT.709. `audio`, optional, is AAC as { sampleRate,
+ * avcC }, tagged limited-range BT.709 in `colr` and in every sequence parameter
+ * set, the avcC's and any a sample repeats. `audio`, optional, is AAC as { sampleRate,
  * channels, samples: [Uint8Array], asc, bitrate, priming }, or Opus as { codec:
  * 'opus', head, samples, priming }, where `head` is the encoder's OpusHead and
  * `priming` the samples the encoder primed the soundtrack with: the Opus
@@ -200,11 +358,12 @@ function opusSamples(packet) {
  */
 function muxMp4({ video, audio = null, manifest = null }) {
   const length = video.samples.length * video.delta;
+  const avcC = avcCBt709(video.avcC);
   const tracks = [{
     id: 1, handler: 'vide', timescale: video.timescale, duration: length,
     width: video.width, height: video.height,
-    entry: avcEntry(video.width, video.height, video.avcC),
-    samples: video.samples.map((s) => s.data),
+    entry: avcEntry(video.width, video.height, avcC),
+    samples: video.samples.map((s) => sampleBt709(s.data, (avcC[4] & 3) + 1)),
     deltas: video.samples.map(() => video.delta),
     offsets: video.samples.map((s) => s.offset || 0),
     keys: video.samples.map((s, i) => (s.key ? i + 1 : 0)).filter(Boolean),
@@ -245,9 +404,11 @@ const CONTAINERS = new Set(['moov', 'trak', 'mdia', 'minf', 'stbl', 'dinf', 'edt
  * What an MP4 file actually holds: the movie's timescale and duration, its
  * replay manifest, or null, and each track's codec, size, timescale, sample
  * durations, its header's duration (`span`, in movie ticks), its edit list or
- * null, keyframes, colour tag, an Opus track's `dOps`, and whether every sample
- * lies inside the media data. Reads any file with 32-bit chunk offsets, not
- * only this writer's.
+ * null, keyframes, colour tag, an H.264 track's `sps` -- the colour description
+ * of every sequence parameter set, the avcC's first and then any a sample
+ * repeats, null for one without -- an Opus track's `dOps`, and whether every
+ * sample lies inside the media data. Reads any file with 32-bit chunk offsets,
+ * not only this writer's.
  */
 function readMp4(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -275,7 +436,7 @@ function readMp4(bytes) {
         out.movie = { timescale: view.getUint32(b + (v1 ? 20 : 12)), duration: v1 ? Number(view.getBigUint64(b + 24)) : view.getUint32(b + 16) };
         out.seconds = out.movie.duration / out.movie.timescale;
       } else if (kind === 'trak') {
-        t = { handler: null, codec: null, colour: null, opus: null, span: null, edits: null, deltas: [], keys: null, sizes: [], chunks: [], stsc: [], offsets: false };
+        t = { handler: null, codec: null, colour: null, sps: [], nalLength: 0, opus: null, span: null, edits: null, deltas: [], keys: null, sizes: [], chunks: [], stsc: [], offsets: false };
         out.tracks.push(t);
       } else if (kind === 'tkhd') t.span = bytes[b] === 1 ? Number(view.getBigUint64(b + 28)) : view.getUint32(b + 20);
       else if (kind === 'elst') {
@@ -304,6 +465,12 @@ function readMp4(bytes) {
           t.channels = view.getUint16(entry + 24);
           t.sampleRate = view.getUint32(entry + 32) >>> 16;
           if (t.codec === 'Opus') walk(entry + 36, entry + view.getUint32(entry));
+        }
+      } else if (kind === 'avcC') {
+        // Its sequence parameter sets, and the length prefix its samples' NAL units carry.
+        t.nalLength = (bytes[b + 4] & 3) + 1;
+        for (let i = 0, n = bytes[b + 5] & 31, p = b + 6; i < n; i++, p += 2 + view.getUint16(p)) {
+          t.sps.push(spsLayout(rbspOf(bytes.subarray(p + 2, p + 2 + view.getUint16(p)))).colour);
         }
       } else if (kind === 'colr' && type(b) === 'nclx') {
         t.colour = { primaries: view.getUint16(b + 4), transfer: view.getUint16(b + 6), matrix: view.getUint16(b + 8), fullRange: (bytes[b + 10] & 0x80) !== 0 };
@@ -345,6 +512,16 @@ function readMp4(bytes) {
         let at = x.chunks[c];
         for (let k = 0; k < (run ? run[1] : 1) && sample < x.sizes.length; k++, sample++) {
           if (at < out.media[0] || at + x.sizes[sample] > out.media[1]) inside = false;
+          // A sequence parameter set the sample repeats, in its length-prefixed NAL units.
+          else if (x.nalLength) {
+            for (let p = at, end = at + x.sizes[sample]; p + x.nalLength < end;) {
+              let n = 0;
+              for (let i = 0; i < x.nalLength; i++) n = n * 256 + bytes[p + i];
+              if (n === 0 || p + x.nalLength + n > end) break;
+              if ((bytes[p + x.nalLength] & 31) === 7) x.sps.push(spsLayout(rbspOf(bytes.subarray(p + x.nalLength, p + x.nalLength + n))).colour);
+              p += x.nalLength + n;
+            }
+          }
           at += x.sizes[sample];
         }
       }
@@ -352,7 +529,7 @@ function readMp4(bytes) {
       return {
         kind: x.handler, codec: x.codec, width: x.width, height: x.height, channels: x.channels, sampleRate: x.sampleRate,
         timescale: x.timescale, duration: x.duration, span: x.span, edits: x.edits, samples: x.sizes.length,
-        bytes: x.sizes.reduce((s, v) => s + v, 0), deltas: x.deltas, keys: x.keys, colour: x.colour, opus: x.opus,
+        bytes: x.sizes.reduce((s, v) => s + v, 0), deltas: x.deltas, keys: x.keys, colour: x.colour, sps: x.sps, opus: x.opus,
         reordered: x.offsets, inside,
       };
     }),
@@ -362,10 +539,13 @@ function readMp4(bytes) {
 /**
  * Judge a film by what its file holds against the frame grid it was cut from.
  *
- * `expected`: { frames, hz, width, height, sound, priming, manifest }, where
- * `priming` is the samples the encoder primed the soundtrack with and
- * `manifest` the one the export drew from. Throws naming the first thing the
- * file gets wrong; returns the report otherwise.
+ * `expected`: { frames, hz, width, height, sound, priming, manifest, route,
+ * missing }, where `priming` is the samples the encoder primed the soundtrack
+ * with, `manifest` the one the export drew from, and the optional `route` and
+ * `missing` the colour route that ran and the timestamps, in microseconds, of
+ * the frames its encoder returned nothing for, which a frame-count refusal
+ * names. Throws naming the first thing the file gets wrong; returns the report
+ * otherwise.
  */
 function filmCheck(expected, file) {
   const video = file.tracks.filter((x) => x.kind === 'vide');
@@ -376,7 +556,12 @@ function filmCheck(expected, file) {
   const v = video[0];
   if (!v.inside) throw new Error('film: a sample points outside the media data. Nothing was saved.');
   if (v.samples !== expected.frames) {
-    throw new Error(`film: the file holds ${v.samples} of ${expected.frames} frames. Nothing was saved.`);
+    const lost = expected.missing || [];
+    throw new Error(`film: the file holds ${v.samples} of ${expected.frames} frames`
+      + (expected.route ? `, from the ${expected.route} route` : '')
+      + (lost.length ? `; its encoder returned nothing for the frames at ${lost.slice(0, 3).map((t) => `${t} µs`).join(', ')}`
+        + (lost.length > 3 ? ` and ${lost.length - 3} more` : '') : '')
+      + '. Nothing was saved.');
   }
   const delta = v.timescale / expected.hz;
   const uneven = v.deltas.find(([, d]) => Math.abs(d - delta) > 0.5);
@@ -394,6 +579,15 @@ function filmCheck(expected, file) {
   if (primaries !== 1 || transfer !== 1 || matrix !== 1 || fullRange) {
     throw new Error(`film: the file is tagged primaries ${primaries}, transfer ${transfer}, matrix ${matrix}, ${fullRange ? 'full' : 'limited'} range, `
       + 'and every film must be limited-range BT.709 (1, 1, 1). Nothing was saved.');
+  }
+  // Every sequence parameter set says the same, for a player that ignores colr.
+  const stream = v.sps.find((c) => !c || c.primaries !== primaries || c.transfer !== transfer || c.matrix !== matrix || c.fullRange !== fullRange);
+  if (!v.sps.length || stream === null) {
+    throw new Error('film: the H.264 stream carries no colour description, so a player that ignores colr has to guess its colours. Nothing was saved.');
+  }
+  if (stream) {
+    throw new Error(`film: the H.264 stream says primaries ${stream.primaries}, transfer ${stream.transfer}, matrix ${stream.matrix}, `
+      + `${stream.fullRange ? 'full' : 'limited'} range, and its colr box says limited-range BT.709 (1, 1, 1). Nothing was saved.`);
   }
   if (!file.manifest) throw new Error('film: the file carries no replay manifest, so it cannot say what made it. Nothing was saved.');
   const differs = Object.keys({ ...expected.manifest, ...file.manifest })
@@ -438,7 +632,10 @@ function filmCheck(expected, file) {
     }
     const heard = (a.duration - edit.mediaTime) / a.timescale;
     const grain = Math.max(...a.deltas.map(([, d]) => d)) / a.timescale;
-    if (heard < seconds - grain || heard > seconds + 2 * grain) {
+    // Every encoder measured leaves packets covering its whole edit, so one
+    // that ends before its edit, by however little, is refused.
+    const covered = (a.duration - edit.mediaTime) * movie.timescale >= edit.duration * a.timescale;
+    if (!covered || heard > seconds + 2 * grain) {
       throw new Error(`film: the soundtrack lasts ${heard.toFixed(3)} s against a ${seconds.toFixed(3)} s film. Nothing was saved.`);
     }
     sound = { codec: a.codec, seconds: heard, channels: a.channels, sampleRate: a.sampleRate };
@@ -581,14 +778,303 @@ void main() {
     return { data, layout: [{ offset: 0, stride }, { offset: h * stride, stride }] };
   };
   // Trusted only once it reproduces the CPU conversion.
-  const probe = env.createCanvas(8, 4);
-  const pg = probe.getContext('2d', { willReadFrequently: true });
-  PROBE.forEach((css, i) => { pg.fillStyle = css; pg.fillRect(i % 8, i >> 3, 1, 1); });
-  const want = rgbaToNV12(pg.getImageData(0, 0, 8, 4).data, 8, 4);
-  const got = convert(probe);
+  const probe = probeImage(env);
+  const want = rgbaToNV12(probe.pixels, 8, 4);
+  const got = convert(probe.canvas);
   const at = (k) => { const p = got.layout[k < 32 ? 0 : 1], j = k & 31; return p.offset + (j >> 3) * p.stride + (j & 7); };
   if (want.some((value, k) => Math.abs(value - got.data[at(k)]) > 1)) { dispose(); return null; }
   return { convert, dispose };
+}
+
+/** PROBE on an 8 x 4 canvas kept in memory, and its pixels. */
+function probeImage(env) {
+  const probe = env.createCanvas(8, 4);
+  const pg = probe.getContext('2d', { willReadFrequently: true });
+  PROBE.forEach((css, i) => { pg.fillStyle = css; pg.fillRect(i % 8, i >> 3, 1, 1); });
+  return { canvas: probe, pixels: pg.getImageData(0, 0, 8, 4).data };
+}
+
+// ---------------------------------------------------------------------------
+// Frames the encoder converts itself
+// ---------------------------------------------------------------------------
+//
+// An encoder handed a canvas converts it to video colour itself. In Edge a
+// canvas the browser draws on the GPU comes out limited-range BT.709, within a
+// level of rgbaToNV12, and one it keeps in memory comes out full range. The
+// browser moves a canvas to memory by itself, for example once a piece reads
+// its pixels back, and the range then changes part-way through the film. So
+// the encoder is handed a WebGL2 copy of each drawn frame, which stays on the
+// GPU whatever happens to the canvas it copies, and no frame is read back.
+//
+// It is trusted only as far as each export proves it. PROBE's colours, one
+// cell each, go through the same copy and encoder before the first frame and
+// after the last, and decoded, every cell must be rgbaToNV12's value within
+// two levels. Every decoder configuration the encoder reports, as Edge's does
+// again whenever its colour changes, must say limited-range BT.709. A film
+// that fails either is encoded again, converted.
+
+/**
+ * A WebGL2 canvas that copy() fills with `source` over black. Returns
+ * { canvas, copy(), dispose() }, or null without WebGL2.
+ */
+function glCopy(env, source) {
+  const canvas = env.createCanvas(source.width, source.height);
+  const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, depth: false, stencil: false, preserveDrawingBuffer: true });
+  if (!gl || typeof gl.texImage2D !== 'function') return null;
+  const dispose = () => { const lose = gl.getExtension('WEBGL_lose_context'); if (lose) lose.loseContext(); };
+  const program = gl.createProgram();
+  for (const [type, text] of [
+    [gl.VERTEX_SHADER, '#version 300 es\nvoid main() { gl_Position = vec4(float(gl_VertexID & 1) * 4.0 - 1.0, float(gl_VertexID >> 1) * 4.0 - 1.0, 0.0, 1.0); }'],
+    [gl.FRAGMENT_SHADER, '#version 300 es\nprecision highp float;\nuniform highp sampler2D s;\nout vec4 o;\nvoid main() { o = texelFetch(s, ivec2(gl_FragCoord.xy), 0); }'],
+  ]) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, text);
+    gl.compileShader(shader);
+    gl.attachShader(program, shader);
+  }
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) { dispose(); return null; }
+  gl.useProgram(program);
+  gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  // Premultiplied colour is the colour over black; the texture's first row is
+  // the drawing's bottom, where the drawing buffer starts.
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  return {
+    canvas,
+    copy() {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, source);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      if (gl.isContextLost()) throw new Error('film: the GPU lost the frame copy part-way through the film. Nothing was saved.');
+    },
+    dispose,
+  };
+}
+
+/**
+ * PROBE drawn over the whole frame, one cell per colour, eight across and four
+ * down, leaving the canvas's drawing state as it found it for the piece.
+ */
+function drawProbe(g, w, h) {
+  g.save();
+  g.clearRect(0, 0, w, h);
+  PROBE.forEach((css, k) => {
+    const x = Math.round(((k % 8) * w) / 8), y = Math.round(((k >> 3) * h) / 4);
+    g.fillStyle = css;
+    g.fillRect(x, y, Math.round((((k % 8) + 1) * w) / 8) - x, Math.round((((k >> 3) + 1) * h) / 4) - y);
+  });
+  g.restore();
+}
+
+/**
+ * A probe's chunk decoded in software, as [Y, U, V] at the centre of each of
+ * PROBE's cells; null where the browser cannot decode it or hand over its
+ * planes as I420.
+ */
+async function probeCells(env, config, description, chunk) {
+  const { width: w, height: h } = config;
+  let planes = null;
+  let failure = null;
+  const decoder = new env.VideoDecoder({
+    output(frame) {
+      if (frame.format !== 'I420') { frame.close(); return; }
+      const buf = new Uint8Array(frame.allocationSize());
+      planes = Promise.resolve(frame.copyTo(buf)).then((layout) => ({ buf, layout }), () => null).finally(() => frame.close());
+    },
+    error(e) { failure = e; },
+  });
+  try {
+    decoder.configure({ codec: config.codec, description, hardwareAcceleration: 'prefer-software' });
+    decoder.decode(new env.EncodedVideoChunk({ type: 'key', timestamp: chunk.timestamp, data: chunk.data }));
+    await decoder.flush();
+  } catch (e) {
+    failure = e;
+  } finally {
+    if (decoder.state !== 'closed') decoder.close();
+  }
+  const got = !failure && planes && await planes;
+  if (!got) return null;
+  const { buf, layout: [y, u, v] } = got;
+  return PROBE.map((_, k) => {
+    const x = Math.round((((k % 8) + 0.5) * w) / 8) & ~1, r = Math.round((((k >> 3) + 0.5) * h) / 4) & ~1;
+    return [buf[y.offset + r * y.stride + x], buf[u.offset + (r >> 1) * u.stride + (x >> 1)], buf[v.offset + (r >> 1) * v.stride + (x >> 1)]];
+  });
+}
+
+/** What the encoder must write for each of PROBE's cells: rgbaToNV12 of a block of its colour. */
+function probeWant(env) {
+  const { pixels } = probeImage(env);
+  return PROBE.map((_, k) => {
+    const nv = rgbaToNV12(Uint8ClampedArray.from({ length: 16 }, (_, j) => pixels[4 * k + (j & 3)]), 2, 2);
+    return [nv[0], nv[4], nv[5]];
+  });
+}
+
+const limited709 = (space) => !!space && space.primaries === 'bt709' && space.matrix === 'bt709' && space.fullRange === false;
+
+// ---------------------------------------------------------------------------
+// Loudness: ITU-R BS.1770-4
+// ---------------------------------------------------------------------------
+
+// A FILM IS AS LOUD AS WHAT PLAYS BESIDE IT, UNLESS ITS OWN PEAKS STOP IT.
+// Platforms that play films turn a loud upload down to about -14 LUFS and
+// barely raise a quiet one, so a film mixed quiet stays quiet beside everything
+// else. Each soundtrack is measured as rendered and given one static gain: up
+// to -14 LUFS integrated, unless its true peak would pass -1 dBTP first. No
+// compressor or limiter touches it, so the piece's own dynamics are kept.
+const LOUDNESS = { target: -14, ceiling: -1 };
+
+/**
+ * The two K-weighting stages for a sample rate, as { b: [b0, b1, b2], a: [a1,
+ * a2] }: a high shelf of about +4 dB above 1.5 kHz, the head's effect, then a
+ * high-pass near 38 Hz. BS.1770-4 tabulates them at 48 kHz; this is the
+ * analogue design those numbers come from, so other rates get the same curve.
+ */
+function kWeighting(rate) {
+  let K = Math.tan((Math.PI * 1681.974450955533) / rate);
+  const Q1 = 0.7071752369554196;
+  const Vh = 10 ** (3.999843853973347 / 20);
+  const Vb = Vh ** 0.4996667741545416;
+  let a0 = 1 + K / Q1 + K * K;
+  const shelf = {
+    b: [(Vh + (Vb * K) / Q1 + K * K) / a0, (2 * (K * K - Vh)) / a0, (Vh - (Vb * K) / Q1 + K * K) / a0],
+    a: [(2 * (K * K - 1)) / a0, (1 - K / Q1 + K * K) / a0],
+  };
+  K = Math.tan((Math.PI * 38.13547087602444) / rate);
+  const Q2 = 0.5003270373238773;
+  a0 = 1 + K / Q2 + K * K;
+  const pass = { b: [1, -2, 1], a: [(2 * (K * K - 1)) / a0, (1 - K / Q2 + K * K) / a0] };
+  return [shelf, pass];
+}
+
+/**
+ * Integrated loudness in LUFS of planar mono or stereo channels, each weighted
+ * 1: the mean square of the K-weighted signal over 400 ms blocks that overlap
+ * by 75%, gated at -70 LUFS and then 10 LU below the mean of the blocks that
+ * passed, where every mean is of power, not of decibels. -Infinity when no
+ * block passes, which is silence as far as loudness goes.
+ */
+function integratedLoudness(channels, rate) {
+  if (channels.length < 1 || channels.length > 2) throw new Error(`film: loudness is measured on mono or stereo, not ${channels.length} channels`);
+  const step = Math.round(rate / 10);
+  const segments = Math.floor(channels[0].length / step);
+  // The squared K-weighted signal, summed over channels, per 100 ms segment.
+  const power = new Float64Array(segments);
+  const [{ b: [p0, p1, p2], a: [q1, q2] }, { b: [r0, r1, r2], a: [s1, s2] }] = kWeighting(rate);
+  for (const x of channels) {
+    let u1 = 0, u2 = 0, v1 = 0, v2 = 0;   // transposed direct form II, one pair per stage
+    for (let k = 0, i = 0; k < segments; k++) {
+      let sum = 0;
+      for (const end = i + step; i < end; i++) {
+        const y = p0 * x[i] + u1;
+        u1 = p1 * x[i] - q1 * y + u2;
+        u2 = p2 * x[i] - q2 * y;
+        const z = r0 * y + v1;
+        v1 = r1 * y - s1 * z + v2;
+        v2 = r2 * y - s2 * z;
+        sum += z * z;
+      }
+      power[k] += sum;
+    }
+  }
+  const blocks = [];
+  for (let j = 0; j + 4 <= segments; j++) blocks.push((power[j] + power[j + 1] + power[j + 2] + power[j + 3]) / (4 * step));
+  const lufs = (z) => -0.691 + 10 * Math.log10(z);
+  const mean = (zs) => zs.reduce((s, z) => s + z, 0) / zs.length;
+  const heard = blocks.filter((z) => lufs(z) > -70);
+  if (!heard.length) return -Infinity;
+  const floor = lufs(mean(heard)) - 10;
+  return lufs(mean(heard.filter((z) => lufs(z) > floor)));
+}
+
+// BS.1770-4 Annex 2: the 48-tap interpolation filter for four-times
+// oversampling. Output phase p of each input sample uses taps p, p + 4, ...
+const OVERSAMPLE = [
+  0.0017089843750, -0.0291748046875, -0.0189208984375, -0.0083007812500,
+  0.0109863281250, 0.0292968750000, 0.0330810546875, 0.0148925781250,
+  -0.0196533203125, -0.0517578125000, -0.0582275390625, -0.0266113281250,
+  0.0332031250000, 0.0891113281250, 0.1015625000000, 0.0476074218750,
+  -0.0594482421875, -0.1665039062500, -0.2003173828125, -0.1022949218750,
+  0.1373291015625, 0.4650878906250, 0.7797851562500, 0.9721679687500,
+  0.9721679687500, 0.7797851562500, 0.4650878906250, 0.1373291015625,
+  -0.1022949218750, -0.2003173828125, -0.1665039062500, -0.0594482421875,
+  0.0476074218750, 0.1015625000000, 0.0891113281250, 0.0332031250000,
+  -0.0266113281250, -0.0582275390625, -0.0517578125000, -0.0196533203125,
+  0.0148925781250, 0.0330810546875, 0.0292968750000, 0.0109863281250,
+  -0.0083007812500, -0.0189208984375, -0.0291748046875, 0.0017089843750,
+];
+
+/**
+ * True peak in dBTP: the largest magnitude of the signal oversampled four
+ * times, which finds the peaks that fall between samples, where a decoder's
+ * reconstruction and a lossy encoder overshoot the sample peak. NaN or
+ * Infinity when a sample is not a finite number.
+ */
+function truePeak(channels) {
+  let peak = 0;
+  for (const x of channels) {
+    const padded = new Float64Array(x.length + 22);
+    padded.set(x, 11);
+    for (let i = 11; i < padded.length; i++) {
+      for (let p = 0; p < 4; p++) {
+        let y = 0;
+        for (let m = 0; m < 12; m++) y += OVERSAMPLE[p + 4 * m] * padded[i - m];
+        peak = Math.max(peak, Math.abs(y));
+      }
+    }
+  }
+  return 20 * Math.log10(peak);
+}
+
+/** Integrated loudness (LUFS) and true peak (dBTP) of an AudioBuffer-shaped soundtrack. */
+function measureLoudness(buffer) {
+  const channels = Array.from({ length: buffer.numberOfChannels }, (_, c) => buffer.getChannelData(c));
+  return { lufs: integratedLoudness(channels, buffer.sampleRate), dbtp: truePeak(channels) };
+}
+
+/**
+ * The gain in dB that brings a soundtrack measured as `measured`, by
+ * measureLoudness, to LOUDNESS: to -14 LUFS, or to -1 dBTP where its peaks come
+ * first. A soundtrack with no block above the -70 LUFS gate keeps its level.
+ */
+function loudnessGain(measured) {
+  return measured.lufs === -Infinity ? 0 : Math.min(LOUDNESS.target - measured.lufs, LOUDNESS.ceiling - measured.dbtp);
+}
+
+const round2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
+
+/**
+ * Bring a rendered soundtrack to LOUDNESS in place with one static gain, and
+ * say what was measured and done: `measured` as rendered, the `gain` in dB,
+ * and the `lufs` and `dbtp` it is encoded at. A soundtrack with no block above
+ * the -70 LUFS gate has no loudness to set and keeps its level, reported as
+ * null. A sample that is not a finite number, which no player can play, is
+ * refused.
+ */
+function normalizeLoudness(buffer) {
+  // Checked before measuring: an infinite sample becomes NaN in the K-weighting
+  // filter, which the -70 LUFS gate drops, so the meter alone would pass it.
+  for (let c = 0; c < buffer.numberOfChannels; c++) {
+    if (!buffer.getChannelData(c).every(Number.isFinite)) {
+      throw new Error('film: the soundtrack holds samples that are not finite numbers, so it cannot be measured or played. Nothing was saved.');
+    }
+  }
+  const measured = measureLoudness(buffer);
+  if (measured.lufs === -Infinity) return { measured: { lufs: null, dbtp: round2(measured.dbtp) }, gain: 0, lufs: null, dbtp: round2(measured.dbtp) };
+  const gain = loudnessGain(measured);
+  const scale = 10 ** (gain / 20);
+  for (let c = 0; c < buffer.numberOfChannels; c++) {
+    const x = buffer.getChannelData(c);
+    for (let i = 0; i < x.length; i++) x[i] *= scale;
+  }
+  const result = measureLoudness(buffer);
+  return {
+    measured: { lufs: round2(measured.lufs), dbtp: round2(measured.dbtp) },
+    gain: round2(gain), lufs: round2(result.lufs), dbtp: round2(result.dbtp),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -670,13 +1156,24 @@ async function soundConfig(AudioEncoder, opt = {}) {
   return null;
 }
 
+// An AAC stream cannot rebuild the first half of its first frame, and Edge's
+// encoder starts the soundtrack in that frame and reports no priming, so its
+// first ~500 decoded samples carry none of the soundtrack. So this much silence,
+// the conventional AAC priming, goes in ahead of the soundtrack, and the edit
+// list skips it. It is no whole number of 1024-sample packets: an edit that
+// starts on a packet boundary makes Edge's video element start that packet
+// without the one before it, and the loss comes back.
+const AAC_LEAD = 2112;
+
 // Opus is the fallback where the encoder refuses AAC: a piece with sound gets
-// its soundtrack or no film at all.
-async function encodeSound(env, buffer, bitrate) {
+// its soundtrack or no film at all. `config` is soundConfig's choice for the
+// buffer's rate and channels.
+async function encodeSound(env, buffer, config) {
   const rate = buffer.sampleRate;
   const channels = buffer.numberOfChannels;
-  const config = await soundConfig(env.AudioEncoder, { sampleRate: rate, channels, bitrate });
-  if (!config) throw new Error('film: this browser encodes neither AAC nor Opus, and a film without its soundtrack is not written');
+  const bitrate = config.bitrate;
+  // Opus primes itself and says how much, in its pre-skip.
+  const lead = config.codec === 'opus' ? 0 : AAC_LEAD;
   const samples = [];
   let description = null;
   let failure = null;
@@ -692,6 +1189,12 @@ async function encodeSound(env, buffer, bitrate) {
     error(e) { failure = e; },
   });
   encoder.configure(config);
+  if (lead) {
+    const silence = new env.AudioData({
+      format: 'f32-planar', sampleRate: rate, numberOfFrames: lead, numberOfChannels: channels, timestamp: 0, data: new Float32Array(lead * channels),
+    });
+    try { encoder.encode(silence); } finally { silence.close(); }
+  }
   const planes = Array.from({ length: channels }, (_, c) => buffer.getChannelData(c));
   for (let at = 0; at < buffer.length; at += 4800) {
     const n = Math.min(4800, buffer.length - at);
@@ -699,7 +1202,7 @@ async function encodeSound(env, buffer, bitrate) {
     planes.forEach((plane, c) => data.set(plane.subarray(at, at + n), c * n));
     const chunk = new env.AudioData({
       format: 'f32-planar', sampleRate: rate, numberOfFrames: n, numberOfChannels: channels,
-      timestamp: Math.round((at * 1e6) / rate), data,
+      timestamp: Math.round(((lead + at) * 1e6) / rate), data,
     });
     try { encoder.encode(chunk); } finally { chunk.close(); }
   }
@@ -708,30 +1211,34 @@ async function encodeSound(env, buffer, bitrate) {
   if (failure) throw failure;
   if (config.codec === 'opus') {
     // Only the OpusHead knows the pre-skip, and a guessed one moves the sound
-    // against the pictures. Refused here, before a single frame is drawn.
+    // against the pictures. Refused here, which fails the export.
     if (!description) throw new Error('film: the Opus encoder gave no OpusHead, so the film cannot say where its sound starts');
     // OpusHead holds the pre-skip little-endian at byte 10.
     return { codec: 'opus', head: description, samples, priming: description[10] | (description[11] << 8) };
   }
-  // An AAC encoder that primes its first packet with samples from before the
-  // soundtrack says so by stamping that packet before zero, and the edit list
-  // skips them. Edge's encoder stamps its first packet at zero.
-  return { samples, asc: description || aacConfig(rate, channels), sampleRate: rate, channels, bitrate, priming: Math.max(0, Math.round((-first * rate) / 1e6)) };
+  // An AAC encoder that primes its first packet with samples from before its
+  // input says so by stamping that packet before zero, and the edit list skips
+  // those as well as the lead. Edge's encoder stamps its first packet at zero.
+  return { samples, asc: description || aacConfig(rate, channels), sampleRate: rate, channels, bitrate, priming: lead + Math.max(0, Math.round((-first * rate) / 1e6)) };
 }
 
 /**
  * Draw every frame of a validated, solved piece and encode it as MP4.
  *
  * `env` supplies VideoEncoder and VideoFrame, and for a piece with sound
- * AudioEncoder, AudioData and OfflineAudioContext; `createCanvas(w, h)`, a
+ * AudioEncoder, AudioData and OfflineAudioContext; VideoDecoder and
+ * EncodedVideoChunk, which let the encoder convert frames itself where its
+ * probes prove it; `createCanvas(w, h)`, a
  * clock `now()` for the report and the stall deadline, and `pause()`, which
  * yields to the event loop while the encoder drains. `opt`: `scale`, `bitrate`, `audioBitrate`,
  * `keySeconds` and `onProgress(done, total)`.
  *
  * Resolves to { bytes, report }; the report is read from the finished file,
- * replay manifest included, and names the colour conversion that ran, `gpu` or
- * `cpu`. `convertMs` includes
- * waiting for the browser to finish drawing each frame.
+ * replay manifest included, and names the colour conversion that ran,
+ * `encoder`, `gpu` or `cpu`. `convertMs` includes, on the GPU and CPU routes,
+ * waiting for the browser to finish drawing each frame, and on the encoder
+ * route its probes. `soundMs` is the soundtrack's own time, which runs
+ * alongside the frames, and `encodeWaitMs` includes each frame's yield to it.
  */
 async function exportFilm(piece, solved, env, opt = {}) {
   if (!piece.time) throw new Error('film: a still has no frame list, so there is no film to write');
@@ -755,76 +1262,150 @@ async function exportFilm(piece, solved, env, opt = {}) {
   }
   const { width, height, bitrate } = config;
 
-  // The soundtrack first: it costs a fraction of the frames, and a piece whose
-  // sound cannot be rendered or encoded should fail before a long export, not
-  // after it.
-  let sound = null;
+  // A browser that encodes neither soundtrack codec is refused before any
+  // frame is drawn. The soundtrack itself is rendered, levelled and encoded
+  // alongside the frames and joined before the file is written: its rendering
+  // and encoding run off this thread, so the frames need not wait for them. A
+  // soundtrack that fails stops the frames at the next one and fails the export
+  // with its own message, so a long export does not run on after its sound is
+  // lost.
+  const soundCodec = piece.sound ? await soundConfig(env.AudioEncoder, { bitrate: opt.audioBitrate }) : null;
+  if (piece.sound && !soundCodec) throw new Error('film: this browser encodes neither AAC nor Opus, and a film without its soundtrack is not written');
   let soundMs = 0;
-  if (piece.sound) {
+  let soundFailure = null;
+  let soundPending = !!piece.sound;
+  const soundtrack = piece.sound ? (async () => {
     const s0 = now();
     const buffer = await renderSound(piece, solved, { OfflineAudioContext: env.OfflineAudioContext, sampleRate: SOUND.sampleRate, channels: SOUND.channels });
-    sound = await encodeSound(env, buffer, opt.audioBitrate || SOUND.bitrate);
+    const level = normalizeLoudness(buffer);
+    const sound = await encodeSound(env, buffer, soundCodec);
     soundMs = now() - s0;
+    return { sound, level };
+  })() : Promise.resolve({ sound: null, level: null });
+  soundtrack.then(() => { soundPending = false; }, (e) => { soundPending = false; soundFailure = e; });
+
+  const gop = Math.max(1, Math.round(hz * (opt.keySeconds || 2)));
+  const stamp = (i) => Math.round((i * 1e6) / hz);
+
+  // Every frame drawn and encoded once, handed over as `route` says: 'encoder'
+  // through glCopy with a probe before and after, 'gpu' through gpuNV12, 'cpu'
+  // through rgbaToNV12. Resolves to the film's chunks and avcC, with this pass's
+  // own drawing, conversion and encode-wait times, or null when the encoder
+  // route is not proven for this export.
+  async function pass(route, gpu) {
+    let drawMs = 0;
+    let convertMs = 0;
+    let waitMs = 0;
+    const canvas = env.createCanvas(width, height);
+    // Without the GPU the canvas is read back every frame, so it is kept in memory
+    // from the first: a browser that moved it there part-way would change how the
+    // rest of the film is drawn.
+    const g = route === 'cpu' ? canvas.getContext('2d', { willReadFrequently: true }) : canvas.getContext('2d');
+    const copy = route === 'encoder' ? glCopy(env, canvas) : null;
+    if (route === 'encoder' && !copy) return null;
+    const chunks = [];
+    const spaces = [];
+    let avcC = null;
+    let failure = null;
+    const encoder = new env.VideoEncoder({
+      output(chunk, meta) {
+        const cfg = meta && meta.decoderConfig;
+        if (cfg && cfg.description) avcC = copyBytes(cfg.description);
+        if (cfg) spaces.push(cfg.colorSpace || null);
+        const data = new Uint8Array(chunk.byteLength);
+        chunk.copyTo(data);
+        chunks.push({ data, timestamp: chunk.timestamp, key: chunk.type === 'key' });
+      },
+      error(e) { failure = e; },
+    });
+    const duration = Math.round(1e6 / hz);
+    const frameAt = (timestamp) => {
+      if (copy) { copy.copy(); return new env.VideoFrame(copy.canvas, { timestamp, duration }); }
+      const { data, layout } = gpu ? gpu.convert(canvas) : { data: rgbaToNV12(g.getImageData(0, 0, width, height).data, width, height) };
+      return new env.VideoFrame(data, { format: 'NV12', codedWidth: width, codedHeight: height, layout, colorSpace: BT709, timestamp, duration });
+    };
+    // The encoder route's first probe takes the first timestamp, so every frame
+    // is encoded one frame later and moved back.
+    const shift = copy ? duration : 0;
+    const want = copy && probeWant(env);
+    const probe = async (timestamp) => {
+      const t = now();
+      drawProbe(g, width, height);
+      const frame = frameAt(timestamp);
+      try { encoder.encode(frame, { keyFrame: true }); } finally { frame.close(); }
+      await encoder.flush();
+      if (failure) throw failure;
+      // An encoder that returned nothing for the probe fails it as such, rather
+      // than have the film's last frame decoded in its place.
+      if (!chunks.length || chunks[chunks.length - 1].timestamp !== timestamp) return false;
+      const cells = await probeCells(env, config, avcC, chunks.pop());
+      convertMs += now() - t;
+      return !!cells && cells.every((cell, k) => cell.every((v, j) => Math.abs(v - want[k][j]) <= 2));
+    };
+    try {
+      encoder.configure(config);
+      if (copy && !await probe(0)) return null;
+      for (let i = 0; i < heads.length; i++) {
+        if (failure) throw failure;
+        if (soundFailure) throw soundFailure;
+        if (copy && !spaces.every(limited709)) return null;
+        const a = now();
+        g.clearRect(0, 0, width, height);
+        drawFrame(g, piece, solved, heads[i], { scale });
+        const c = now();
+        const frame = frameAt(shift + stamp(i));
+        const b = now();
+        try { encoder.encode(frame, { keyFrame: i % gop === 0 }); } finally { frame.close(); }
+        // Anything that can hang is raced against a deadline: an encoder that
+        // stops draining would otherwise hold the export open for ever.
+        const stall = now() + STALL_MS;
+        while (encoder.encodeQueueSize > 2 && !failure) {
+          if (now() > stall) throw new Error(`film: the encoder stopped accepting frames at frame ${i} of ${heads.length}`);
+          await pause();
+        }
+        // While the soundtrack is being made, each frame yields once, so the
+        // soundtrack's steps on this thread run between frames.
+        if (soundPending) await pause();
+        drawMs += c - a;
+        convertMs += b - c;
+        waitMs += now() - b;
+        if (opt.onProgress) opt.onProgress(i + 1, heads.length);
+      }
+      await encoder.flush();
+      // An encoder may drop a frame it is handed as a texture, with no output
+      // and no error: Chromium's Media Foundation encoder does when it cannot
+      // take the texture's lock within 100 ms, which load can cause. A film the
+      // encoder route returns short is encoded again, converted: the conversion
+      // hands frames over in memory, which that encoder copies without the lock.
+      if (copy && chunks.length !== heads.length) return null;
+      if (copy && !(await probe(shift + stamp(heads.length)) && spaces.every(limited709))) return null;
+    } finally {
+      if (copy) copy.dispose();
+      if (encoder.state !== 'closed') encoder.close();
+    }
+    if (failure) throw failure;
+    return { avcC, chunks: chunks.map((x) => ({ ...x, timestamp: x.timestamp - shift })), drawMs, convertMs, waitMs };
   }
 
-  const chunks = [];
-  let avcC = null;
-  let failure = null;
-  const encoder = new env.VideoEncoder({
-    output(chunk, meta) {
-      const cfg = meta && meta.decoderConfig;
-      if (cfg && cfg.description) avcC = copyBytes(cfg.description);
-      const data = new Uint8Array(chunk.byteLength);
-      chunk.copyTo(data);
-      chunks.push({ data, timestamp: chunk.timestamp, key: chunk.type === 'key' });
-    },
-    error(e) { failure = e; },
-  });
-  const canvas = env.createCanvas(width, height);
-  const gpu = gpuNV12(env);
-  // Without the GPU the canvas is read back every frame, so it is kept in memory
-  // from the first: a browser that moved it there part-way would change how the
-  // rest of the film is drawn.
-  const g = gpu ? canvas.getContext('2d') : canvas.getContext('2d', { willReadFrequently: true });
-  const toNV12 = gpu ? () => gpu.convert(canvas) : () => ({ data: rgbaToNV12(g.getImageData(0, 0, width, height).data, width, height) });
-  const gop = Math.max(1, Math.round(hz * (opt.keySeconds || 2)));
-  let drawMs = 0;
-  let convertMs = 0;
-  let waitMs = 0;
-  try {
-    encoder.configure(config);
-    for (let i = 0; i < heads.length; i++) {
-      if (failure) throw failure;
-      const a = now();
-      g.clearRect(0, 0, width, height);
-      drawFrame(g, piece, solved, heads[i], { scale });
-      const c = now();
-      const { data, layout } = toNV12();
-      const frame = new env.VideoFrame(data, {
-        format: 'NV12', codedWidth: width, codedHeight: height, layout, colorSpace: BT709,
-        timestamp: Math.round((i * 1e6) / hz), duration: Math.round(1e6 / hz),
-      });
-      const b = now();
-      try { encoder.encode(frame, { keyFrame: i % gop === 0 }); } finally { frame.close(); }
-      // Anything that can hang is raced against a deadline: an encoder that
-      // stops draining would otherwise hold the export open for ever.
-      const stall = now() + STALL_MS;
-      while (encoder.encodeQueueSize > 2 && !failure) {
-        if (now() > stall) throw new Error(`film: the encoder stopped accepting frames at frame ${i} of ${heads.length}`);
-        await pause();
-      }
-      drawMs += c - a;
-      convertMs += b - c;
-      waitMs += now() - b;
-      if (opt.onProgress) opt.onProgress(i + 1, heads.length);
-    }
-    await encoder.flush();
-  } finally {
-    if (gpu) gpu.dispose();
-    if (encoder.state !== 'closed') encoder.close();
+  // The encoder converts where the browser can copy on the GPU and decode the
+  // probes, and the export converts wherever that is not proven. The encoder
+  // route only saves time, so anything that fails on it, a browser that cannot
+  // make a frame of the copy or a piece that throws, is left to the conversion,
+  // which fails the same way where the fault is not the route's.
+  let conversion = 'encoder';
+  let film = null;
+  if (env.VideoDecoder && env.EncodedVideoChunk) {
+    try { film = await pass('encoder'); } catch (e) { film = null; }
   }
-  if (failure) throw failure;
+  if (!film) {
+    const gpu = gpuNV12(env);
+    conversion = gpu ? 'gpu' : 'cpu';
+    try { film = await pass(conversion, gpu); } finally { if (gpu) gpu.dispose(); }
+  }
+  // The report times only the pass that made the film.
+  const { avcC, chunks, drawMs, convertMs, waitMs } = film;
   if (!avcC) throw new Error('film: the encoder described no decoder configuration, so no player could open the film');
+  const { sound, level } = await soundtrack;
 
   // The timescale holds a whole number of ticks per frame, so no frame drifts.
   const timescale = Math.round(hz * 1000);
@@ -841,12 +1422,18 @@ async function exportFilm(piece, solved, env, opt = {}) {
     audio: sound,
     manifest,
   });
-  const report = filmCheck({ frames: heads.length, hz, width, height, sound: !!piece.sound, priming: sound ? sound.priming : 0, manifest }, readMp4(bytes));
+  // The frames the encoder returned nothing for, which a refusal names.
+  const returned = new Set(chunks.map((c) => c.timestamp));
+  const missing = heads.map((_, i) => stamp(i)).filter((t) => !returned.has(t));
+  const report = filmCheck({
+    frames: heads.length, hz, width, height, sound: !!piece.sound, priming: sound ? sound.priming : 0, manifest, route: conversion, missing,
+  }, readMp4(bytes));
+  if (level) Object.assign(report.sound, level);
   const totalMs = now() - started;
   return {
     bytes,
     report: Object.assign(report, {
-      codec: config.codec, bitrate, bytes: bytes.length, hz, conversion: gpu ? 'gpu' : 'cpu',
+      codec: config.codec, bitrate, bytes: bytes.length, hz, conversion,
       drawMs: Math.round(drawMs), convertMs: Math.round(convertMs), encodeWaitMs: Math.round(waitMs),
       soundMs: Math.round(soundMs), totalMs: Math.round(totalMs),
       realtime: totalMs > 0 ? +((report.seconds * 1000) / totalMs).toFixed(2) : null,
@@ -854,4 +1441,7 @@ async function exportFilm(piece, solved, env, opt = {}) {
   };
 }
 
-module.exports = { exportFilm, filmConfig, soundConfig, muxMp4, readMp4, filmCheck, avcCodecs, aacConfig, rgbaToNV12 };
+module.exports = {
+  exportFilm, filmConfig, soundConfig, muxMp4, readMp4, filmCheck, avcCodecs, aacConfig, rgbaToNV12,
+  kWeighting, measureLoudness, loudnessGain, normalizeLoudness,
+};

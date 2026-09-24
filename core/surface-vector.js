@@ -506,4 +506,15 @@ class VectorSurface {
   get markCount() { return this._body.filter((s) => s.startsWith('<path')).length; }
 }
 
-module.exports = { VectorSurface, RASTER_ONLY };
+/**
+ * The recipe an SVG's <metadata id="artifex-manifest"> holds, as toSVG writes
+ * it, or null for an SVG without one. Throws by name when it is not JSON.
+ */
+function svgManifest(svg) {
+  const found = /<metadata id="artifex-manifest">([^<]*)<\/metadata>/.exec(svg);
+  if (!found) return null;
+  const text = found[1].replace(/&(amp|lt|gt|quot);/g, (_, k) => ({ amp: '&', lt: '<', gt: '>', quot: '"' })[k]);
+  try { return JSON.parse(text); } catch (e) { throw new Error(`the SVG's artifex-manifest metadata is not JSON: ${e.message}`); }
+}
+
+module.exports = { VectorSurface, RASTER_ONLY, svgManifest };
