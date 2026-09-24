@@ -198,7 +198,11 @@ test('external CLI commands resolve caller paths with spaces and write beside th
   assert.equal(checkParses(fs.readFileSync(path.join(project, 'My piece-page.html'), 'utf8')), true);
   run([path.join(ROOT, 'tools', 'contact-sheet.js'), file, '3', '0.5']);
   assert.equal(checkParses(fs.readFileSync(path.join(project, 'My piece-seeds.html'), 'utf8')), true);
-  const npm = process.env.npm_execpath || path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  // Outside npm, npm-cli.js sits beside node on Windows and under ../lib on POSIX.
+  const bin = path.dirname(process.execPath);
+  const npmPaths = [path.join(bin, 'node_modules', 'npm', 'bin', 'npm-cli.js'), path.join(bin, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js')];
+  const npm = process.env.npm_execpath || npmPaths.find((p) => fs.existsSync(p));
+  assert.ok(npm, `npm-cli.js not found at ${npmPaths.join(' or ')}; set npm_execpath to its path`);
   run([npm, '--prefix', ROOT, 'run', 'page', '--', './My piece.cjs']);
   run([npm, '--prefix', ROOT, 'run', 'seeds', '--', './My piece.cjs', '3', '0.5', '--param', 'width']);
   const sweep = fs.readFileSync(path.join(project, 'My piece-param-width.html'), 'utf8');
