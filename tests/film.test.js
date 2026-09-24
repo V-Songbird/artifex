@@ -9,12 +9,14 @@ const assert = require('node:assert/strict');
 
 const { validate, solve, VERSION } = require('../core/piece.js');
 const { playheads } = require('../core/render.js');
-const { exportFilm, muxMp4, readMp4, filmCheck, avcCodecs, aacConfig, rgbaToNV12 } = require('../core/film.js');
+const {
+  exportFilm, muxMp4, readMp4, filmCheck, avcCodecs, aacConfig, rgbaToNV12, kWeighting, measureLoudness,
+} = require('../core/film.js');
 const { nullSurface } = require('../tools/bench.js');
-const { fakeAudio, fakeCodecs, opusHead } = require('./fake-media.js');
+const { fakeAudio, fakeCodecs, fakeCanvas, opusHead, EDGE_AVCC } = require('./fake-media.js');
 
 const BT709 = { primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false };
-const AVCC = Uint8Array.of(1, 0x64, 0, 0x1f, 0xff, 0xe1, 0, 0);
+const AVCC = EDGE_AVCC;
 
 /** `n` Opus packets of one 20 ms fullband CELT frame each. */
 const celt = (n) => Array.from({ length: n }, (_, i) => Uint8Array.of(0xfc, i & 255));
@@ -29,13 +31,13 @@ const MANIFEST = {
 /** The pre-skip an OpusHead names: little-endian, at byte 10. */
 const preSkipOf = (head) => head[10] | (head[11] << 8);
 
-function film({ frames = 48, delta = 1000, timescale = 24000, keys = [0, 24], audio = 94, opus = null, priming = 0, width = 64, height = 48, manifest = MANIFEST } = {}) {
+function film({ frames = 48, delta = 1000, timescale = 24000, keys = [0, 24], audio = 94, opus = null, priming = 0, width = 64, height = 48, manifest = MANIFEST, avcC = AVCC, sample = (i) => Uint8Array.of(i, 1, 2, 3) } = {}) {
   const head = opus && (opus.head || opusHead());
   return muxMp4({
     manifest,
     video: {
-      width, height, timescale, delta, avcC: AVCC,
-      samples: Array.from({ length: frames }, (_, i) => ({ data: Uint8Array.of(i, 1, 2, 3), key: keys.includes(i) })),
+      width, height, timescale, delta, avcC,
+      samples: Array.from({ length: frames }, (_, i) => ({ data: sample(i), key: keys.includes(i) })),
     },
     audio: opus ? { codec: 'opus', head, samples: opus.packets, priming: preSkipOf(head) } : audio ? {
       sampleRate: 48000, channels: 2, asc: aacConfig(48000, 2), bitrate: 128000, priming,
@@ -64,26 +66,22 @@ const OPUS = { ...GRID, priming: 312 };
 function env(options = {}) {
   const codecs = fakeCodecs(options);
   const contexts = [];
-  const pixel = options.pixel || [255, 0, 0, 255];
   let clock = 0;
   return {
     codecs,
     contexts,
     env: {
       VideoEncoder: codecs.VideoEncoder, VideoFrame: codecs.VideoFrame,
+      // A decoder, which lets the encoder convert frames itself where its probes prove it.
+      ...(options.decode ? { VideoDecoder: codecs.VideoDecoder, EncodedVideoChunk: codecs.EncodedVideoChunk } : {}),
       AudioEncoder: codecs.AudioEncoder, AudioData: codecs.AudioData,
       OfflineAudioContext: fakeAudio().Context,
-      // A 2D surface whose every pixel reads back as `pixel`, and no WebGL2, so
-      // the CPU conversion runs.
-      createCanvas: (w, h) => ({
-        width: w, height: h,
-        getContext(type, attributes) {
-          if (type !== '2d') return null;
-          contexts.push(attributes);
-          const g = nullSurface({ w, h });
-          g.getImageData = (x, y, gw, gh) => ({ data: Uint8ClampedArray.from({ length: gw * gh * 4 }, (_, i) => pixel[i & 3]) });
-          return g;
-        },
+      // The shared stand-in canvas, which paints and reads back. With `webgl`
+      // it copies through WebGL2 as well; without it there is no WebGL2, so the
+      // CPU converts. Every 2D context's attributes are kept in `contexts`.
+      createCanvas: (w, h) => fakeCanvas({ width: w, height: h }, nullSurface, {
+        webgl: !!options.webgl,
+        onContext: (g, type, attributes) => { if (type === '2d') contexts.push(attributes); },
       }),
       // Every reading moves the clock on, as if each frame took 250 ms to draw.
       now: () => (clock += options.step === undefined ? 250 : options.step),
@@ -164,6 +162,279 @@ test('every film is tagged limited-range BT.709, and the check refuses any other
   assert.match(tagged((v) => v.setUint16(at + 8, 6)), /primaries 6,/);
   assert.match(tagged((v) => v.setUint16(at + 12, 6)), /matrix 6,/);
   assert.match(tagged((v, b) => { b[at + 3] = 0x78; }), /no colour tag/);
+});
+
+// The colour description inside the H.264 stream: the video signal type of each
+// sequence parameter set's VUI (ITU-T H.264, 7.3.2.1.1 and E.1.1). SPS NAL units
+// are built from field values and read back field by field here, apart from
+// core/film.js.
+
+const HIGH = [100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135];
+const PPS = [0x68, 0xee, 0x3c, 0xb0];
+const EDGE_SPS = EDGE_AVCC.subarray(8, 31);
+const EDGE_TAGGED = '67640020ac2b40780a3602d404040500000303e80000bb800f1c2aa0';
+const TAGGED = { format: 5, fullRange: false, primaries: 1, transfer: 1, matrix: 1 };
+const LIMITED_709 = { format: 5, full: 0, colour: [1, 1, 1] };
+
+/** A NAL unit's payload: its header byte dropped, and each 03 that follows two zeros. */
+function unescape(nal) {
+  const out = [];
+  let zeros = 0;
+  for (const b of nal.subarray(1)) {
+    if (zeros === 2 && b === 3) { zeros = 0; continue; }
+    out.push(b);
+    zeros = b === 0 ? Math.min(zeros + 1, 2) : 0;
+  }
+  return out;
+}
+
+/** A NAL unit from its header and payload, with 03 after every two zeros that precede 00 to 03. */
+function escape(header, payload) {
+  const out = [header];
+  for (const b of payload) {
+    if (b <= 3 && out[out.length - 1] === 0 && out[out.length - 2] === 0) out.push(3);
+    out.push(b);
+  }
+  return Uint8Array.from(out);
+}
+
+/**
+ * An SPS NAL unit from field values. `signal` is [format, full] or [format,
+ * full, primaries, transfer, matrix]; `vui` null writes none.
+ */
+function spsOf(f) {
+  const bits = [];
+  const u = (v, n) => { for (let i = n - 1; i >= 0; i--) bits.push(Math.floor(v / 2 ** i) % 2); };
+  const ue = (v) => { const n = Math.floor(Math.log2(v + 1)); u(0, n); u(v + 1, n + 1); };
+  const se = (v) => ue(v <= 0 ? -2 * v : 2 * v - 1);
+  u(f.profile, 8); u(f.constraint, 8); u(f.level, 8); ue(f.id);
+  if (HIGH.includes(f.profile)) {
+    ue(f.chroma); if (f.chroma === 3) u(0, 1);
+    ue(f.depth || 0); ue(f.depth || 0); u(0, 1);
+    u(f.scaling ? 1 : 0, 1);
+    // One 4x4 list sent, whose second delta ends it; the rest use their defaults.
+    if (f.scaling) for (let i = 0; i < 8; i++) { u(i === 0 ? 1 : 0, 1); if (i === 0) { se(5); se(-13); } }
+  }
+  ue(f.log2MaxFrame); ue(f.poc);
+  if (f.poc === 0) ue(f.log2MaxPoc);
+  else if (f.poc === 1) { u(1, 1); se(-2); se(3); ue(2); se(1); se(-1); }
+  ue(f.refs); u(0, 1); ue(f.mbW); ue(f.mbH); u(f.frameMbsOnly, 1); if (!f.frameMbsOnly) u(1, 1);
+  u(1, 1);
+  u(f.crop ? 1 : 0, 1); if (f.crop) f.crop.forEach(ue);
+  u(f.vui ? 1 : 0, 1);
+  if (f.vui) {
+    const v = f.vui;
+    u(v.sar ? 1 : 0, 1); if (v.sar) { u(v.sar[0], 8); if (v.sar[0] === 255) { u(v.sar[1], 16); u(v.sar[2], 16); } }
+    u(0, 1);
+    u(v.signal ? 1 : 0, 1);
+    if (v.signal) { u(v.signal[0], 3); u(v.signal[1], 1); u(v.signal.length > 2 ? 1 : 0, 1); v.signal.slice(2).forEach((c) => u(c, 8)); }
+    u(v.chromaLoc ? 1 : 0, 1); if (v.chromaLoc) v.chromaLoc.forEach(ue);
+    u(v.timing ? 1 : 0, 1); if (v.timing) { u(v.timing[0], 32); u(v.timing[1], 32); u(v.timing[2], 1); }
+    u(v.hrd ? 1 : 0, 1);
+    if (v.hrd) { ue(0); u(4, 4); u(6, 4); ue(2999); ue(4999); u(1, 1); u(23, 5); u(23, 5); u(23, 5); u(24, 5); }
+    u(0, 1);
+    if (v.hrd) u(0, 1);
+    u(0, 1);
+    u(v.restriction ? 1 : 0, 1); if (v.restriction) { u(1, 1); ue(0); ue(0); ue(13); ue(9); ue(0); ue(1); }
+  }
+  bits.push(1);
+  while (bits.length % 8) bits.push(0);
+  return escape(0x67, Array.from({ length: bits.length / 8 }, (_, i) => parseInt(bits.slice(i * 8, i * 8 + 8).join(''), 2)));
+}
+
+/** Every field of an SPS NAL unit; `end` is whether the stop bit and zero bits end the payload. */
+function spsFields(nal) {
+  const b = unescape(nal);
+  let at = 0;
+  const u = (n) => {
+    let v = 0;
+    for (let i = 0; i < n; i++, at++) {
+      if (at >= b.length * 8) throw new Error('the SPS ends before its fields do');
+      v = v * 2 + ((b[at >> 3] >> (7 - (at & 7))) & 1);
+    }
+    return v;
+  };
+  const ue = () => { let z = 0; while (!u(1)) z++; return 2 ** z - 1 + u(z); };
+  const se = () => { const k = ue(); return k & 1 ? (k + 1) / 2 : -k / 2; };
+  const f = { profile: u(8), constraint: u(8), level: u(8), id: ue() };
+  if (HIGH.includes(f.profile)) {
+    f.chroma = ue();
+    if (f.chroma === 3) f.separate = u(1);
+    f.depths = [ue(), ue(), u(1)];
+    f.lists = u(1) ? Array.from({ length: f.chroma === 3 ? 12 : 8 }, (_, i) => {
+      if (!u(1)) return null;
+      const deltas = [];
+      for (let j = 0, last = 8, next = 8; j < (i < 6 ? 16 : 64); j++) {
+        if (next !== 0) { deltas.push(se()); next = (last + deltas[deltas.length - 1] + 256) % 256; }
+        last = next === 0 ? last : next;
+      }
+      return deltas;
+    }) : null;
+  }
+  f.log2MaxFrame = ue();
+  f.poc = ue();
+  if (f.poc === 0) f.log2MaxPoc = ue();
+  else if (f.poc === 1) f.pocCycle = [u(1), se(), se(), ...Array.from({ length: ue() }, se)];
+  f.frames = [ue(), u(1), ue(), ue()];
+  f.frameMbsOnly = u(1);
+  if (!f.frameMbsOnly) f.mbaff = u(1);
+  f.direct8x8 = u(1);
+  f.crop = u(1) ? [ue(), ue(), ue(), ue()] : null;
+  if (u(1)) {
+    const v = {};
+    const hrd = () => {
+      const count = ue();
+      const out = [count, u(4), u(4)];
+      for (let i = 0; i <= count; i++) out.push(ue(), ue(), u(1));
+      return [...out, u(5), u(5), u(5), u(5)];
+    };
+    v.sar = u(1) ? [u(8)] : null;
+    if (v.sar && v.sar[0] === 255) v.sar.push(u(16), u(16));
+    v.overscan = u(1) ? u(1) : null;
+    v.signal = u(1) ? { format: u(3), full: u(1), colour: u(1) ? [u(8), u(8), u(8)] : null } : null;
+    v.chromaLoc = u(1) ? [ue(), ue()] : null;
+    v.timing = u(1) ? [u(32), u(32), u(1)] : null;
+    v.nalHrd = u(1) ? hrd() : null;
+    v.vclHrd = u(1) ? hrd() : null;
+    if (v.nalHrd || v.vclHrd) v.lowDelay = u(1);
+    v.picStruct = u(1);
+    v.restriction = u(1) ? [u(1), ue(), ue(), ue(), ue(), ue(), ue()] : null;
+    f.vui = v;
+  } else f.vui = null;
+  const left = b.length * 8 - at;
+  f.end = left >= 1 && left <= 8 && u(1) === 1 && u(left - 1) === 0;
+  return f;
+}
+
+/** The fields apart from the signal type; no VUI reads as one that holds only a signal type. */
+function besideSignal(f) {
+  const vui = f.vui || { sar: null, overscan: null, signal: null, chromaLoc: null, timing: null, nalHrd: null, vclHrd: null, picStruct: 0, restriction: null };
+  return { ...f, vui: { ...vui, signal: undefined } };
+}
+
+/** An avcC holding these SPS NAL units and Edge's picture parameter set. */
+const avcCWith = (...sets) => Uint8Array.from([
+  1, 0x64, 0, 0x20, 0xff, 0xe0 | sets.length, ...sets.flatMap((s) => [s.length >> 8, s.length & 255, ...s]), 1, 0, PPS.length, ...PPS,
+]);
+
+/** The avcC a film holds: its first six bytes, its SPS NAL units and the bytes after them. */
+function avcCOf(bytes) {
+  const c = Uint8Array.from(boxBytes(bytes, 'avcC').slice(8));
+  const sets = [];
+  let at = 6;
+  for (let n = c[5] & 31; n > 0; n--) {
+    const length = (c[at] << 8) | c[at + 1];
+    sets.push(c.subarray(at + 2, at + 2 + length));
+    at += 2 + length;
+  }
+  return { head: [...c.subarray(0, 6)], sets, rest: [...c.subarray(at)] };
+}
+
+/** Length-prefixed NAL units, as a sample holds them. */
+const unitsOf = (...units) => Uint8Array.from(units.flatMap((n) => [0, 0, n.length >> 8, n.length & 255, ...n]));
+
+const SHAPES = {
+  edge: EDGE_SPS,
+  baselineNoVui: spsOf({ profile: 66, constraint: 0xc0, level: 30, id: 0, log2MaxFrame: 0, poc: 2, refs: 1, mbW: 3, mbH: 2, frameMbsOnly: 1, crop: null, vui: null }),
+  mainPoc0Crop: spsOf({
+    profile: 77, constraint: 0x40, level: 31, id: 1, log2MaxFrame: 2, poc: 0, log2MaxPoc: 4, refs: 3, mbW: 79, mbH: 44, frameMbsOnly: 1,
+    crop: [0, 0, 0, 4], vui: { sar: [255, 4, 3], timing: [1001, 60000, 1], restriction: true },
+  }),
+  // Full-range BT.601 already stated, behind scaling lists, POC type 1, fields and HRD.
+  highPoc1Scaling: spsOf({
+    profile: 100, constraint: 0, level: 40, id: 0, chroma: 1, scaling: true, log2MaxFrame: 4, poc: 1, refs: 4, mbW: 119, mbH: 67, frameMbsOnly: 0,
+    crop: [0, 0, 0, 4], vui: { sar: [1], signal: [5, 1, 6, 6, 6], chromaLoc: [1, 1], hrd: true, restriction: true },
+  }),
+  // 10-bit 4:4:4, whose SPS carries a colour-plane flag, stating BT.2020 and PQ.
+  high444: spsOf({
+    profile: 244, constraint: 0, level: 50, id: 2, chroma: 3, depth: 2, scaling: false, log2MaxFrame: 4, poc: 2, refs: 4, mbW: 119, mbH: 67, frameMbsOnly: 1,
+    crop: [0, 0, 0, 4], vui: { signal: [2, 0, 9, 16, 9] },
+  }),
+  // A signal type that states a range and no colour description.
+  rangeOnly: spsOf({ profile: 100, constraint: 0, level: 31, id: 0, chroma: 1, scaling: false, log2MaxFrame: 0, poc: 2, refs: 1, mbW: 39, mbH: 29, frameMbsOnly: 1, crop: null, vui: { signal: [5, 1] } }),
+  // A zero sample aspect ratio and zero timing put escaped runs of zeros before and after the signal type.
+  zeros: spsOf({
+    profile: 100, constraint: 0, level: 0, id: 0, chroma: 1, scaling: false, log2MaxFrame: 0, poc: 0, log2MaxPoc: 0, refs: 0, mbW: 0, mbH: 0, frameMbsOnly: 1,
+    crop: null, vui: { sar: [255, 0, 0], timing: [0, 0, 0] },
+  }),
+};
+
+test('every sequence parameter set says limited-range BT.709 and keeps every other field its encoder wrote', () => {
+  assert.ok(unescape(SHAPES.zeros).length < SHAPES.zeros.length - 2, 'the zeros shape holds escaped runs');
+  for (const [name, sps] of Object.entries(SHAPES)) {
+    const bytes = film({ avcC: avcCWith(sps) });
+    const c = avcCOf(bytes);
+    assert.deepEqual(c.head, [1, 0x64, 0, 0x20, 0xff, 0xe1], `${name}: the avcC header is kept`);
+    assert.deepEqual(c.rest, [1, 0, PPS.length, ...PPS], `${name}: the picture parameter set is kept`);
+    const [out] = c.sets;
+    const before = spsFields(sps), after = spsFields(out);
+    assert.deepEqual(after.vui.signal, LIMITED_709, `${name}: limited-range BT.709`);
+    assert.deepEqual(besideSignal(after), besideSignal(before), `${name}: every other field is kept`);
+    assert.equal(after.end, true, `${name}: the stop bit ends the payload`);
+    assert.deepEqual([...escape(out[0], unescape(out))], [...out], `${name}: every 00 00 before 00 to 03 is escaped`);
+    assert.deepEqual([...avcCOf(film({ avcC: avcCWith(out) })).sets[0]], [...out], `${name}: tagging twice changes nothing`);
+    assert.deepEqual(readMp4(bytes).tracks[0].sps, [TAGGED], `${name}: the reader agrees`);
+    assert.equal(filmCheck(GRID, readMp4(bytes)).frames, 48, name);
+  }
+  assert.equal(Buffer.from(avcCOf(film()).sets[0]).toString('hex'), EDGE_TAGGED, "Edge's SPS, tagged");
+});
+
+test('a sequence parameter set a sample repeats is tagged too, and a sample that is not whole NAL units is left alone', () => {
+  const slice = [0x65, 0x88, 0x84, 0x00, 0x21];
+  const bytes = film({ sample: (i) => (i === 0 ? unitsOf(EDGE_SPS, PPS, slice) : Uint8Array.of(i, 1, 2, 3)) });
+  const view = new DataView(bytes.buffer);
+  const units = [];
+  for (let at = boxesOf(bytes, 'mdat')[0] + 8, i = 0; i < 3; i++) {
+    units.push([...bytes.subarray(at + 4, at + 4 + view.getUint32(at))]);
+    at += 4 + view.getUint32(at);
+  }
+  assert.equal(Buffer.from(units[0]).toString('hex'), EDGE_TAGGED, 'the repeated SPS');
+  assert.deepEqual(units.slice(1), [PPS, slice], 'the units after it');
+  const file = readMp4(bytes);
+  assert.equal(file.tracks[0].inside, true);
+  assert.deepEqual(file.tracks[0].sps, [TAGGED, TAGGED], "the avcC's, then the sample's");
+  assert.equal(filmCheck(GRID, file).frames, 48);
+
+  // A length that runs past the sample: every byte stays as the encoder wrote
+  // it, and the check still reads the untagged SPS before that length.
+  const broken = Uint8Array.from([...unitsOf(EDGE_SPS), 0, 0, 0, 9, 0x65]);
+  const kept = film({ sample: (i) => (i === 0 ? broken : Uint8Array.of(i, 1, 2, 3)) });
+  const media = boxesOf(kept, 'mdat')[0] + 8;
+  assert.deepEqual([...kept.subarray(media, media + broken.length)], [...broken]);
+  assert.match(grab(() => filmCheck(GRID, readMp4(kept))).message, /the H\.264 stream carries no colour description/);
+});
+
+test('the film check refuses an H.264 stream whose colour description is missing or disagrees with colr', () => {
+  // Byte 11 of Edge's tagged SPS holds the signal type's flag, format, range
+  // and description flags; bytes 12 to 14 end primaries, transfer and matrix.
+  const says = (bytes, at, edit) => {
+    const copy = bytes.slice();
+    edit(copy.subarray(at));
+    return { sps: copy.subarray(at, at + EDGE_TAGGED.length / 2), message: grab(() => filmCheck(GRID, readMp4(copy))).message };
+  };
+  const plain = film();
+  const inAvcC = boxesOf(plain, 'avcC')[0] + 16;
+  const cases = [
+    [(s) => { s[11] |= 0x08; }, { format: 5, full: 1, colour: [1, 1, 1] }, /the H\.264 stream says primaries 1, transfer 1, matrix 1, full range, and its colr box says limited-range BT\.709/],
+    [(s) => { s[12] = 0x18; }, { format: 5, full: 0, colour: [6, 1, 1] }, /says primaries 6, transfer 1, matrix 1, limited range/],
+    [(s) => { s[13] = 0x34; }, { format: 5, full: 0, colour: [1, 13, 1] }, /says primaries 1, transfer 13, matrix 1, limited range/],
+    [(s) => { s[14] = 0x19; }, { format: 5, full: 0, colour: [1, 1, 6] }, /says primaries 1, transfer 1, matrix 6, limited range/],
+  ];
+  for (const [edit, signal, message] of cases) {
+    const seen = says(plain, inAvcC, edit);
+    assert.deepEqual(spsFields(seen.sps).vui.signal, signal);
+    assert.match(seen.message, message);
+  }
+  // No colour description: the description flag cleared, so the colours read as unspecified.
+  assert.match(says(plain, inAvcC, (s) => { s[11] &= ~0x04; }).message, /says primaries 2, transfer 2, matrix 2, limited range/);
+  const none = film({ avcC: Uint8Array.of(1, 0x64, 0, 0x20, 0xff, 0xe0, 1, 0, PPS.length, ...PPS) });
+  assert.match(grab(() => filmCheck(GRID, readMp4(none))).message, /the H\.264 stream carries no colour description/);
+
+  // The same refusal for an SPS a sample repeats, after a tagged one in the avcC.
+  const repeated = film({ sample: (i) => (i === 0 ? unitsOf(EDGE_SPS, PPS) : Uint8Array.of(i, 1, 2, 3)) });
+  const seen = says(repeated, boxesOf(repeated, 'mdat')[0] + 12, (s) => { s[11] |= 0x08; });
+  assert.deepEqual(spsFields(seen.sps).vui.signal, { format: 5, full: 1, colour: [1, 1, 1] });
+  assert.match(seen.message, /the H\.264 stream says primaries 1, transfer 1, matrix 1, full range/);
 });
 
 test('a film carries its replay manifest in a user-data box, and no sample byte moves', () => {
@@ -327,6 +598,33 @@ test('the film check hears an Opus soundtrack without its pre-skip', () => {
   assert.match(grab(() => filmCheck(OPUS, readMp4(bytes))).message, /no playable soundtrack/);
 });
 
+test('the film check refuses a soundtrack that ends before its edit, however little', () => {
+  // One AAC packet short: 93 packets hold 95232 of the 96000 samples the edit plays.
+  assert.match(grab(() => filmCheck(GRID, readMp4(film({ audio: 93 })))).message, /soundtrack lasts 1\.984 s against a 2\.000 s film/);
+  // Opus packets that stop 312 samples short once the pre-skip is skipped.
+  assert.match(grab(() => filmCheck(OPUS, readMp4(film({ opus: { packets: celt(100) } })))).message, /soundtrack lasts 1\.99\d s against a 2\.000 s film/);
+  // Covered exactly or past: 94 AAC packets, 101 Opus packets.
+  assert.equal(filmCheck(GRID, readMp4(film({ audio: 94 }))).frames, 48);
+  assert.equal(filmCheck(OPUS, readMp4(film({ opus: { packets: celt(101) } }))).frames, 48);
+});
+
+test('the audio stand-ins emit as many packets as the Edge encoders do', async () => {
+  const count = async (codec, frames) => {
+    const { AudioEncoder, AudioData } = fakeCodecs();
+    let n = 0;
+    const encoder = new AudioEncoder({ output() { n++; }, error(e) { throw e; } });
+    encoder.configure({ codec, sampleRate: 48000, numberOfChannels: 2 });
+    for (let at = 0; at < frames; at += 4800) encoder.encode(new AudioData({ numberOfFrames: Math.min(4800, frames - at) }));
+    await encoder.flush();
+    return n;
+  };
+  // Edge 153's counts for 2, 6 and 7 s at 48 kHz: Opus packets cover its
+  // 312-sample pre-skip as well as the input.
+  const lengths = [96000, 288000, 336000];
+  assert.deepEqual(await Promise.all(lengths.map((f) => count('opus', f))), [101, 301, 351]);
+  assert.deepEqual(await Promise.all(lengths.map((f) => count('mp4a.40.2', f))), [94, 282, 329]);
+});
+
 test('every drawn frame is encoded once, at its own timestamp, however slowly it draws', async () => {
   const { p, solved } = piece();
   const { env: e, codecs } = env({ step: 250 });
@@ -361,9 +659,9 @@ test('an exported film names its piece, seed, parameters, frame grid and scale',
 });
 
 test('every frame reaches the encoder as BT.709 limited-range NV12, whatever the encoder reports', async () => {
-  const { p, solved } = piece();
-  // This stand-in encoder reports full-range sRGB; the film does not take its word.
-  const { env: e, codecs, contexts } = env({ pixel: [255, 0, 0, 255] });
+  // A red frame, which this stand-in encoder reports as full-range sRGB; the film does not take its word.
+  const { p, solved } = piece({ draw(g) { g.fillStyle = '#f00'; g.fillRect(0, 0, 64, 48); } });
+  const { env: e, codecs, contexts } = env();
   const { bytes, report } = await exportFilm(p, solved, e);
   const frames = codecs.log.frames;
   assert.equal(frames.length, playheads(p).length);
@@ -380,13 +678,72 @@ test('every frame reaches the encoder as BT.709 limited-range NV12, whatever the
     'an encoder that reports no colour space still makes a tagged film');
 });
 
+test('the encoder converts frames itself where both probes and every colour space it reports prove limited-range BT.709', async () => {
+  // The piece fills in the colour it finds, then in translucent red.
+  const found = [];
+  const { p, solved } = piece({
+    draw(g, s, t) { found.push(g.fillStyle); g.fillRect(0, 0, 64 * t + 2, 24); g.fillStyle = 'rgba(255,0,0,0.5)'; g.fillRect(0, 24, 64, 24); },
+  });
+  const { env: e, codecs } = env({ webgl: true, decode: true });
+  const { bytes, report } = await exportFilm(p, solved, e);
+  assert.equal(report.conversion, 'encoder');
+  assert.deepEqual([...new Set(found)], ['#000'], 'the probes leave the canvas as they found it');
+  const frames = codecs.log.frames;
+  assert.ok(frames.every((f) => f.data.pixels && !f.format), 'every frame handed over as the WebGL2 copy, none converted');
+  // A probe first, every frame one frame later than its own time, a probe last.
+  const us = (i) => Math.round((i * 1e6) / 24);
+  assert.deepEqual(frames.map((f) => f.timestamp), [0, ...Array.from({ length: 49 }, (_, i) => us(1) + us(i))]);
+  const file = readMp4(bytes);
+  assert.equal(file.tracks[0].samples, 48, 'the probes are left out of the film');
+  assert.equal(file.tracks[0].reordered, false, 'and every frame is moved back to its own time');
+  assert.equal(file.tracks[0].keys[0], 1);
+});
+
+test('an encoder that writes full range, changes range part-way or reports anything else gets its frames converted', async () => {
+  const { p, solved } = piece();
+  const run = async (options) => {
+    const { env: e, codecs } = env({ webgl: true, decode: true, ...options });
+    const { bytes, report } = await exportFilm(p, solved, e);
+    const frames = codecs.log.frames;
+    return {
+      conversion: report.conversion, copied: frames.filter((f) => f.data.pixels).length,
+      converted: frames.filter((f) => f.format === 'NV12' && JSON.stringify(f.colorSpace) === JSON.stringify(BT709)).length,
+      samples: readMp4(bytes).tracks[0].samples,
+    };
+  };
+  const converted = (copied) => ({ conversion: 'cpu', copied, converted: 48, samples: 48 });
+  const said = (space) => ({ primaries: 'bt709', transfer: 'iec61966-2-1', matrix: 'bt709', fullRange: false, ...space });
+  // The first probe decodes full range, so nothing past it is copied.
+  assert.deepEqual(await run({ canvasRange: 'full' }), converted(1), 'full range throughout');
+  assert.deepEqual(await run({ canvasRange: 'full', claims: said() }), converted(1), 'full range reported as limited');
+  // Every configuration it reports must say limited-range BT.709.
+  assert.deepEqual(await run({ claims: said({ fullRange: true }) }), converted(1), 'limited range reported as full');
+  assert.deepEqual(await run({ claims: said({ matrix: 'smpte170m' }) }), converted(1), 'the BT.601 matrix reported');
+  assert.deepEqual(await run({ claims: null }), converted(1), 'no colour space reported');
+  assert.deepEqual(await run({ refuseCanvas: true }), converted(0), 'no frame made of the copy');
+  // Full range from the probe and nine frames on: the new colour space it
+  // reports stops the copy at once; unreported, the last probe finds it.
+  assert.deepEqual(await run({ switchAt: 10 }), converted(11), 'a change it reports');
+  assert.deepEqual(await run({ switchAt: 10, announce: false }), converted(50), 'a change it keeps quiet');
+});
+
+test('without a decoder or WebGL2 every frame is converted', async () => {
+  const { p, solved } = piece();
+  for (const options of [{ webgl: true }, { decode: true }]) {
+    const { env: e, codecs } = env(options);
+    const { report } = await exportFilm(p, solved, e);
+    assert.equal(report.conversion, 'cpu');
+    assert.ok(codecs.log.frames.every((f) => f.format === 'NV12'), JSON.stringify(options));
+  }
+});
+
 test('a piece with sound gets a soundtrack exactly as long as its film, or no film at all', async () => {
   const { p, solved } = piece({ sound(ctx) { const o = ctx.createOscillator(); o.connect(ctx.destination); o.start(0); } });
   const { env: e, codecs } = env();
   const { bytes, report } = await exportFilm(p, solved, e);
-  assert.equal(codecs.log.audioFrames, 2 * 48000, 'the rendered soundtrack is exactly frames / hz long');
+  assert.equal(codecs.log.audioFrames, 2112 + 2 * 48000, 'the rendered soundtrack, exactly frames / hz long, after the AAC lead');
   const audio = readMp4(bytes).tracks.find((x) => x.kind === 'soun');
-  assert.equal(audio.samples, Math.ceil((2 * 48000) / 1024));
+  assert.equal(audio.samples, Math.ceil((2112 + 2 * 48000) / 1024));
   assert.ok(report.sound, 'and the report reads it from the file');
 
   const mute = env({ aac: false, opus: false });
@@ -405,28 +762,195 @@ test('a piece with sound falls back to Opus where AAC is refused, and keeps AAC 
   const { bytes, report } = await exportFilm(p, solved, env({ aac: false }).env);
   const audio = readMp4(bytes).tracks[1];
   assert.equal(audio.codec, 'Opus');
-  assert.equal(audio.samples, (2 * 48000) / 960);
+  assert.equal(audio.samples, Math.ceil((312 + 2 * 48000) / 960), 'packets covering the pre-skip and the soundtrack');
   assert.deepEqual(audio.opus, { version: 0, channels: 2, preSkip: 0, inputSampleRate: 48000, outputGain: 0, mappingFamily: 0 });
   assert.deepEqual(audio.edits, [{ duration: 48000, mediaTime: 312, rate: 1 }], "the encoder's pre-skip reaches the edit list");
   assert.equal(report.sound.codec, 'Opus');
 
+  // An encoder shows it gives no OpusHead only once it encodes, alongside the frames.
   const blind = env({ aac: false, describe: false });
   await assert.rejects(exportFilm(p, solved, blind.env), /gave no OpusHead/);
-  assert.equal(blind.codecs.log.frames.length, 0, 'refused before a single frame is drawn');
+  assert.ok(blind.codecs.log.frames.length < 48, 'refused before the film is finished');
 });
 
-test('an AAC encoder that stamps its first packet before zero has that priming skipped by the edit', async () => {
+test('an AAC soundtrack follows a 2112-sample silent lead, and its edit skips the lead and any priming the encoder reports', async () => {
   const { p, solved } = piece({ sound(ctx) { const o = ctx.createOscillator(); o.connect(ctx.destination); o.start(0); } });
-  const plain = await exportFilm(p, solved, env().env);
-  assert.deepEqual(readMp4(plain.bytes).tracks[1].edits, [{ duration: 48000, mediaTime: 0, rate: 1 }], 'stamped at zero, as Edge stamps it: nothing to skip');
-  // This encoder says its first packet starts 1024 samples before the soundtrack.
+  // What reaches the encoder, in order.
+  const fed = [];
+  const watched = (e) => {
+    const Base = e.AudioEncoder;
+    e.AudioEncoder = class extends Base {
+      encode(data) { fed.push({ frames: data.numberOfFrames, at: data.timestamp, silent: data.data.every((v) => v === 0) }); super.encode(data); }
+    };
+    return e;
+  };
+  const plain = await exportFilm(p, solved, watched(env().env));
+  assert.deepEqual(fed[0], { frames: 2112, at: 0, silent: true }, '2112 samples of silence first');
+  assert.deepEqual(fed.slice(1, 3).map((f) => f.at), [44000, 144000], 'then the soundtrack, 44 ms in');
+  assert.equal(fed.slice(1).reduce((n, f) => n + f.frames, 0), 2 * 48000, 'all of it');
+  assert.deepEqual(readMp4(plain.bytes).tracks[1].edits, [{ duration: 48000, mediaTime: 2112, rate: 1 }], 'stamped at zero, as Edge stamps it: the edit skips the lead alone');
+
+  // Opus primes itself and names it in its pre-skip: no lead.
+  fed.length = 0;
+  await exportFilm(p, solved, watched(env({ aac: false }).env));
+  assert.deepEqual([fed[0].frames, fed[0].at], [4800, 0]);
+
+  // This encoder primes 1024 samples before its input and says so, stamping its
+  // first packet 1024 samples before zero.
   const early = env().env;
   const Base = early.AudioEncoder;
   early.AudioEncoder = class extends Base {
     constructor({ output, error }) { super({ output: (chunk, meta) => output({ ...chunk, timestamp: chunk.timestamp - 21333 }, meta), error }); }
+    configure(config) { super.configure(config); this.held += 1024; }
   };
   const primed = await exportFilm(p, solved, early);
-  assert.deepEqual(readMp4(primed.bytes).tracks[1].edits, [{ duration: 48000, mediaTime: 1024, rate: 1 }]);
+  assert.deepEqual(readMp4(primed.bytes).tracks[1].edits, [{ duration: 48000, mediaTime: 2112 + 1024, rate: 1 }]);
+});
+
+// A soundtrack made alongside the frames: an OfflineAudioContext whose render
+// finishes after `frames` of the export's pauses, or at the next turn of the
+// event loop, so nothing waits for ever; and encoders that log, in order, a `v`
+// for each frame and an `a` for each piece of sound they are handed.
+function paced(frames, options = {}) {
+  const made = env(options);
+  const order = [];
+  const waiting = [];
+  const { Context } = fakeAudio();
+  const { VideoEncoder, AudioEncoder } = made.env;
+  Object.assign(made.env, {
+    OfflineAudioContext: class extends Context {
+      startRendering() {
+        const rendered = super.startRendering();
+        return new Promise((resolve) => {
+          const done = () => resolve(rendered);
+          waiting.push({ left: frames, done });
+          setTimeout(done, 0);
+        });
+      }
+    },
+    VideoEncoder: class extends VideoEncoder { encode(...args) { order.push('v'); return super.encode(...args); } },
+    AudioEncoder: class extends AudioEncoder { encode(...args) { order.push('a'); return super.encode(...args); } },
+    pause: async () => { for (const w of waiting) if (--w.left <= 0) w.done(); },
+  });
+  return { ...made, order };
+}
+
+const voiced = () => piece({ sound(ctx) { const o = ctx.createOscillator(); o.connect(ctx.destination); o.start(0); } });
+
+test('a soundtrack made alongside the frames gives the same file whichever finishes first', async () => {
+  const { p, solved } = voiced();
+  const files = [];
+  for (const frames of [0, 5, 1000]) files.push(Buffer.from((await exportFilm(p, solved, paced(frames).env)).bytes));
+  assert.ok(files[1].equals(files[0]), 'the sound ready part-way through the frames');
+  assert.ok(files[2].equals(files[0]), 'the sound ready only after the last frame');
+});
+
+test('the frames draw while the soundtrack renders and encodes, and do not wait for it', async () => {
+  const { p, solved } = voiced();
+  const { env: e, order } = paced(5);
+  const { report } = await exportFilm(p, solved, e);
+  const sound = order.indexOf('a');
+  assert.ok(order.indexOf('v') < sound, 'the first frame is encoded before any sound');
+  assert.ok(order.lastIndexOf('v') > sound, 'and frames are still encoded once the sound is');
+  assert.equal(order.filter((x) => x === 'v').length, 48);
+  assert.equal(report.sound.codec, 'mp4a');
+});
+
+test('a soundtrack that fails stops the frames and fails the export with its own message', async () => {
+  const thrown = piece({ sound() { throw new Error('fixture soundtrack failed'); } });
+  const early = env();
+  await assert.rejects(exportFilm(thrown.p, thrown.solved, early.env), /fixture soundtrack failed/);
+  assert.ok(early.codecs.log.frames.length < 48, `stopped after ${early.codecs.log.frames.length} of 48 frames`);
+  // The render finishes at the fifth frame's pause, and only then can the
+  // encoder show it gives no OpusHead.
+  const { p, solved } = voiced();
+  const late = paced(5, { aac: false, describe: false });
+  await assert.rejects(exportFilm(p, solved, late.env), /gave no OpusHead/);
+  assert.ok(late.codecs.log.frames.length < 48, `stopped after ${late.codecs.log.frames.length} of 48 frames`);
+  // A soundtrack that fails after the last frame fails the export all the same.
+  const last = paced(1000, { aac: false, describe: false });
+  await assert.rejects(exportFilm(p, solved, last.env), /gave no OpusHead/);
+});
+
+// An encoder that returns nothing, and no error, for the frames `which(kind, n)`
+// picks, where `kind` is 'canvas' or 'memory' and `n` counts the frames of that
+// kind it was handed before. Chromium's Media Foundation encoder does this to a
+// frame it is handed as a texture when it cannot take the texture's lock within
+// 100 ms.
+function withholding(which, options = {}) {
+  const made = env(options);
+  const { VideoEncoder } = made.env;
+  const withheld = [];
+  made.env.VideoEncoder = class extends VideoEncoder {
+    constructor(init) {
+      let drop = false;
+      super({ ...init, output: (chunk, meta) => { if (drop) { drop = false; withheld.push(chunk.timestamp); } else init.output(chunk, meta); } });
+      this.seen = { canvas: 0, memory: 0 };
+      this.dropNext = () => { drop = true; };
+    }
+
+    encode(frame, opts) {
+      const kind = frame.data && frame.data.pixels ? 'canvas' : 'memory';
+      if (which(kind, this.seen[kind]++)) this.dropNext();
+      return super.encode(frame, opts);
+    }
+  };
+  return { ...made, withheld };
+}
+
+test('a film the encoder route returns frames short of is encoded again, converted, and keeps every frame', async () => {
+  const { p, solved } = piece();
+  // The encoder route's canvas frames are its first probe, the 48 frames and its last probe.
+  const lossy = withholding((kind, n) => kind === 'canvas' && n >= 21 && n <= 23, { webgl: true, decode: true });
+  const { bytes, report } = await exportFilm(p, solved, lossy.env);
+  assert.equal(lossy.withheld.length, 3, 'the encoder route lost three frames');
+  assert.equal(report.conversion, 'cpu');
+  assert.equal(readMp4(bytes).tracks[0].samples, 48);
+  const converted = await exportFilm(p, solved, env({ webgl: true }).env);
+  assert.ok(Buffer.from(bytes).equals(Buffer.from(converted.bytes)), 'the same film the conversion writes on its own');
+  // A film the encoder route returns whole keeps that route and its bytes.
+  const whole = await exportFilm(p, solved, withholding(() => false, { webgl: true, decode: true }).env);
+  const plain = await exportFilm(p, solved, env({ webgl: true, decode: true }).env);
+  assert.equal(whole.report.conversion, 'encoder');
+  assert.ok(Buffer.from(whole.bytes).equals(Buffer.from(plain.bytes)));
+});
+
+test('a film saved after the encoder route is discarded reports the times of the pass that made it', async () => {
+  const { p, solved } = piece();
+  const lossy = await exportFilm(p, solved, withholding((kind, n) => kind === 'canvas' && n >= 21 && n <= 23, { webgl: true, decode: true }).env);
+  const converted = await exportFilm(p, solved, env({ webgl: true }).env);
+  assert.equal(lossy.report.conversion, 'cpu');
+  for (const k of ['drawMs', 'convertMs', 'encodeWaitMs']) {
+    assert.ok(Number.isFinite(lossy.report[k]), k);
+    assert.equal(lossy.report[k], converted.report[k], k);
+  }
+  // The stand-in clock moves 250 ms a reading: one reading between each frame's start and its drawing's end.
+  assert.equal(lossy.report.drawMs, 48 * 250, 'the 48 frames of one pass');
+});
+
+test('a probe the encoder returns nothing for fails the encoder route, and no frame is decoded in its place', async () => {
+  const { p, solved } = piece();
+  // The encoder route's canvas frames: its first probe (0), the 48 frames, its last probe (49).
+  for (const [probe, decoded] of [[0, 0], [49, 1]]) {
+    const made = withholding((kind, n) => kind === 'canvas' && n === probe, { webgl: true, decode: true });
+    const { VideoDecoder } = made.env;
+    let decoders = 0;
+    made.env.VideoDecoder = class extends VideoDecoder { constructor(init) { super(init); decoders++; } };
+    const { bytes, report } = await exportFilm(p, solved, made.env);
+    assert.equal(made.withheld.length, 1, `probe ${probe} withheld`);
+    assert.equal(decoders, decoded, `probe ${probe}: only probes that came back are decoded`);
+    assert.equal(report.conversion, 'cpu');
+    assert.equal(readMp4(bytes).tracks[0].samples, 48);
+  }
+});
+
+test('a film refused for its frame count names the route and the frames its encoder returned nothing for', async () => {
+  const { p, solved } = piece();
+  const lossy = withholding((kind, n) => kind === 'memory' && n >= 5 && n <= 8);
+  await assert.rejects(exportFilm(p, solved, lossy.env),
+    /^Error: film: the file holds 44 of 48 frames, from the cpu route; its encoder returned nothing for the frames at 208333 µs, 250000 µs, 291667 µs and 1 more\. Nothing was saved\.$/);
+  assert.match(grab(() => filmCheck(GRID, readMp4(film({ frames: 47 })))).message, /^film: the file holds 47 of 48 frames\. Nothing was saved\.$/,
+    'a check given no route or missing frames says only the count');
 });
 
 test('a still, a browser without encoders, a failing or stalled encoder and a bad scale are refused by name', async () => {
@@ -455,4 +979,128 @@ test('the lowest H.264 level that fits is declared first, and the frame size is 
   const odd = validate({ name: 'odd', size: { w: 33, h: 21 }, time: { duration: 0.5, hz: 8 }, draw() {} });
   const { report } = await exportFilm(odd, solve(odd), env().env);
   assert.deepEqual([report.width, report.height], [34, 22], '4:2:0 video needs even sides');
+});
+
+// ---------------------------------------------------------------------------
+// Loudness to ITU-R BS.1770-4, against signals whose answers are known
+// ---------------------------------------------------------------------------
+
+const RATE = 48000;
+
+/** Planar channels as the AudioBuffer shape the meter reads. */
+const planar = (channels) => ({
+  numberOfChannels: channels.length, sampleRate: RATE, length: channels[0].length, getChannelData: (c) => channels[c],
+});
+
+/** A sine of `hz` through [seconds, peak dBFS] parts, phase continuous. */
+function tone(parts, hz = 997, phase = 0) {
+  const x = new Float32Array(parts.reduce((n, [s]) => n + Math.round(s * RATE), 0));
+  let i = 0;
+  for (const [seconds, db] of parts) {
+    const a = 10 ** (db / 20);
+    for (const end = i + Math.round(seconds * RATE); i < end; i++) x[i] = a * Math.sin((2 * Math.PI * hz * i) / RATE + phase);
+  }
+  return x;
+}
+
+const stereo = (x) => planar([x, Float32Array.from(x)]);
+
+test('loudness follows BS.1770-4: K-weighting, 400 ms blocks, and gates of power at -70 LUFS and 10 LU down', () => {
+  // The standard tabulates both K-weighting stages at 48 kHz.
+  const [shelf, pass] = kWeighting(RATE);
+  const table = [[1.53512485958697, -2.69169618940638, 1.19839281085285, -1.69065929318241, 0.73248077421585],
+    [1.0, -2.0, 1.0, -1.99004745483398, 0.99007225036621]];
+  [shelf, pass].forEach((stage, k) => [...stage.b, ...stage.a].forEach((v, i) => assert.ok(Math.abs(v - table[k][i]) < 1e-12,
+    `K-weighting stage ${k + 1} coefficient ${i} is ${v}, not ${table[k][i]}`)));
+
+  // EBU Tech 3341's cases, a quarter as long, each within its 0.1 LU: a sine of
+  // peak A in both channels reads 20 log10 A, and in one channel 3.01 LU less.
+  const near = (got, want, what) => assert.ok(Math.abs(got - want) <= 0.1, `${what}: ${got.toFixed(3)} LUFS where ${want} is right`);
+  near(measureLoudness(stereo(tone([[5, -23]]))).lufs, -23, 'a -23 dBFS stereo sine');
+  near(measureLoudness(stereo(tone([[5, -33]]))).lufs, -33, 'a -33 dBFS stereo sine');
+  near(measureLoudness(planar([tone([[5, -23]])])).lufs, -26.01, 'the same sine in one channel');
+  near(measureLoudness(stereo(tone([[2.5, -36], [15, -23], [2.5, -36]]))).lufs, -23, 'quiet ends under the relative gate');
+  near(measureLoudness(stereo(tone([[2.5, -72], [2.5, -36], [15, -23], [2.5, -36], [2.5, -72]]))).lufs, -23, 'and under the absolute gate');
+  near(measureLoudness(stereo(tone([[5, -26], [5.025, -20], [5, -26]]))).lufs, -23, 'blocks averaged as power, not as decibels');
+
+  // Below the absolute gate there is no loudness at all.
+  assert.equal(measureLoudness(stereo(tone([[5, -75]]))).lufs, -Infinity, 'a -75 dBFS tone is silence to the gate');
+  assert.equal(measureLoudness(stereo(new Float32Array(RATE))).lufs, -Infinity);
+});
+
+test('true peak finds the peaks between samples, oversampled four times as BS.1770-4 Annex 2 filters them', () => {
+  // EBU Tech 3341 allows a true-peak meter +0.2 / -0.4 dB.
+  const within = (got, want, what) => assert.ok(got - want <= 0.2 && want - got <= 0.4, `${what}: ${got.toFixed(3)} dBTP where ${want} is right`);
+  // A quarter of the sample rate, 45 degrees off the samples: every sample sits
+  // at 0.707 of the peak, 3 dB under it.
+  const between = tone([[1, -6.02]], RATE / 4, Math.PI / 4);
+  assert.ok(between.reduce((m, v) => Math.max(m, Math.abs(v)), 0) < 10 ** (-9 / 20), 'the samples miss the peak by 3 dB');
+  within(measureLoudness(stereo(between)).dbtp, -6.02, 'a peak between samples');
+  for (const hz of [997, 5000, 10000, 19000]) within(measureLoudness(stereo(tone([[1, -6.02]], hz, 0.3))).dbtp, -6.02, `a ${hz} Hz sine`);
+  const broken = tone([[1, -20]]);
+  broken[480] = NaN;
+  assert.ok(Number.isNaN(measureLoudness(stereo(broken)).dbtp), 'a sample that is not a number has no true peak');
+});
+
+test('every film soundtrack reaches -14 LUFS with one static gain, or stops at -1 dBTP', async () => {
+  // Contexts that render a known soundtrack, and an encoder that keeps what it
+  // is given, so the film's own samples are measured, not the report's word.
+  const exported = async (fill) => {
+    const { p, solved } = piece({ sound(ctx) { const o = ctx.createOscillator(); o.connect(ctx.destination); o.start(0); } });
+    const { env: e } = env();
+    const Base = e.OfflineAudioContext;
+    let rendered = null;
+    e.OfflineAudioContext = class extends Base {
+      async startRendering() {
+        const b = await super.startRendering();
+        for (let c = 0; c < b.numberOfChannels; c++) fill(b.getChannelData(c));
+        rendered = [0, 1].map((c) => Float32Array.from(b.getChannelData(c)));
+        return b;
+      }
+    };
+    const kept = [[], []];
+    const Encoder = e.AudioEncoder;
+    e.AudioEncoder = class extends Encoder {
+      encode(data) {
+        for (let c = 0; c < 2; c++) kept[c].push(data.data.slice(c * data.numberOfFrames, (c + 1) * data.numberOfFrames));
+        super.encode(data);
+      }
+    };
+    const out = await exportFilm(p, solved, e);
+    // The AAC encoder hears 2112 samples of silence first, the lead the film's
+    // edit list skips; the soundtrack is what follows them.
+    const encoded = kept.map((parts) => Float32Array.from(parts.flatMap((part) => [...part])).subarray(2112));
+    return { report: out.report, rendered, encoded };
+  };
+
+  // A quiet steady tone is raised to the target and keeps its shape.
+  const quiet = await exported((x) => x.set(tone([[2, -30]])));
+  assert.deepEqual([quiet.report.sound.measured.lufs, quiet.report.sound.gain, quiet.report.sound.lufs], [-30, 16, -14]);
+  assert.ok(Math.abs(measureLoudness(planar(quiet.encoded)).lufs + 14) < 0.01, 'the encoded soundtrack measures -14 LUFS');
+  const ratio = quiet.encoded[0][1000] / quiet.rendered[0][1000];
+  assert.ok(Math.abs(20 * Math.log10(ratio) - 16) < 1e-4, 'by the 16 dB it reports');
+  let spread = 0;
+  quiet.encoded.forEach((x, c) => x.forEach((v, i) => {
+    if (Math.abs(quiet.rendered[c][i]) > 1e-3) spread = Math.max(spread, Math.abs(v / quiet.rendered[c][i] - ratio));
+  }));
+  assert.ok(spread < 1e-5, `one gain for every sample, and some differ from it by ${spread}`);
+
+  // A quiet tone with loud clicks would pass -1 dBTP long before -14 LUFS: the
+  // gain stops at the ceiling.
+  const peaky = await exported((x) => { x.set(tone([[2, -40]])); for (let i = 0; i < x.length; i += 12000) x[i] = 0.9; });
+  const { measured, gain, lufs, dbtp } = peaky.report.sound;
+  assert.ok(Math.abs(gain - (-1 - measured.dbtp)) <= 0.011, `the gain ${gain} is the room left under -1 dBTP`);
+  assert.ok(Math.abs(measureLoudness(planar(peaky.encoded)).dbtp + 1) < 0.01 && Math.abs(dbtp + 1) < 0.005, 'and the soundtrack peaks at -1 dBTP');
+  assert.ok(lufs < -14, `short of -14 LUFS at ${lufs}`);
+
+  // Silence has no loudness to set. A sample that is not a finite number is
+  // refused wherever it falls: an infinite one early would otherwise read as
+  // silence and be encoded, and one later would give a gain of -Infinity.
+  const silent = await exported(() => {});
+  assert.deepEqual([silent.report.sound.gain, silent.report.sound.lufs], [0, null]);
+  for (const bad of [NaN, Infinity, -Infinity]) {
+    for (const at of [7, 90000]) {
+      await assert.rejects(exported((x) => { x.set(tone([[2, -30]])); x[at] = bad; }), /not finite numbers/, `${bad} at sample ${at}`);
+    }
+  }
 });

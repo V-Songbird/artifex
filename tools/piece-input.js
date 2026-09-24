@@ -12,7 +12,7 @@ function callerDirectory(cwd = process.cwd(), env = process.env) {
   // npm run changes cwd to the package selected by --prefix. INIT_CWD belongs
   // to that invocation; do not let an unrelated/stale environment override node.
   const samePath = (a, b) => process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
-  return ['page', 'seeds'].includes(env.npm_lifecycle_event) && env.npm_package_json && env.INIT_CWD
+  return ['page', 'seeds', 'replay'].includes(env.npm_lifecycle_event) && env.npm_package_json && env.INIT_CWD
     && samePath(path.resolve(env.npm_package_json), path.join(ROOT, 'package.json'))
     ? path.resolve(env.INIT_CWD) : cwd;
 }

@@ -15,6 +15,7 @@
 //   npm run seeds drift 16 0.5    sixteen seeds, at a playhead of 0.5
 //   npm run seeds -- drift 5 --param reach       five values, fixed seed
 //   npm run seeds -- drift 3 --param reach,turn  a three-by-three grid
+//   npm run seeds -- drift 9 0.5 --png            also a PNG of the sheet, from installed Edge
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -94,15 +95,19 @@ function measureFrame(ctx, draw) {
   return { markCount, ...pixelBounds(ctx.getImageData(0, 0, width, height)) };
 }
 
-function page(names, count, t, paramNames = [], external = null) {
-  if (!Number.isFinite(t)) throw new Error('seeds: playhead must be a finite number');
+function sheetPlans(names, count, paramNames = [], external = null) {
   const pieces = external ? Object.fromEntries([[external.piece.name, external.piece]]) : EXAMPLES;
-  const plans = names.map((name) => {
+  return names.map((name) => {
     if (!Object.hasOwn(pieces, name)) {
       throw new Error(`no example called "${name}". Known: ${Object.keys(EXAMPLES).join(', ')}`);
     }
     return planSheet(validate(pieces[name]), count, paramNames);
   });
+}
+
+function page(names, count, t, paramNames = [], external = null) {
+  if (!Number.isFinite(t)) throw new Error('seeds: playhead must be a finite number');
+  const plans = sheetPlans(names, count, paramNames, external);
   const json = (value) => JSON.stringify(value).replace(/</g, '\\u003c');
   return `<!doctype html>
 <html lang="en">
@@ -251,10 +256,11 @@ ${measureFrame.toString()}
 function parseArgs(args) {
   const positional = [];
   let paramNames = [];
-  let seenParam = false;
+  let seenParam = false, png = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg === '--param' || arg.startsWith('--param=')) {
+    if (arg === '--png') png = true;
+    else if (arg === '--param' || arg.startsWith('--param=')) {
       if (seenParam) throw new Error('seeds: use --param only once');
       seenParam = true;
       const value = arg === '--param' ? args[++i] : arg.slice(8);
@@ -266,7 +272,7 @@ function parseArgs(args) {
     } else if (arg.startsWith('--')) throw new Error(`seeds: unknown option ${arg}`);
     else positional.push(arg);
   }
-  if (positional.length > 3) throw new Error('usage: seeds [piece] [count] [playhead] [--param a[,b]]');
+  if (positional.length > 3) throw new Error('usage: seeds [piece] [count] [playhead] [--param a[,b]] [--png]');
   const [which, n, t] = positional;
   if (paramNames.length && !which) throw new Error('seeds: name one piece when using --param');
   const names = which ? [which] : Object.keys(EXAMPLES);
@@ -276,7 +282,20 @@ function parseArgs(args) {
   }
   const at = t === undefined ? 1 : Number(t);
   if (!Number.isFinite(at)) throw new Error(`seeds: playhead must be a number, got ${t}`);
-  return { names, count, at, paramNames };
+  return { names, count, at, paramNames, png };
+}
+
+/** The sheet's file, without extension: under out/, or beside an external piece. */
+function sheetStem(names, paramNames, external) {
+  const out = external ? external.directory : path.join(ROOT, 'out');
+  const suffix = paramNames.length ? 'param-' + paramNames.map((key) => encodeURIComponent(key).replace(/\*/g, '%2A')).join('-') : 'seeds';
+  return path.join(out, names.length === 1 ? `${external ? external.stem : names[0]}-${suffix}` : 'seeds');
+}
+
+/** CSS pixels a PNG of the sheet is wide: enough for every sweep column, 1280 at least. */
+function sheetWidth(count, paramNames) {
+  // 24 px of body padding each side, 220 px columns and 14 px gaps.
+  return paramNames.length ? Math.max(1280, 48 + count * 220 + (count - 1) * 14) : 1280;
 }
 
 function main() {
@@ -286,16 +305,25 @@ function main() {
   const names = external ? external.names : args.names;
   const html = page(names, count, at, paramNames, external);
   checkParses(html);
-  const out = external ? external.directory : path.join(ROOT, 'out');
-  fs.mkdirSync(out, { recursive: true });
-  const suffix = paramNames.length ? 'param-' + paramNames.map((key) => encodeURIComponent(key).replace(/\*/g, '%2A')).join('-') : 'seeds';
-  const file = path.join(out, names.length === 1 ? `${external ? external.stem : names[0]}-${suffix}.html` : 'seeds.html');
+  const stem = sheetStem(names, paramNames, external);
+  fs.mkdirSync(path.dirname(stem), { recursive: true });
+  const file = stem + '.html';
   fs.writeFileSync(file, html);
-  console.log(`${external ? file : path.relative(ROOT, file)}  ${(Buffer.byteLength(html) / 1024).toFixed(1)} kB`);
+  const shown = (target) => (external ? target : path.relative(ROOT, target));
+  console.log(`${shown(file)}  ${(Buffer.byteLength(html) / 1024).toFixed(1)} kB`);
   const mode = paramNames.length ? `${count} samples per axis (${count ** paramNames.length} cells), fixed seed` : `${count} seeds`;
   console.log(`${names.length} piece(s) x ${mode} at t=${at}. Open it and LOOK -- the checks cannot see this half.`);
+  if (!args.png) return undefined;
+  const { captureSheet } = require('./check-browser.js');
+  const cells = sheetPlans(names, count, paramNames, external).reduce((sum, plan) => sum + plan.length, 0);
+  return captureSheet(html, stem, { cells, width: sheetWidth(count, paramNames) }).then(({ shots, failures }) => {
+    for (const shot of shots) console.log(`${shown(shot.file)}  ${shot.width} x ${shot.height} px`);
+    console.log(`${cells} cells, ${failures} failed. Open ${shots.length > 1 ? 'these images' : 'this image'} and look at every cell.`);
+  });
 }
 
-if (require.main === module) main();
+if (require.main === module) {
+  Promise.resolve(main()).catch((error) => { console.error(error.message); process.exitCode = 1; });
+}
 
-module.exports = { page, parseArgs, planSheet, pixelBounds, measureFrame };
+module.exports = { page, parseArgs, planSheet, pixelBounds, measureFrame, sheetPlans, sheetStem, sheetWidth };

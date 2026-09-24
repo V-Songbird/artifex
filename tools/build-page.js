@@ -106,6 +106,153 @@ function __require(from) {
 `;
 
 /**
+ * The head of the EBML element at `at`: its id, the widths of its id and size
+ * fields, its size and where its body starts. The size is read without its
+ * marker bit, a byte at a time, so a size of any length up to 8 bytes stays
+ * exact; all value bits set means "unknown", which a recorder writes for a
+ * Segment or Cluster still being written. Every WebM walk here reads its
+ * elements through this.
+ */
+function ebmlHead(bytes, at) {
+  const width = (b) => { let n = 1; while (n <= 8 && !(b & (0x80 >> (n - 1)))) n++; return n; };
+  const idLen = width(bytes[at]), sizeLen = width(bytes[at + idLen]);
+  let id = 0;
+  for (let i = 0; i < idLen; i++) id = id * 256 + bytes[at + i];
+  const first = bytes[at + idLen] & (0xFF >> sizeLen);
+  let size = first, unknown = first === 0xFF >> sizeLen;
+  for (let i = 1; i < sizeLen; i++) { size = size * 256 + bytes[at + idLen + i]; unknown = unknown && bytes[at + idLen + i] === 0xFF; }
+  return { at, id, idLen, sizeLen, size, unknown, body: at + idLen + sizeLen };
+}
+
+/**
+ * Write `size` into the size field of the element whose head is `head`, in
+ * `out`, keeping the field's width. Throws where the width cannot hold it.
+ */
+function ebmlResize(out, head, size) {
+  if (size >= 2 ** (7 * head.sizeLen) - 1) throw new Error('an EBML size field of ' + head.sizeLen + ' bytes cannot hold ' + size);
+  for (let i = head.sizeLen - 1, v = size; i >= 0; i--, v = Math.floor(v / 256)) out[head.body - head.sizeLen + i] = v % 256;
+  out[head.body - head.sizeLen] |= 0x80 >> (head.sizeLen - 1);
+}
+
+/** The CRC-32 of `bytes`, as zlib, PNG and EBML compute it. */
+function crc32(bytes) {
+  let crc = ~0;
+  for (const b of bytes) { crc ^= b; for (let k = 0; k < 8; k++) crc = (crc >>> 1) ^ (0xEDB88320 & -(crc & 1)); }
+  return ~crc >>> 0;
+}
+
+/**
+ * `bytes` with `added` inserted at byte `at` of its Segment, every stored
+ * position still naming the element it named. A WebM stores positions from
+ * the start of its Segment's data: the SeekPositions in a SeekHead, and the
+ * CueClusterPositions in Cues, which Edge's recorder writes after the last
+ * Cluster when it stops. Each position at or past the insertion moves by its
+ * length. A position that outgrows its field is written wider, which grows its
+ * SeekHead or Cues and moves what follows them; that repeats until no field
+ * grows. `parent`, when given, is the head of the element the insertion lands
+ * inside and grows by its length; a Segment of known size grows by everything
+ * added. With `listed`, the first SeekHead also gets a Seek entry for the
+ * inserted element, so a reader that finds elements through it finds this one.
+ * A CRC-32 that opens a rebuilt SeekHead, Cues or one of their parts covers the
+ * rest of that element's data, so it is computed again over the new data. A
+ * Cluster Position, a CueCodecState, a CueReference, a CRC-32 anywhere else in
+ * an index, or one over the whole Segment would go stale too, so a file
+ * carrying one is refused.
+ */
+function webmInsert(bytes, at, added, parent, listed) {
+  const SEGMENT = 0x18538067, CLUSTER = 0x1F43B675, SEEKHEAD = 0x114D9B74, CUES = 0x1C53BB6B;
+  const MASTERS = [SEEKHEAD, 0x4DBB, CUES, 0xBB, 0xB7], POSITIONS = [0x53AC, 0xF1];
+  const REFUSED = { 0xA7: 'Cluster Position', 0xEA: 'CueCodecState', 0xDB: 'CueReference', 0xBF: 'CRC-32' };
+  const refuse = (id) => { throw new Error('the recorded WebM carries a ' + REFUSED[id] + ', which the insertion would leave stale'); };
+  const uint = (from, n) => { let v = 0; for (let i = 0; i < n; i++) v = v * 256 + bytes[from + i]; return v; };
+  // A size field at least `width` bytes wide that holds `n`.
+  const field = (n, width) => {
+    while (n >= 2 ** (7 * width) - 1) width++;
+    const out = new Uint8Array(width);
+    ebmlResize(out, { body: width, sizeLen: width }, n);
+    return Array.from(out);
+  };
+  // Every SeekHead and Cues, stepping into Clusters to reach those after one of unknown size.
+  let segment = null;
+  const index = [];
+  for (let p = 0; p < bytes.length;) {
+    const e = ebmlHead(bytes, p);
+    if (e.idLen > 4 || e.sizeLen > 8) break;
+    if (e.id === SEGMENT) {
+      segment = e;
+      if (ebmlHead(bytes, e.body).id === 0xBF) refuse(0xBF);
+    }
+    if (e.id === SEGMENT || e.id === CLUSTER) { p = e.body; continue; }
+    if (e.id === 0xA7) refuse(e.id);
+    if (e.unknown) break;
+    if (e.id === SEEKHEAD || e.id === CUES) index.push(e);
+    p = e.body + e.size;
+  }
+  const base = segment ? segment.body : 0, grown = index.map(() => 0);
+  const lists = listed ? index.find((e) => e.id === SEEKHEAD) : null;
+  // Where the element at Segment position `P` starts once everything is in.
+  const move = (P) => P + (P >= at - base ? added.length : 0) + index.reduce((sum, e, i) => sum + (e.at - base < P ? grown[i] : 0), 0);
+  // The element `e` written again with every position moved; each field keeps
+  // its width unless its new value needs more.
+  const rebuild = (e) => {
+    const end = e.body + e.size, parts = [];
+    let summed = false;
+    for (let q = e.body; q < end;) {
+      const c = ebmlHead(bytes, q);
+      if (end > bytes.length || c.unknown || c.body + c.size > end) throw new Error('the recorded WebM has a SeekHead or Cues cut short or malformed');
+      if (q === e.body && c.id === 0xBF && c.size === 4) { summed = true; q = c.body + c.size; continue; }
+      if (c.id in REFUSED) refuse(c.id);
+      if (MASTERS.includes(c.id)) parts.push(rebuild(c));
+      else if (POSITIONS.includes(c.id)) {
+        let v = move(uint(c.body, c.size)), n = c.size;
+        while (v >= 256 ** n) n++;
+        const value = [];
+        for (let i = 0; i < n; i++, v = Math.floor(v / 256)) value.unshift(v % 256);
+        parts.push([...bytes.subarray(q, c.body - c.sizeLen), ...field(n, c.sizeLen), ...value]);
+      } else parts.push(Array.from(bytes.subarray(q, c.body + c.size)));
+      q = c.body + c.size;
+    }
+    if (e === lists) {
+      // Where the inserted element starts: past what grew before it, not past itself.
+      let v = move(at - base) - added.length;
+      const value = [], id = Array.from(added.subarray(0, ebmlHead(added, 0).idLen));
+      do { value.unshift(v % 256); v = Math.floor(v / 256); } while (v > 0);
+      const entry = [0x53, 0xAB, ...field(id.length, 1), ...id, 0x53, 0xAC, ...field(value.length, 1), ...value];
+      parts.push([0x4D, 0xBB, ...field(entry.length, 1), ...entry]);
+    }
+    let body = parts.flat();
+    if (summed) {
+      const sum = crc32(body);
+      body = [0xBF, 0x84, sum & 255, (sum >>> 8) & 255, (sum >>> 16) & 255, sum >>> 24, ...body];
+    }
+    return [...bytes.subarray(e.at, e.body - e.sizeLen), ...field(body.length, e.sizeLen), ...body];
+  };
+  let built;
+  for (;;) {
+    built = index.map(rebuild);
+    const next = built.map((b, i) => b.length - (index[i].body + index[i].size - index[i].at));
+    if (next.every((g, i) => g === grown[i])) break;
+    next.forEach((g, i) => { grown[i] = g; });
+  }
+  const total = added.length + grown.reduce((a, b) => a + b, 0);
+  const src = bytes.slice();
+  if (parent) ebmlResize(src, parent, parent.size + added.length);
+  if (segment && !segment.unknown) ebmlResize(src, segment, segment.size + total);
+  const cuts = [{ at, end: at, put: added }, ...index.map((e, i) => ({ at: e.at, end: e.body + e.size, put: built[i] }))].sort((a, b) => a.at - b.at);
+  const out = new Uint8Array(bytes.length + total);
+  let from = 0, to = 0;
+  for (const c of cuts) {
+    out.set(src.subarray(from, c.at), to);
+    to += c.at - from;
+    out.set(c.put, to);
+    to += c.put.length;
+    from = c.end;
+  }
+  out.set(src.subarray(from), to);
+  return out;
+}
+
+/**
  * When every frame in a WebM file plays, in milliseconds, read from the FILE.
  *
  * MediaRecorder cannot be asked how many frames it received, and it stamps each
@@ -125,25 +272,22 @@ function webmBlockTimes(bytes) {
   const SCALE = 0x2AD7B1, TIMECODE = 0xE7, SIMPLE = 0xA3, BLOCK = 0xA1;
   let p = 0, scale = 1000000, cluster = 0;
   const out = [];
-  const width = (b) => { let n = 1; while (n <= 8 && !(b & (0x80 >> (n - 1)))) n++; return n; };
   const uint = (at, n) => { let v = 0; for (let i = 0; i < n; i++) v = v * 256 + bytes[at + i]; return v; };
   while (p < bytes.length) {
-    const idLen = width(bytes[p]);
-    const sizeLen = width(bytes[p + idLen]);
-    if (idLen > 4 || sizeLen > 8) break;
-    const id = uint(p, idLen);
-    // A size of all ones means "unknown", which only a master may carry.
-    const size = uint(p + idLen, sizeLen) - 2 ** (7 * sizeLen);
-    p += idLen + sizeLen;
-    if (id === SEGMENT || id === INFO || id === CLUSTER || id === GROUP) continue;
-    if (size === 2 ** (7 * sizeLen) - 1) break;
-    if (id === SCALE) scale = uint(p, size);
-    else if (id === TIMECODE) cluster = uint(p, size);
-    else if (id === SIMPLE || id === BLOCK) {
-      const at = p + width(bytes[p]);
+    const e = ebmlHead(bytes, p);
+    if (e.idLen > 4 || e.sizeLen > 8) break;
+    p = e.body;
+    if (e.id === SEGMENT || e.id === INFO || e.id === CLUSTER || e.id === GROUP) continue;
+    // Only a master may carry an unknown size.
+    if (e.unknown) break;
+    if (e.id === SCALE) scale = uint(p, e.size);
+    else if (e.id === TIMECODE) cluster = uint(p, e.size);
+    else if (e.id === SIMPLE || e.id === BLOCK) {
+      // Past the block's track number, a vint as wide as its marker says.
+      const at = p + ebmlHead(bytes, p).idLen;
       out.push((cluster + ((uint(at, 2) << 16) >> 16)) * scale / 1000000);
     }
-    p += size;
+    p += e.size;
   }
   return out;
 }
@@ -155,26 +299,36 @@ function webmBlockTimes(bytes) {
  * TimecodeScale unit, so a player reports 0.001 s and cannot seek. The film's
  * length is known -- frames / hz -- so it is written here, in the file's own
  * units: over the recorder's Duration where there is one, else as a new one at
- * the end of Info. Every other byte stays; an insertion also grows Info's size
- * and a Segment size that is known. The recorder writes no SeekHead, so no
- * position needs moving.
+ * the end of Info. Every other byte stays; an insertion grows Info and moves
+ * the positions webmInsert names. A CRC-32 that opens Info covers the rest of
+ * Info's data, so it is computed again, little-endian as EBML stores it; one
+ * that opens the Segment covers the whole film, and is refused.
  */
 function webmWithDuration(bytes, seconds) {
-  const SEGMENT = 0x18538067, INFO = 0x1549A966, SCALE = 0x2AD7B1, DURATION = 0x4489;
-  const width = (b) => { let n = 1; while (n <= 8 && !(b & (0x80 >> (n - 1)))) n++; return n; };
+  const SEGMENT = 0x18538067, INFO = 0x1549A966, SCALE = 0x2AD7B1, DURATION = 0x4489, CRC = 0xBF;
   const uint = (at, n) => { let v = 0; for (let i = 0; i < n; i++) v = v * 256 + bytes[at + i]; return v; };
-  // An element's head. The size is read without its marker bit, so an 8-byte
-  // size stays exact; all value bits set means "unknown".
-  const head = (at) => {
-    const idLen = width(bytes[at]), sizeLen = width(bytes[at + idLen]);
-    let size = bytes[at + idLen] & (0xFF >> sizeLen), unknown = size === 0xFF >> sizeLen;
-    for (let i = 1; i < sizeLen; i++) { size = size * 256 + bytes[at + idLen + i]; unknown = unknown && bytes[at + idLen + i] === 0xFF; }
-    return { at, id: uint(at, idLen), sizeLen, size, unknown, body: at + idLen + sizeLen };
+  const head = (at) => ebmlHead(bytes, at);
+  // `out` with Info's CRC-32 computed again, over Info where it now sits.
+  const checked = (out) => {
+    for (let p = 0; p < out.length;) {
+      const e = ebmlHead(out, p);
+      if (e.id === SEGMENT) {
+        if (ebmlHead(out, e.body).id === CRC) throw new Error('the recorded WebM carries a CRC-32 over its Segment, which writing its length would leave stale');
+        p = e.body;
+        continue;
+      }
+      if (e.id === INFO) {
+        const c = ebmlHead(out, e.body);
+        if (c.id === CRC && c.size === 4) new DataView(out.buffer, out.byteOffset).setUint32(c.body, crc32(out.subarray(c.body + 4, e.body + e.size)), true);
+        break;
+      }
+      p = e.body + e.size;
+    }
+    return out;
   };
-  let segment = null;
   for (let p = 0; p < bytes.length;) {
     const e = head(p);
-    if (e.id === SEGMENT) { segment = e; p = e.body; continue; }
+    if (e.id === SEGMENT) { p = e.body; continue; }
     if (e.id !== INFO) { if (e.unknown) break; p = e.body + e.size; continue; }
     let scale = 1000000, duration = null;
     for (let q = e.body; q < e.body + e.size;) {
@@ -188,26 +342,154 @@ function webmWithDuration(bytes, seconds) {
       const out = bytes.slice();
       const view = new DataView(out.buffer, out.byteOffset + duration.body, duration.size);
       if (duration.size === 4) view.setFloat32(0, units); else view.setFloat64(0, units);
-      return out;
+      return checked(out);
     }
     const added = Uint8Array.of(0x44, 0x89, 0x88, 0, 0, 0, 0, 0, 0, 0, 0);
     new DataView(added.buffer).setFloat64(3, units);
-    const end = e.body + e.size;
-    const out = new Uint8Array(bytes.length + added.length);
-    out.set(bytes.subarray(0, end));
-    out.set(added, end);
-    out.set(bytes.subarray(end), end + added.length);
-    const grow = (el) => {
-      let v = el.size + added.length;
-      if (v >= 2 ** (7 * el.sizeLen) - 1) throw new Error('the WebM Info has no room to say how long the film is');
-      for (let i = el.sizeLen - 1; i >= 0; i--) { out[el.body - el.sizeLen + i] = v % 256; v = Math.floor(v / 256); }
-      out[el.body - el.sizeLen] |= 0x80 >> (el.sizeLen - 1);
-    };
-    grow(e);
-    if (segment && !segment.unknown) grow(segment);
-    return out;
+    return checked(webmInsert(bytes, e.body + e.size, added, e));
   }
   throw new Error('the recorded WebM has no Segment Info, so its length cannot be written');
+}
+
+/**
+ * A recorded WebM that also carries the replay manifest: one Tags element
+ * inserted before the first Cluster, holding one Tag with empty Targets (the
+ * whole film) and one SimpleTag, TagName "ARTIFEX_MANIFEST" and TagString the
+ * manifest as JSON, ASCII only as in a film and a PNG. Players skip tags they
+ * do not use. Every other byte stays, but for the positions webmInsert moves;
+ * a SeekHead also lists the Tags.
+ */
+function webmWithManifest(bytes, manifest) {
+  const SEGMENT = 0x18538067, CLUSTER = 0x1F43B675;
+  const ascii = (s) => Array.from(s, (ch) => ch.charCodeAt(0));
+  const json = JSON.stringify(manifest).replace(/[^\x00-\x7f]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+  // An element with an 8-byte size, the width the recorder writes.
+  const element = (id, body) => {
+    const size = [0x01, 0, 0, 0, 0, 0, 0, 0];
+    for (let i = 7, v = body.length; i > 0; i--, v = Math.floor(v / 256)) size[i] = v % 256;
+    return [...id, ...size, ...body];
+  };
+  const simple = element([0x67, 0xC8], [...element([0x45, 0xA3], ascii('ARTIFEX_MANIFEST')), ...element([0x44, 0x87], ascii(json))]);
+  const tags = Uint8Array.from(element([0x12, 0x54, 0xC3, 0x67], element([0x73, 0x73], [...element([0x63, 0xC0], []), ...simple])));
+  for (let p = 0; p < bytes.length;) {
+    const e = ebmlHead(bytes, p);
+    if (e.sizeLen > 8) break;
+    if (e.id === SEGMENT) { p = e.body; continue; }
+    if (e.id !== CLUSTER) { if (e.unknown) break; p = e.body + e.size; continue; }
+    return webmInsert(bytes, p, tags, null, true);
+  }
+  throw new Error('the recorded WebM has no Cluster, so its recipe has nowhere to go');
+}
+
+/**
+ * The replay manifest a WebM's ARTIFEX_MANIFEST tag holds, or null for a WebM
+ * without one. Every read stays inside its element: a Tags element the file
+ * cuts short, or one whose parts overrun their parent, throws by name.
+ */
+function webmManifest(bytes) {
+  const SEGMENT = 0x18538067, TAGS = 0x1254C367, TAG = 0x7373, SIMPLE = 0x67C8, NAME = 0x45A3, STRING = 0x4487;
+  const text = (from, to) => String.fromCharCode(...bytes.subarray(from, to));
+  const children = (from, to) => {
+    const out = [];
+    for (let p = from; p < to;) {
+      const e = ebmlHead(bytes, p);
+      if (e.unknown || e.sizeLen > 8 || e.body + e.size > to) throw new Error('the WebM Tags element is cut short or malformed');
+      out.push(e);
+      p = e.body + e.size;
+    }
+    return out;
+  };
+  for (let p = 0; p < bytes.length;) {
+    const e = ebmlHead(bytes, p);
+    if (e.sizeLen > 8) break;
+    if (e.id === SEGMENT) { p = e.body; continue; }
+    if (e.unknown) break;
+    if (e.id === TAGS) {
+      if (e.body + e.size > bytes.length) throw new Error('the WebM ends inside its Tags element');
+      for (const tag of children(e.body, e.body + e.size).filter((c) => c.id === TAG)) {
+        for (const simple of children(tag.body, tag.body + tag.size).filter((c) => c.id === SIMPLE)) {
+          const parts = children(simple.body, simple.body + simple.size);
+          const name = parts.find((c) => c.id === NAME), value = parts.find((c) => c.id === STRING);
+          if (!name || !value || text(name.body, name.body + name.size) !== 'ARTIFEX_MANIFEST') continue;
+          try { return JSON.parse(text(value.body, value.body + value.size)); } catch (err) { throw new Error('the WebM ARTIFEX_MANIFEST tag does not hold JSON: ' + err.message); }
+        }
+      }
+    }
+    p = e.body + e.size;
+  }
+  return null;
+}
+
+/**
+ * PNG bytes that also carry the replay manifest: one iTXt chunk, keyword
+ * "artifex-manifest", inserted before IEND. The text is the manifest as JSON,
+ * ASCII only -- any other character becomes a \uXXXX escape, as in a film -- so
+ * it is also the UTF-8 an iTXt chunk holds. Every other chunk, and so every
+ * pixel, keeps its bytes.
+ */
+function pngWithManifest(bytes, manifest) {
+  const ascii = (s) => Array.from(s, (ch) => ch.charCodeAt(0));
+  const json = JSON.stringify(manifest).replace(/[^\x00-\x7f]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+  // Type, keyword and its null, compression flag and method (none), then an
+  // empty language tag and translated keyword, each ended by a null.
+  const body = Uint8Array.from([...ascii('iTXtartifex-manifest'), 0, 0, 0, 0, 0, ...ascii(json)]);
+  const chunk = new Uint8Array(body.length + 8);
+  const view = new DataView(chunk.buffer);
+  view.setUint32(0, body.length - 4);
+  chunk.set(body, 4);
+  view.setUint32(chunk.length - 4, crc32(body));
+  const u32 = (at) => ((bytes[at] << 24) | (bytes[at + 1] << 16) | (bytes[at + 2] << 8) | bytes[at + 3]) >>> 0;
+  for (let p = 8; p + 12 <= bytes.length; p += 12 + u32(p)) {
+    if (String.fromCharCode(bytes[p + 4], bytes[p + 5], bytes[p + 6], bytes[p + 7]) !== 'IEND') continue;
+    const out = new Uint8Array(bytes.length + chunk.length);
+    out.set(bytes.subarray(0, p));
+    out.set(chunk, p);
+    out.set(bytes.subarray(p), p + chunk.length);
+    return out;
+  }
+  throw new Error('the PNG has no IEND chunk, so its recipe has nowhere to go');
+}
+
+/**
+ * The replay manifest a PNG's "artifex-manifest" iTXt chunk holds, or null for
+ * a PNG without one. Every read stays inside the chunk: a chunk the file cuts
+ * short, or one without its text, throws by name rather than being read past.
+ */
+function pngManifest(bytes) {
+  const u32 = (at) => ((bytes[at] << 24) | (bytes[at + 1] << 16) | (bytes[at + 2] << 8) | bytes[at + 3]) >>> 0;
+  const text = (from, to) => String.fromCharCode(...bytes.subarray(from, to));
+  const KEY = 'artifex-manifest';
+  for (let p = 8; p + 12 <= bytes.length; p += 12 + u32(p)) {
+    const data = p + 8, end = data + u32(p);
+    if (text(p + 4, p + 8) !== 'iTXt' || text(data, Math.min(end, data + KEY.length + 1)) !== KEY + '\0') continue;
+    if (end + 4 > bytes.length) throw new Error('the PNG ends inside its artifex-manifest chunk');
+    // Past the keyword, the two compression bytes, and the language tag and
+    // translated keyword, each ended by a null. The text is ASCII JSON.
+    let at = data + KEY.length + 3;
+    for (let nulls = 0; nulls < 2; at++) {
+      if (at >= end) throw new Error('the artifex-manifest chunk ends before its text');
+      if (bytes[at] === 0) nulls++;
+    }
+    try { return JSON.parse(text(at, end)); } catch (e) { throw new Error('the artifex-manifest chunk does not hold JSON: ' + e.message); }
+  }
+  return null;
+}
+
+/**
+ * What the page says after an MP4 export, read from the film's own report: its
+ * size and length, its soundtrack's codec, and where its colour was converted
+ * and how long that took. An Opus soundtrack gets a warning of its own, because
+ * a player without Opus in MP4 plays the pictures and not the sound.
+ */
+function filmNote(r) {
+  const codec = !r.sound ? null : r.sound.codec === 'mp4a' ? 'AAC' : r.sound.codec;
+  return r.frames + ' frames, ' + r.width + ' × ' + r.height + ', ' + r.seconds.toFixed(2) + ' s, '
+    + Math.round(r.bytes / 1024) + ' kB' + (codec ? ', with an ' + codec + ' soundtrack' : '')
+    // The encoder route converts inside the encoder; its time is the frame copies and test patterns.
+    + (r.conversion === 'encoder' ? '. Colour converted by the encoder, its range proved by test patterns; ' + r.convertMs + ' ms copying frames and testing.'
+      : '. Colour converted on the ' + r.conversion.toUpperCase() + ' in ' + r.convertMs + ' ms.') + ' Drawn in ' + r.drawMs + ' ms, '
+    + r.totalMs + ' ms in all (' + r.realtime + 'x real time).'
+    + (codec === 'Opus' ? ' This browser encodes no AAC, so the soundtrack is Opus: play the film where Opus in MP4 is supported, or it plays silent.' : '');
 }
 
 /**
@@ -501,10 +783,7 @@ function select(name) {
     ? 'Declared vector: any raster call would throw by name rather than vanish.'
     : 'This piece declares raster only, and means it. Asking for SVG is refused rather than answered with half a picture.';
   document.getElementById('video').disabled = !current.time || videoBusy;
-  document.getElementById('videonote').textContent = current.time
-    ? render.playheads(current).length + ' frames, recorded in real time and without sound, because this browser cannot encode the MP4 film.'
-      + ' A piece slower than its frame rate cannot be recorded this way.'
-    : '';
+  document.getElementById('videonote').textContent = current.time ? webmNote(current, 'h264') : '';
   Array.prototype.forEach.call(filmButtons, function (b) { b.disabled = !current.time || filmBusy; });
   document.getElementById('filmnote').textContent = current.time
     ? render.playheads(current).length + ' frames, each encoded at its own time however long it takes to draw'
@@ -526,6 +805,26 @@ function select(name) {
 // and nothing waits for either: MP4 shows until they answer.
 var h264 = {}, aacOrOpus = null, filmOffer = null;
 
+// The one decision behind the film controls, the WebM note and filmOffer():
+// which film this browser can make of the piece and, where it is not the MP4,
+// why. H.264 decides first: without it the silent recorder is the only film,
+// whatever the soundtrack encoders say.
+function filmChoice(p, encodesH264, encodesSound) {
+  if (!p.time) return { format: null, reason: 'still' };
+  if (!encodesH264) return { format: 'webm', reason: 'h264' };
+  if (!encodesSound) return { format: 'webm', reason: 'soundtrack' };
+  return { format: 'mp4', reason: null };
+}
+
+function webmNote(p, reason) {
+  var frames = render.playheads(p).length + ' frames, recorded in real time';
+  return (reason === 'soundtrack'
+    ? frames + '. The film is silent: this browser encodes neither AAC nor Opus for the soundtrack'
+      + ' the piece declares, and an MP4 is never written without it.'
+    : frames + ' and without sound, because this browser cannot encode the MP4 film.')
+    + ' A piece slower than its frame rate cannot be recorded this way.';
+}
+
 function offerFilm() {
   var p = current, asked = null, voiced = true;
   if (p.time) {
@@ -546,18 +845,14 @@ function offerFilm() {
   document.getElementById('mp4').hidden = false;
   document.getElementById('webm').hidden = true;
   filmOffer = Promise.all([asked, voiced]).then(function (answers) {
-    var format = !p.time ? null : answers[0] && answers[1] ? 'mp4' : 'webm';
+    var choice = filmChoice(p, answers[0], answers[1]);
     // An answer about a piece no longer selected says nothing about this one.
     if (p === current) {
-      document.getElementById('mp4').hidden = format === 'webm';
-      document.getElementById('webm').hidden = format !== 'webm';
-      if (answers[0] && !answers[1]) {
-        document.getElementById('videonote').textContent = render.playheads(p).length
-          + ' frames, recorded in real time. The film is silent: this browser encodes neither AAC nor Opus for the soundtrack'
-          + ' the piece declares, and an MP4 is never written without it. A piece slower than its frame rate cannot be recorded this way.';
-      }
+      document.getElementById('mp4').hidden = choice.format === 'webm';
+      document.getElementById('webm').hidden = choice.format !== 'webm';
+      if (choice.format === 'webm') document.getElementById('videonote').textContent = webmNote(p, choice.reason);
     }
-    return format;
+    return choice;
   });
 }
 
@@ -625,6 +920,9 @@ function failBuild(message) {
 
 function resolve() {
   var t0 = performance.now();
+  // A new solve has its own soundtrack: the old one stops and is dropped.
+  soundtrack = null;
+  silence();
   try {
     solved = piece.solve(current, Number(document.getElementById('seed').value), overrides);
     err.textContent = '';
@@ -641,6 +939,9 @@ function resolve() {
   }
   buildControls(true);
   frame();
+  // A parameter changed while playing: the transport plays on, so its sound
+  // does too, from the new solve.
+  if (playing) playSound(transportRevision);
 }
 
 function frame() {
@@ -713,10 +1014,63 @@ function stop() {
   playing = false;
   transportRevision++;
   cancelAnimationFrame(raf);
+  silence();
   var b = document.getElementById('play');
   b.classList.remove('on');
   b.textContent = 'play';
   toUrl();
+}
+
+// THE SOUNDTRACK IN THE TRANSPORT. Playing a piece that declares sound plays its
+// soundtrack with the picture, so an author hears the two together while
+// working. It is rendered once per solve, on the first play, by the renderSound
+// the exports use, and started where the transport is. The transport's own
+// clock still draws every frame: the audio clock is read only to start the
+// sound, and every change to the transport stops it. Exports never touch it.
+var listener = null;       // the page's AudioContext, made or resumed in the play click
+var soundtrack = null;     // { solved, buffer: a promise of its AudioBuffer }
+var voice = null;          // the one playing source, or null
+var transportOrigin = 0;   // performance.now() at the transport's playhead 0
+
+// A lap of the transport lasts the frame grid, frames / hz, as the soundtrack
+// and the film do. A declared duration that is no whole number of frames would
+// otherwise add a silence and an off-grid playhead at every wrap.
+function lapMs(p) { return (render.playheads(p).length / p.time.hz) * 1000; }
+
+function silence() {
+  if (!voice) return;
+  var v = voice;
+  voice = null;
+  try { v.stop(); } catch (e) { /* a source that never started cannot stop */ }
+  v.disconnect();
+}
+
+// Start the soundtrack where the transport is once it is rendered, unless the
+// transport or the solve has moved on by then.
+function playSound(transport) {
+  if (!listener || !current.sound || !solved) return;
+  var s = solved;
+  if (!soundtrack || soundtrack.solved !== s) {
+    soundtrack = { solved: s, buffer: render.renderSound(current, s, {
+      OfflineAudioContext: typeof OfflineAudioContext === 'function' ? OfflineAudioContext : undefined,
+    }) };
+  }
+  var entry = soundtrack;
+  entry.buffer.then(function (buffer) {
+    if (!playing || transport !== transportRevision || solved !== s || soundtrack !== entry) return;
+    silence();
+    var dur = lapMs(current);
+    // Where the picture is now, plus the time the sound takes to reach the
+    // speakers, so the two are heard and seen together.
+    var at = ((performance.now() - transportOrigin) % dur) / 1000 + (listener.outputLatency || listener.baseLatency || 0);
+    var v = listener.createBufferSource();
+    v.buffer = buffer;
+    v.connect(listener.destination);
+    v.start(0, Math.min(at, buffer.duration));
+    voice = v;
+  }, function (e) {
+    if (soundtrack === entry) err.textContent = 'the soundtrack could not be rendered: ' + String(e.message || e);
+  });
 }
 
 // THE ADDRESS BAR IS THE RECIPE. solve() knows the piece, the seed and every
@@ -778,14 +1132,29 @@ document.getElementById('play').onclick = function () {
   playing = true;
   this.classList.add('on');
   this.textContent = 'pause';
-  var dur = current.time.duration * 1000;
+  var dur = lapMs(current);
   var transport = ++transportRevision;
   var t0 = performance.now() - t * dur;
+  transportOrigin = t0;
+  // A browser starts audio only inside a user gesture, so the context is made,
+  // or woken, here in the click. A piece without sound never makes one.
+  if (current.sound && typeof AudioContext === 'function') {
+    if (!listener) listener = new AudioContext();
+    if (listener.state === 'suspended') listener.resume();
+  }
+  playSound(transport);
+  var lap = 0;
   (function step(now) {
     if (!playing) return;
     // The wall clock drives the TRANSPORT and nothing else. drawFrame quantises
-    // the playhead to the drawn-frame grid, so no mark ever sees this number.
-    t = ((now - t0) % dur) / dur;
+    // the playhead to the drawn-frame grid, so no mark ever sees this number. A
+    // frame stamped before the click would put it below 0, so it is held there.
+    t = Math.max(0, (now - t0) % dur) / dur;
+    // The transport wrapped, so the soundtrack starts again with it. Laps are
+    // counted rather than playheads compared: an animation frame can be stamped
+    // a little before the click that started the transport.
+    var laps = Math.floor((now - t0) / dur);
+    if (laps > lap) { lap = laps; playSound(transport); }
     document.getElementById('t').value = t * 1000;
     var pending = frame();
     function next() { if (playing && transport === transportRevision) raf = requestAnimationFrame(step); }
@@ -807,23 +1176,45 @@ Array.prototype.forEach.call(document.querySelectorAll('[data-png]'), function (
     // The raster backend, entire: an offscreen canvas at any scale. Not capped.
     var k = Number(b.dataset.png);
     var filename = currentName + '-' + solved.seed + '@' + k + 'x.png';
+    // The recipe as it stands at the click, and the scale: a piece may draw
+    // finer detail at a higher one.
+    var manifest = Object.assign(recipe(), { scale: k });
     var o = document.createElement('canvas');
     o.width = Math.round(current.size.w * k);
     o.height = Math.round(current.size.h * k);
     render.drawFrame(o.getContext('2d'), current, solved, t, { scale: k });
-    o.toBlob(function (blob) { save(blob, filename); });
+    o.toBlob(function (blob) {
+      blob.arrayBuffer().then(function (buf) {
+        save(new Blob([pngWithManifest(new Uint8Array(buf), manifest)], { type: 'image/png' }), filename);
+      }).catch(function (e) { err.textContent = String(e.message || e); });
+    });
   };
 });
+
+// The recipe for what is on screen, with the QUANTISED playhead -- the frame that
+// was actually drawn, not the one the slider was left at. A saved SVG carries it
+// as renderVector's does; a saved PNG carries it with its scale.
+function recipe() {
+  return solved ? Object.assign({}, solved.manifest, { t: piece.frameT(current, t) }) : null;
+}
 
 document.getElementById('svg').onclick = function () {
   if (!solved) return;
   var g = new vector.VectorSurface(current.size);
   render.drawFrame(g, current, solved, t);
+  g.setManifest(recipe());
   save(new Blob([g.toSVG()], { type: 'image/svg+xml' }), currentName + '-' + solved.seed + '.svg');
 };
 
+${ebmlHead.toString()}
+${ebmlResize.toString()}
+${crc32.toString()}
+${webmInsert.toString()}
 ${webmBlockTimes.toString()}
 ${webmWithDuration.toString()}
+${webmWithManifest.toString()}
+${filmNote.toString()}
+${pngWithManifest.toString()}
 ${filmVerdict.toString()}
 
 // THE REAL-TIME WEBM, offered only where the MP4 below cannot be encoded (see
@@ -853,6 +1244,15 @@ async function exportVideo() {
   off.width = p.size.w;
   off.height = p.size.h;
   var octx = off.getContext('2d');
+  // The recorder is handed a copy of each drawn frame, on a canvas nothing reads
+  // back. A piece may read its own canvas, and three read-backs move a canvas to
+  // memory for good; Edge's recorder then codes the rest of the film in full
+  // range while the Colour element it wrote at the first frame still says
+  // limited. The copy keeps every frame on the backing the film started with.
+  var copy = document.createElement('canvas');
+  copy.width = off.width;
+  copy.height = off.height;
+  var cctx = copy.getContext('2d');
   var track = new MediaStreamTrackGenerator({ kind: 'video' });
   var writer = track.writable.getWriter();
   var rec = new MediaRecorder(new MediaStream([track]), { mimeType: 'video/webm;codecs=vp8', videoBitsPerSecond: 8000000 });
@@ -884,7 +1284,9 @@ async function exportVideo() {
   // film that keeps one is decoded and scaled on another path in Edge, and a
   // player showing it at another size loses up to 11 dB against the drawing.
   async function encodeFrame(i) {
-    var f = new VideoFrame(off, { timestamp: Math.round((i * 1000000) / hz), alpha: 'discard' });
+    cctx.clearRect(0, 0, copy.width, copy.height);
+    cctx.drawImage(off, 0, 0);
+    var f = new VideoFrame(copy, { timestamp: Math.round((i * 1000000) / hz), alpha: 'discard' });
     await writer.write(f);
     f.close();
   }
@@ -920,9 +1322,12 @@ async function exportVideo() {
 
   var bytes = new Uint8Array(await new Blob(chunks).arrayBuffer());
   var report = filmVerdict(heads.length, hz, webmBlockTimes(bytes), { worstLagMs: worstLagMs });
-  // Judged as recorded, saved with the length it has: frames / hz.
-  var blob = new Blob([webmWithDuration(bytes, heads.length / hz)], { type: 'video/webm' });
+  // Judged as recorded, saved with the length it has, frames / hz, and the
+  // recipe an MP4 of the same film carries: drawn at the design size, scale 1.
+  var manifest = Object.assign({}, s.manifest, { film: { frames: heads.length, hz: hz, loop: !!p.time.loop, scale: 1 } });
+  var blob = new Blob([webmWithManifest(webmWithDuration(bytes, heads.length / hz), manifest)], { type: 'video/webm' });
   report.bytes = blob.size;
+  report.manifest = manifest;
   report.renderMs = renderMs;
   report.encodeMs = encodeMs;
   report.worstLagMs = worstLagMs;
@@ -945,6 +1350,8 @@ async function exportFilm(opts) {
   var result = await film.exportFilm(p, s, {
     VideoEncoder: typeof VideoEncoder === 'function' ? VideoEncoder : undefined,
     VideoFrame: typeof VideoFrame === 'function' ? VideoFrame : undefined,
+    VideoDecoder: typeof VideoDecoder === 'function' ? VideoDecoder : undefined,
+    EncodedVideoChunk: typeof EncodedVideoChunk === 'function' ? EncodedVideoChunk : undefined,
     AudioEncoder: typeof AudioEncoder === 'function' ? AudioEncoder : undefined,
     AudioData: typeof AudioData === 'function' ? AudioData : undefined,
     OfflineAudioContext: typeof OfflineAudioContext === 'function' ? OfflineAudioContext : undefined,
@@ -983,9 +1390,7 @@ filmButtons.forEach(function (button) {
     }).then(function (r) {
       save(r.blob, r.name);
       if (solved !== request) return;
-      note.textContent = r.frames + ' frames, ' + r.width + ' \\u00d7 ' + r.height + ', ' + r.seconds.toFixed(2) + ' s, '
-        + Math.round(r.bytes / 1024) + ' kB' + (r.sound ? ', with sound' : '') + '. Drawn in ' + r.drawMs + ' ms, '
-        + r.totalMs + ' ms in all (' + r.realtime + 'x real time).';
+      note.textContent = filmNote(r);
     }).catch(function (e) {
       if (solved !== request) return;
       note.textContent = '';
@@ -1050,10 +1455,18 @@ window.__artifex = {
   setPreview: setPreview,
   video: exportVideo,
   film: exportFilm,
-  // The film export the page offers for the selected piece, once the encoder has
-  // answered: 'mp4', 'webm' where H.264 cannot encode it, or null for a still.
-  // video() and film() stay callable either way; only the controls follow this.
-  filmFormat: function () { return filmOffer; },
+  // Integrated loudness and true peak of an AudioBuffer, by the meter the film
+  // export levels its soundtrack with, so a decoded film can be measured.
+  loudness: film.measureLoudness,
+  loudnessGain: film.loudnessGain,
+  // The film export the page offers for the selected piece, once the encoders
+  // have answered: 'mp4', 'webm' where H.264 cannot encode it or no codec can
+  // encode its declared soundtrack, or null for a still. filmOffer() says why,
+  // from the decision the WebM note is written from: { format, reason }, the
+  // reason 'h264', 'soundtrack', 'still', or null for the MP4. video() and
+  // film() stay callable either way; only the controls follow this.
+  filmFormat: function () { return filmOffer.then(function (choice) { return choice.format; }); },
+  filmOffer: function () { return filmOffer.then(function (choice) { return { format: choice.format, reason: choice.reason }; }); },
   examples: EXAMPLES,
   setSeed: function (s) { document.getElementById('seed').value = s; resolve(); },
   setT: function (v) { stop(); t = v; document.getElementById('t').value = v * 1000; frame(); },
@@ -1088,11 +1501,8 @@ window.__artifex = {
       state: piece.summarise(s.state),
     };
   },
-  // The recipe for what is on screen right now, with the QUANTISED playhead --
-  // the frame that was actually drawn, not the one the slider was left at.
-  manifest: function () {
-    return solved ? Object.assign({}, solved.manifest, { t: piece.frameT(current, t) }) : null;
-  },
+  // The recipe for what is on screen right now; saved SVGs carry the same one.
+  manifest: recipe,
 };
 
 // Open what the address bar asks for, when this build actually has it. The
@@ -1172,4 +1582,4 @@ function bundle(external = null) {
   return [RUNTIME].concat(MODULES.map(wrap), external ? [external.source] : []).join(String.fromCharCode(10));
 }
 
-module.exports = { modules, checkResolvable, checkParses, bundle, html, webmBlockTimes, webmWithDuration, filmVerdict, MODULES };
+module.exports = { modules, checkResolvable, checkParses, bundle, html, ebmlHead, ebmlResize, webmBlockTimes, webmWithDuration, webmWithManifest, webmManifest, pngWithManifest, pngManifest, filmNote, filmVerdict, MODULES };

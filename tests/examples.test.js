@@ -19,6 +19,7 @@ const { validate, solve, frameT, frameCount, frameDen, frameIndex, clockAt } = r
 const { renderVector, drawFrame, playheads } = require('../core/render.js');
 const { VectorSurface } = require('../core/surface-vector.js');
 const { nullSurface } = require('../tools/bench.js');
+const { fakeCanvas } = require('./fake-media.js');
 const font = require('../examples/stroke-font.js');
 const EXAMPLES = require('../examples/index.js');
 
@@ -761,36 +762,23 @@ test("drift: a stroke's body reaches its tip on every frame", () => {
 });
 
 /**
- * A Recorder that core/layer.js treats as a raster surface: it has a canvas, and
- * it reads back as opaque once an opaque fillRect has covered all of it. Copying
- * a region takes the marks the canvas shows since it was last cleared, and
- * putting a copy back records those marks again, so a frame whose layer was
- * copied can be compared, mark for mark, with the frame drawn directly.
+ * A Recorder on the shared stand-in canvas, which core/layer.js treats as a
+ * raster surface: fakeCanvas paints and reads back its pixels, so layer.js
+ * judges a layer's opacity and copies its region as it would on a browser
+ * canvas, and the Recorder keeps the marks. A copy of a region carries the
+ * marks the canvas showed since it was last cleared, and putting the copy back
+ * records them again, so a frame whose layer was copied can be compared, mark
+ * for mark, with the frame drawn directly.
  */
-class RasterRecorder extends Recorder {
-  constructor(canvas) {
+class MarkRecorder extends Recorder {
+  constructor() {
     super();
-    Object.assign(this, { canvas, cleared: 0, opaque: false, held: [], copies: 0 });
+    Object.assign(this, { cleared: 0, held: [], copies: 0 });
   }
-
-  getContextAttributes() { return {}; }
 
   clearRect(x, y, w, h) {
     super.clearRect(x, y, w, h);
-    Object.assign(this, { cleared: this.ops.length, opaque: false });
-  }
-
-  fillRect(x, y, w, h) {
-    super.fillRect(x, y, w, h);
-    const covers = this._x(x, y) <= 0 && this._y(x, y) <= 0
-      && this._x(x + w, y + h) >= this.canvas.width && this._y(x + w, y + h) >= this.canvas.height;
-    if (covers && this.globalAlpha === 1 && !/rgba|\/|#[0-9a-f]{8}$/i.test(String(this.fillStyle))) this.opaque = true;
-  }
-
-  getImageData(x, y, w, h) {
-    const data = new Uint8ClampedArray(w * h * 4);
-    if (this.opaque) for (let i = 3; i < data.length; i += 4) data[i] = 255;
-    return { data };
+    this.cleared = this.ops.length;
   }
 
   /** What the canvas shows: every mark since it was last cleared, in device units. */
@@ -807,9 +795,7 @@ class RasterRecorder extends Recorder {
 }
 
 function rasterCanvas(width, height) {
-  const canvas = { width, height, ownerDocument: { createElement: () => rasterCanvas(0, 0) } };
-  canvas.getContext = () => canvas.ctx || (canvas.ctx = new RasterRecorder(canvas));
-  return canvas;
+  return fakeCanvas({ width, height, ownerDocument: { createElement: () => rasterCanvas(0, 0) } }, () => new MarkRecorder());
 }
 
 test('layers: a frame whose static layer was copied holds the marks drawing it would', () => {
@@ -1792,6 +1778,72 @@ test('a recorded WebM is saved with its length, and every other byte as recorded
   assert.deepEqual(webmBlockTimes(saved), webmBlockTimes(bare));
 
   assert.throws(() => webmWithDuration(Uint8Array.from(cluster), 1), /no Segment Info/);
+});
+
+test('a WebM carries its recipe in one Tags element before the first Cluster, and every other byte as saved', () => {
+  const { webmWithDuration, webmWithManifest, webmManifest, webmBlockTimes } = require('../tools/build-page.js');
+  const cluster = [0x1F, 0x43, 0xB6, 0x75, 0xFF, 0xE7, 0x81, 0x00,
+    0xA3, 0x85, 0x81, 0x00, 0x00, 0x80, 0xA3, 0xA3, 0x85, 0x81, 0x00, 0x2A, 0x80, 0xA3];
+  const info = [0x15, 0x49, 0xA9, 0x66, 0x8E, 0x2A, 0xD7, 0xB1, 0x83, 0x0F, 0x42, 0x40, 0x44, 0x89, 0x84, 0x3F, 0x80, 0x00, 0x00];
+  const film = (known) => {
+    const body = [0xEC, 0x83, 0, 0, 0, ...info, ...cluster];
+    const size = known ? [0x01, 0, 0, 0, 0, 0, 0, body.length] : [0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+    return Uint8Array.from([0x1A, 0x45, 0xDF, 0xA3, 0x83, 0xA3, 0xA3, 0xA3, 0x18, 0x53, 0x80, 0x67, ...size, ...body]);
+  };
+  const manifest = { piece: 'café ☕', seed: 7, film: { frames: 2, hz: 24, loop: false, scale: 1 } };
+  const at = 20 + 5 + info.length;
+  for (const known of [false, true]) {
+    const dated = webmWithDuration(film(known), 2 / 24);
+    const saved = webmWithManifest(dated, manifest);
+    assert.deepEqual(webmManifest(saved), manifest, 'the tag reads back, non-ASCII names included');
+    const length = saved.length - dated.length;
+    assert.deepEqual([...saved.subarray(at, at + 4)], [0x12, 0x54, 0xC3, 0x67], 'a Tags element sits where the first Cluster was');
+    assert.deepEqual([...saved.subarray(at + length)], [...dated.subarray(at)], 'every Cluster and Block after it as saved');
+    const rest = Uint8Array.from([...saved.subarray(0, at), ...saved.subarray(at + length)]);
+    const moved = [...rest.keys()].filter((i) => rest[i] !== dated[i]);
+    assert.deepEqual(moved, known ? [19] : [], 'without it, the saved film, Duration included; a known Segment size grows');
+    if (known) assert.equal(dated[19] + length, saved[19]);
+    assert.deepEqual(webmBlockTimes(saved), webmBlockTimes(dated));
+    assert.equal(webmManifest(dated), null);
+  }
+  assert.throws(() => webmWithManifest(film(false).subarray(0, 44), manifest), /no Cluster/);
+  const cut = webmWithManifest(webmWithDuration(film(false), 2 / 24), manifest);
+  assert.throws(() => webmManifest(cut.subarray(0, at + 40)), /ends inside its Tags element/);
+});
+
+test('every EBML size is read exactly, at every length up to 8 bytes', () => {
+  const { ebmlHead, webmBlockTimes } = require('../tools/build-page.js');
+  // A Void element whose size is written in `len` bytes.
+  const sized = (len, size) => {
+    const bytes = [];
+    for (let i = len - 1, v = size; i >= 0; i--, v = Math.floor(v / 256)) bytes[i] = v % 256;
+    bytes[0] |= 0x80 >> (len - 1);
+    return Uint8Array.from([0xEC, ...bytes]);
+  };
+  for (let len = 1; len <= 8; len++) {
+    const largest = Math.min(2 ** (7 * len) - 2, Number.MAX_SAFE_INTEGER);
+    for (const size of [0, 5, 1866906 % (largest + 1), largest]) {
+      const head = ebmlHead(sized(len, size), 0);
+      assert.deepEqual([head.id, head.sizeLen, head.size, head.unknown, head.body], [0xEC, len, size, false, 1 + len], len + '-byte size ' + size);
+    }
+    // All value bits set is "unknown"; one bit fewer is a size.
+    const ones = [0xFF >> (len - 1), ...Array(len - 1).fill(0xFF)];
+    assert.equal(ebmlHead(Uint8Array.from([0xEC, ...ones]), 0).unknown, true, len + '-byte unknown size');
+    ones[len - 1] ^= 1;
+    assert.equal(ebmlHead(Uint8Array.from([0xEC, ...ones]), 0).unknown, false);
+  }
+
+  // In the recorder's live shape, a Void with an 8-byte size holds five bytes
+  // that look like a block. The walk skips exactly those five and finds the one
+  // real block after them; a size read off by a few bytes lands inside them.
+  const film = Uint8Array.from([
+    0x18, 0x53, 0x80, 0x67, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0x15, 0x49, 0xA9, 0x66, 0x87, 0x2A, 0xD7, 0xB1, 0x83, 0x0F, 0x42, 0x40,
+    0xEC, 0x01, 0, 0, 0, 0, 0, 0, 0x05, 0xA3, 0x83, 0x81, 0x00, 0x00,
+    0x1F, 0x43, 0xB6, 0x75, 0xFF, 0xE7, 0x81, 0x00,
+    0xA3, 0x85, 0x81, 0x00, 0x21, 0x80, 0xA3,
+  ]);
+  assert.deepEqual(webmBlockTimes(film), [33]);
 });
 
 test('a single-frame film needs exactly one frame and no spacing interval', () => {

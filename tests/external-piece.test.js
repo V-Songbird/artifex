@@ -13,6 +13,16 @@ const { page } = require('../tools/contact-sheet.js');
 
 const ROOT = path.resolve(__dirname, '..');
 
+// A CLI command run to completion. Each one ends on its own, but an npm command
+// can take well over 15 s on a loaded machine; the deadline only stops a
+// command that hangs, so it sits far above that. A command that runs out of
+// time says so first, before anything it printed.
+const CLI_DEADLINE_MS = 120000;
+function cli(args, cwd) {
+  const result = spawnSync(process.execPath, args, { cwd, encoding: 'utf8', timeout: CLI_DEADLINE_MS });
+  assert.equal(result.status, 0, [result.error?.message, result.stderr].filter(Boolean).join('\n'));
+}
+
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'artifex-external-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -161,10 +171,7 @@ test('external parameter-sheet filenames encode Windows wildcards and stay besid
   ]) {
     const params = { [key]: { min: 1, max: 2, value: 1, meaning: 'rectangle width' } };
     fs.writeFileSync(file, "module.exports={name:'filenames',size:{w:20,h:20},params:" + JSON.stringify(params) + ',draw(){}};');
-    const result = spawnSync(process.execPath, [path.join(ROOT, 'tools', 'contact-sheet.js'), file, '2', '0.5', '--param', key], {
-      cwd: project, encoding: 'utf8', timeout: 15000,
-    });
-    assert.equal(result.status, 0, result.stderr);
+    cli([path.join(ROOT, 'tools', 'contact-sheet.js'), file, '2', '0.5', '--param', key], project);
     const output = path.join(project, filename);
     assert.equal(fs.existsSync(output), true);
     assert.equal(path.dirname(fs.realpathSync(output)), project);
@@ -186,11 +193,7 @@ test('external piece paths use the npm caller only for this library page/seeds s
 
 test('external CLI commands resolve caller paths with spaces and write beside the piece', (t) => {
   const { project, file } = fixture(t);
-  const run = (args) => {
-    const result = spawnSync(process.execPath, args, { cwd: project, encoding: 'utf8', timeout: 15000 });
-    assert.equal(result.status, 0, result.stderr || result.error?.message);
-    return result.stdout;
-  };
+  const run = (args) => cli(args, project);
   run([path.join(ROOT, 'tools', 'build-page.js'), './My piece.cjs']);
   assert.equal(checkParses(fs.readFileSync(path.join(project, 'My piece-page.html'), 'utf8')), true);
   run([path.join(ROOT, 'tools', 'contact-sheet.js'), file, '3', '0.5']);

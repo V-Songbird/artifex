@@ -2,18 +2,18 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const vm = require('node:vm');
-const { html, bundle } = require('../tools/build-page.js');
-const { nullSurface } = require('../tools/bench.js');
+const { fakePage } = require('./fake-media.js');
 
-// Execute the emitted application, including startup and event handlers. The
-// canvas records no pixels; native rendering and downloads need a browser check.
+// Execute the emitted application, including startup and event handlers, in
+// the shared page sandbox, whose elements are the shared stand-in canvas and
+// paint only rectangles; native rendering and downloads need a browser check.
 function openPage(replaceState, search = '', registry = null) {
-  const elements = new Map(), downloads = [], frames = new Map();
-  let now = 0, nextFrame = 0;
-  function element(tag) {
-    return {
-      tag, children: [], dataset: {}, textContent: '', _value: '', width: 300, height: 150,
+  let now = 0;
+  const page = fakePage({
+    modules: registry ? { 'examples/index.js': registry } : {},
+    replaceState, search, now: () => now,
+    fields: () => ({
+      _value: '',
       get value() { return this._value; },
       set value(value) {
         if (this.type !== 'range') { this._value = value; return; }
@@ -26,48 +26,18 @@ function openPage(replaceState, search = '', registry = null) {
         const clamped = Math.min(max, Math.max(min, Number(value)));
         this._value = String(Math.min(max, min + Math.round((clamped - min) / step) * step));
       },
-      set innerHTML(value) { this.children = []; this.markup = value; },
-      classList: { add() {}, remove() {}, toggle() {} },
-      appendChild(child) { this.children.push(child); },
-      getContext() { return nullSurface({ w: this.width, h: this.height }); },
-      toBlob(callback) { callback(new Blob(['png'], { type: 'image/png' })); },
-      click() { downloads.push(this.download); },
-    };
-  }
-  const png = element('button');
-  png.dataset.png = '1';
-  const sandbox = {
-    window: {}, Blob,
-    document: {
-      getElementById(id) {
-        if (!elements.has(id)) elements.set(id, element(id === 'c' ? 'canvas' : 'div'));
-        return elements.get(id);
-      },
-      createElement: element,
-      querySelectorAll() { return [png]; },
-    },
-    history: { replaceState }, location: { search },
-    performance: { now: () => now },
-    requestAnimationFrame(callback) { frames.set(++nextFrame, callback); return nextFrame; },
-    cancelAnimationFrame(id) { frames.delete(id); },
-    URL: { createObjectURL: () => 'blob:test', revokeObjectURL() {} },
-    setTimeout(callback) { callback(); },
-  };
-  const sources = bundle() + (registry ? "\n__def('examples/index.js', " + registry.toString() + ');' : '');
-  const script = html(sources).match(/<script>([\s\S]*)<\/script>/)[1];
-  vm.runInNewContext(script, sandbox);
+    }),
+  });
   return {
-    api: sandbox.window.__artifex, elements, downloads, png,
+    api: page.api, elements: page.elements, downloads: page.downloads, png: page.png,
     advance(ms) {
       now += ms;
-      const pending = [...frames.values()];
-      frames.clear();
-      pending.forEach((callback) => callback(now));
+      page.frame(now);
     },
   };
 }
 
-test('blocked history replacement preserves selection, editing, playback and image export', () => {
+test('blocked history replacement preserves selection, editing, playback and image export', async () => {
   let attempts = 0;
   const page = openPage(() => {
     attempts++;
@@ -98,6 +68,7 @@ test('blocked history replacement preserves selection, editing, playback and ima
   page.advance(100);
   assert.equal(api.read().t, paused);
   page.png.onclick();
+  await new Promise(setImmediate);
   assert.equal(elements.get('svg').disabled, false);
   elements.get('svg').onclick();
   assert.deepEqual(page.downloads, ['readout-123@1x.png', 'readout-123.svg']);
