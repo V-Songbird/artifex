@@ -33,6 +33,7 @@
 'use strict';
 
 const { rng } = require('../core/rand.js');
+const { sumInto } = require('../core/sound.js');
 
 // ---------------------------------------------------------------------------
 // The data. Nothing seeded may reach this.
@@ -469,10 +470,11 @@ module.exports = {
       const place = ctx.createStereoPanner();
       osc.connect(level);
       level.connect(place);
-      place.connect(bus);
       osc.start(0);
       return { osc, place };
     });
+    // Two at a time, so every render adds the voices up in the same order.
+    sumInto(ctx, voices.map((v) => v.place), bus);
 
     for (let k = 0; k < timeline.frames; k++) {
       const sec = k / timeline.hz;
