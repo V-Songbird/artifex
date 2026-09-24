@@ -6,7 +6,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const { clamp, clamp01, lerp, unlerp, remap, smoothstep, turn, pick, chance, centred } = require('../core/num.js');
-const { rgb, hex, mix, luma, contrast, readableOn, toLinear, toSRGB } = require('../core/colour.js');
+const { rgb, hex, mix, mixOklch, oklch, luma, contrast, readableOn, toLinear, toSRGB } = require('../core/colour.js');
 const { poly, stroke, fill, clipSegment, clipPolyline, boxOf } = require('../core/path.js');
 const { VectorSurface } = require('../core/surface-vector.js');
 const { rng } = require('../core/rand.js');
@@ -151,6 +151,80 @@ test('MIXING HAPPENS IN LINEAR LIGHT, which is the whole point of the module', (
   assert.equal(mix('#123456', '#abcdef', 0), '#123456', 'the ends are exact');
   assert.equal(mix('#123456', '#abcdef', 1), '#abcdef');
   assert.equal(mix('#123456', '#abcdef', -3), '#123456', 'and it clamps');
+});
+
+test('oklch matches the published OKLCh of the sRGB primaries', () => {
+  // MDN's oklch() page gives red as oklch(0.627966 0.257704 29.2346); CSS's
+  // matrices carry more digits than Ottosson's, so the fifth decimal differs.
+  const near = (colour, [L, C, deg]) => {
+    const [l, c, h] = oklch(colour);
+    assert.ok(Math.abs(l - L) < 1e-4 && Math.abs(c - C) < 1e-4, `${colour}: L ${l}, C ${c}`);
+    if (deg !== undefined) assert.ok(Math.abs(turn(h, (deg * Math.PI) / 180)) < 1e-3, `${colour}: h ${(h * 180) / Math.PI}`);
+  };
+  near('#ff0000', [0.627966, 0.257704, 29.2346]);
+  near('#00ff00', [0.866440, 0.294827, 142.4953]);
+  near('#0000ff', [0.452014, 0.313214, 264.052]);
+  near('#ffffff', [1, 0]);
+  near('#000000', [0, 0]);
+});
+
+test('MIXOKLCH KEEPS THE COLOUR that a linear mix loses between complements', () => {
+  // Yellow to blue and pink to mint: mix goes through khaki and through grey.
+  for (const [a, b] of [['#e9c46a', '#3d5a80'], ['#b56576', '#9fd8cb']]) {
+    const [pa, pb, lin, ok] = [oklch(a), oklch(b), oklch(mix(a, b, 0.5)), oklch(mixOklch(a, b, 0.5))];
+    const chroma = (pa[1] + pb[1]) / 2;
+    assert.ok(lin[1] < chroma * 0.6, `${a}..${b}: the linear midpoint is greyed, C ${lin[1].toFixed(3)}`);
+    assert.ok(Math.abs(ok[1] - chroma) < 0.005, `${a}..${b}: chroma moves evenly, C ${ok[1].toFixed(3)} of ${chroma.toFixed(3)}`);
+    assert.ok(Math.abs(ok[0] - (pa[0] + pb[0]) / 2) < 0.005, `${a}..${b}: and so does lightness`);
+    const half = turn(pa[2], pb[2]) / 2;
+    assert.ok(Math.abs(turn(pa[2] + half, ok[2])) < 0.02, `${a}..${b}: the hue turns the short way round`);
+  }
+  // Black to white is the perceptual mid grey, far darker than half the light.
+  assert.equal(mixOklch('#000000', '#ffffff', 0.5), '#636363');
+});
+
+test('mixOklch ends are exact, it clamps, a colour mixed with itself is itself, and alpha is mixed', () => {
+  for (const [a, b] of [['#123456', '#abcdef'], ['#ffff00', '#0000ff'], ['#808080', '#ff0000'], ['#000000', '#ffffff']]) {
+    assert.equal(mixOklch(a, b, 0), a);
+    assert.equal(mixOklch(a, b, 1), b);
+    assert.equal(mixOklch(a, b, -3), a, 'and it clamps');
+    assert.equal(mixOklch(a, b, 4), b);
+  }
+  for (const c of ['#000000', '#ffffff', '#808080', '#ff0000', '#00ff00', '#0000ff', '#1a2350', '#12345680']) {
+    assert.equal(mixOklch(c, c, 0.37), c, c);
+  }
+  assert.equal(mixOklch('#ff000080', '#0000ff', 0.5).slice(7), mix('#ff000080', '#0000ff', 0.5).slice(7), 'alpha mixes as mix does');
+  assert.equal(mixOklch('#ff000080', '#0000ff', 0.5).slice(7), 'c0');
+});
+
+test('a grey has no hue of its own in mixOklch, so it fades straight into the colour', () => {
+  // Rounding gives a grey a tiny chroma at an arbitrary hue; followed, it would
+  // send grey to red through orange.
+  for (const grey of ['#808080', '#000000', '#ffffff', '#262626']) {
+    const mid = oklch(mixOklch(grey, '#ff0000', 0.5));
+    assert.ok(Math.abs(turn(mid[2], oklch('#ff0000')[2])) < 0.02, `${grey}: hue ${(mid[2] * 180) / Math.PI}`);
+    const back = oklch(mixOklch('#ff0000', grey, 0.5));
+    assert.ok(Math.abs(turn(back[2], oklch('#ff0000')[2])) < 0.02, `${grey}, reversed`);
+  }
+  assert.ok(oklch(mixOklch('#000000', '#ffffff', 0.3))[1] < 1e-3, 'and two greys stay grey');
+});
+
+test('where mixOklch leaves sRGB, chroma gives way, never lightness or hue', () => {
+  // Yellow to blue turns through a green far brighter than sRGB can show.
+  const [y, b] = [oklch('#ffff00'), oklch('#0000ff')];
+  let reduced = 0;
+  for (let i = 1; i < 10; i++) {
+    const u = i / 10;
+    const got = oklch(mixOklch('#ffff00', '#0000ff', u));
+    const L = y[0] + (b[0] - y[0]) * u;
+    const h = y[2] + turn(y[2], b[2]) * u;
+    const C = y[1] + (b[1] - y[1]) * u;
+    assert.ok(Math.abs(got[0] - L) < 0.005, `u=${u}: lightness ${got[0].toFixed(4)}, wanted ${L.toFixed(4)}`);
+    assert.ok(Math.abs(turn(got[2], h)) < 0.02, `u=${u}: hue ${got[2].toFixed(3)}, wanted ${h.toFixed(3)}`);
+    assert.ok(got[1] <= C + 0.005, `u=${u}: chroma never grows`);
+    if (got[1] < C - 0.02) reduced++;
+  }
+  assert.ok(reduced >= 3, `the arc did leave sRGB, and chroma gave way on ${reduced} of 9 steps`);
 });
 
 test('hex parses three, four, six and eight digits, and round-trips', () => {

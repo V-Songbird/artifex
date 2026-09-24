@@ -118,7 +118,8 @@ Small on purpose — nothing here assumes a subject. Everything else you write.
 require('./core/rand.js')    // rng(seed) -> R(entity, property, index), noise2, gradient2, fbm
 require('./core/num.js')     // clamp, clamp01, lerp, unlerp, remap, smoothstep,
                              // turn, pick, chance, centred
-require('./core/colour.js')  // rgb, hex, mix, luma, contrast, readableOn
+require('./core/colour.js')  // rgb, hex, mix, mixOklch, oklch, luma, contrast,
+                             // readableOn
 require('./core/path.js')    // poly, stroke, fill, clipPolyline, clipSegment, boxOf
 require('./core/geom.js')    // lengthOf, bbox, centroid, pointInPoly, resample,
                              // chaikin, chain, ring, ribbon, closestPointOnSegment,
@@ -150,6 +151,14 @@ difference step in that field's coordinate units.
 **`mix` works in linear light.** `mix('#000','#fff',0.5)` is `#bcbcbc`, not
 `#808080`: the first represents half the light; averaging the encoded sRGB values
 produces a darker midpoint.
+
+**`mixOklch` keeps a dissolve's colour; `mix` stays the default.** Between
+complementary colours, `mix`'s straight line through the light crosses grey:
+yellow to blue passes through khaki. `mixOklch(a, b, u)` moves OKLCh lightness
+and chroma evenly and turns the hue the short way round, so yellow to blue
+passes through green, a hue neither end has. Choose it by eye for a piece. A
+grey takes the other colour's hue; where the turn leaves sRGB, chroma gives way,
+not lightness or hue. `oklch(colour)` returns `[L, C, h]`, with `h` in radians.
 
 **`turn(from, to)` is a trap, not a convenience.** Steering a heading with a raw
 subtraction sends a mark the long way round exactly when the angle crosses π,

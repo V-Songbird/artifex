@@ -648,6 +648,34 @@ const MUTATIONS = [
     to: "  const byte = (v) => Math.round(v * 255).toString(16).padStart(2, '0');",
     expect: 'hex parses three, four, six and eight digits, and round-trips',
   },
+  {
+    why: 'a mistyped OKLab coefficient shifts every perceptual colour',
+    file: 'core/colour.js',
+    from: '  const B = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s;',
+    to: '  const B = 0.0259040371 * l + 0.7827717662 * m - 0.8186757660 * s;',
+    expect: 'oklch matches the published OKLCh of the sRGB primaries',
+  },
+  {
+    why: 'the hue is lerped raw, so a perceptual mix sometimes turns the long way round',
+    file: 'core/colour.js',
+    from: '  const h = p[2] + turn(p[2], q[2]) * k;',
+    to: '  const h = p[2] + (q[2] - p[2]) * k;',
+    expect: 'MIXOKLCH KEEPS THE COLOUR that a linear mix loses between complements',
+  },
+  {
+    why: 'a grey keeps its rounding-noise hue, so grey to red passes through orange',
+    file: 'core/colour.js',
+    from: '  if (p[1] < 1e-4) p[2] = q[2];',
+    to: '  if (false) p[2] = q[2];',
+    expect: 'a grey has no hue of its own in mixOklch, so it fades straight into the colour',
+  },
+  {
+    why: 'an out-of-gamut perceptual mix is clipped per channel, shifting its lightness and hue',
+    file: 'core/colour.js',
+    from: '  if (!inGamut(linearOf(L, C, h))) {',
+    to: '  if (false) {',
+    expect: 'where mixOklch leaves sRGB, chroma gives way, never lightness or hue',
+  },
 
   // --- polylines, and the design box ----------------------------------------
   {

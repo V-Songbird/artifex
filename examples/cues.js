@@ -14,13 +14,15 @@
 // order, over a short overlap. The change is anchored at the shot boundary: the
 // boundary frame is the first that shows it, and each part's note sounds on the
 // frame that first shows that part turning. `blend` at 0 is a hard cut, every
-// part on the boundary frame at once, heard as one chord.
+// part on the boundary frame at once, heard as one chord. A part turns along
+// OKLCh, so a change between complementary palettes keeps its colour on the way
+// instead of passing through grey.
 
 'use strict';
 
 const { rng, noise2 } = require('../core/rand.js');
 const { lerp } = require('../core/num.js');
-const { mix } = require('../core/colour.js');
+const { mix, mixOklch } = require('../core/colour.js');
 const { fill } = require('../core/path.js');
 const { span, ease, tween, shots } = require('../core/time.js');
 
@@ -269,7 +271,7 @@ function reach(s, name, turn) {
 function colourAt(s, name, frame) {
   let c = s.cues.opening[name];
   for (const ch of s.cues.changes) {
-    if (ch.part === name && frame >= ch.onset) c = mix(ch.from, ch.to, ease.out(span(ch.onset - 1, ch.end, frame)));
+    if (ch.part === name && frame >= ch.onset) c = mixOklch(ch.from, ch.to, ease.out(span(ch.onset - 1, ch.end, frame)));
   }
   return c;
 }

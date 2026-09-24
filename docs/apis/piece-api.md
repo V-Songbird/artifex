@@ -1,7 +1,7 @@
 ---
 type: api_spec
-summary: "Shows a runnable custom Artifex piece and the public validation, solving, rendering, static-layer and soundtrack entry points."
-related_files: ["core/piece.js", "core/render.js", "core/time.js", "core/film.js", "core/webgpu-preview.js", "core/surface-vector.js", "examples/pixel-field.js", "examples/readout.js", "examples/drift.js", "examples/settle.js", "examples/cues.js", "core/layer.js", "tests/layer.test.js", "tests/piece.test.js", "tests/render.test.js", "tests/time.test.js", "tests/film.test.js", "tests/webgpu-preview.test.js"]
+summary: "Shows a runnable custom Artifex piece and the public validation, solving, rendering, static-layer, colour-dissolve and soundtrack entry points."
+related_files: ["core/piece.js", "core/render.js", "core/time.js", "core/film.js", "core/webgpu-preview.js", "core/surface-vector.js", "examples/pixel-field.js", "examples/readout.js", "examples/drift.js", "examples/settle.js", "examples/cues.js", "core/layer.js", "core/colour.js", "tests/layer.test.js", "tests/toolkit.test.js", "tests/piece.test.js", "tests/render.test.js", "tests/time.test.js", "tests/film.test.js", "tests/webgpu-preview.test.js"]
 ---
 
 # Piece API
@@ -89,6 +89,18 @@ const piece = {
 ```
 
 [`examples/readout.js`](../../examples/readout.js) cuts a reading and a one-second rest on whole frames, and schedules its notes from the same shots. [`examples/drift.js`](../../examples/drift.js) times each stroke with `span`. [`examples/cues.js`](../../examples/cues.js) writes its moves (`tween` at named rates), its bumps (`ease.bump`, including a blink) and its scene changes into one cue table in its build; `draw` and `sound` read only that table. Each scene change starts on its `shots` boundary and turns the parts one after another over a short blend, or all at once at `blend: 0`. Run `node --test tests/time.test.js` for the span, rate, tween and shot contracts.
+
+## Colour dissolves
+
+[`core/colour.js`](../../core/colour.js) offers two mixes of two hex colours at `u` in [0, 1], clamped, returning hex. The two ends come back exactly, and alpha mixes linearly in both.
+
+| Function | Contract |
+| --- | --- |
+| `mix(a, b, u)` | The default. Mixes in linear light; between complementary colours the midpoint is close to grey. |
+| `mixOklch(a, b, u)` | Moves OKLCh lightness and chroma linearly and turns the hue the short way round, so the midpoint keeps the ends' chroma but may show a hue neither end has. A colour with chroma under 1e-4 counts as grey and takes the other colour's hue. Where the arc leaves sRGB, chroma is reduced at the same lightness and hue. |
+| `oklch(colour)` | `[L, C, h]`: OKLab lightness in [0, 1], chroma, and hue in radians in (-π, π]. |
+
+The OKLab matrices are those Björn Ottosson published with the space. Switching a piece from `mix` to `mixOklch` changes its frames, so it is an art decision made with before and after frames. [`examples/cues.js`](../../examples/cues.js) turns its palette changes with `mixOklch` and keeps `mix` for its shadows. Run `node --test tests/toolkit.test.js` for the colour contracts.
 
 ## Static layers
 
