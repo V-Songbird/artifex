@@ -271,6 +271,33 @@ function soundMatch(a, b) {
   return null;
 }
 
+// Serialized into the page and pinned in Node. The export levels every
+// soundtrack to -14 LUFS, or where its peaks come first to its codec's ceiling,
+// -1 dBTP for AAC and -1.2 dBTP for Opus, and the decoded film has to measure
+// so, codec and all. Opus moved the examples' true peak by -0.10 to +0.14 dB in
+// installed Edge, so it is held within 0.15 dB of its ceiling, AAC within 0.1.
+// The lower ceiling is there to keep an Opus soundtrack under -1 dBTP once
+// decoded, and settle's stops within 0.1 LU of -14 LUFS, where the rule above
+// would pass it at any peak. `heard` is the decoded soundtrack's { lufs, dbtp };
+// `sound` is the export's report, whose `short` must be there exactly when the
+// `lufs` it encoded at is more than 3 LU under -14 LUFS. That `lufs` is rounded
+// to two decimals and `short` is measured before rounding, so at exactly -17
+// LUFS either is right. Returns why the soundtrack does not match, or null.
+function loudnessMatch(heard, sound) {
+  const opus = sound.codec === 'Opus';
+  const [ceiling, within] = opus ? [-1.2, 0.15] : [-1, 0.1];
+  if (!(Math.abs(heard.lufs + 14) <= 0.1 || (Math.abs(heard.dbtp - ceiling) <= within && heard.lufs < -14))) {
+    return 'the decoded soundtrack measures ' + heard.lufs.toFixed(2) + ' LUFS and ' + heard.dbtp.toFixed(2) + ' dBTP, neither -14 LUFS nor ' + ceiling + ' dBTP';
+  }
+  if (opus && !(heard.dbtp < -1)) return 'the decoded Opus soundtrack peaks at ' + heard.dbtp.toFixed(2) + ' dBTP, not under -1 dBTP';
+  const under = -14 - sound.lufs;
+  if (under !== 3 && (sound.short !== undefined) !== under > 3) {
+    return 'the export encoded the soundtrack at ' + sound.lufs + ' LUFS and reports '
+      + (sound.short === undefined ? 'no shortfall, ' + under.toFixed(2) + ' LU under -14 LUFS' : 'a shortfall of ' + sound.short + ' LU, within 3 LU of -14 LUFS');
+  }
+  return null;
+}
+
 // Serialized into the page for a forced WebM run. The page refuses a recording
 // that fell behind its schedule, which a loaded machine causes; this records
 // again, at most `limit` recordings in all, and names each refusal with the
@@ -299,8 +326,7 @@ async function retryBehindSchedule(record, frames, limit = 3) {
 // MP4 path and decodes it: the first, middle and last frames must each match
 // their own drawn frame, as frameMatch judges, and a declared
 // soundtrack must decode to exactly the film's length, start as a fresh render
-// does, and measure -14 LUFS or peak at its codec's ceiling, -1 dBTP for AAC
-// or -1.2 dBTP for Opus, and two more renders of it must
+// does, and measure as loudnessMatch judges, and two more renders of it must
 // be the same bits. The export's own verdict is read from the file. The
 // replay manifest is found in the film's bytes by this check's own scan, not
 // readMp4, so a fault shared by the writer and the reader cannot pass: it must
@@ -447,24 +473,12 @@ async function inspectFilm(name, force, retry) {
       throw new Error(name + ': from its first sound, at sample ' + onset + ', the soundtrack decodes ' + startDb.toFixed(1)
         + ' dB from a fresh render, under ' + START_DB + ' dB');
     }
-    // The export levels every soundtrack to -14 LUFS, or where its peaks come
-    // first to its codec's ceiling, -1 dBTP for AAC and -1.2 dBTP for Opus, and
-    // the decoded film has to measure so, codec and all. Opus moved the examples'
-    // true peak by -0.10 to +0.14 dB in installed Edge, so it is held within
-    // 0.15 dB of its ceiling, AAC within 0.1. The lower ceiling is there to keep
-    // an Opus soundtrack under -1 dBTP once decoded, and settle's stops within
-    // 0.1 LU of -14 LUFS, where the rule above would pass it at any peak.
     const heard = api.loudness(decoded);
-    const opus = report.sound.codec === 'Opus';
-    const [ceiling, within] = opus ? [-1.2, 0.15] : [-1, 0.1];
-    if (!(Math.abs(heard.lufs + 14) <= 0.1 || (Math.abs(heard.dbtp - ceiling) <= within && heard.lufs < -14))) {
-      throw new Error(name + ': the decoded soundtrack measures ' + heard.lufs.toFixed(2) + ' LUFS and ' + heard.dbtp.toFixed(2)
-        + ' dBTP, neither -14 LUFS nor ' + ceiling + ' dBTP');
-    }
-    if (opus && !(heard.dbtp < -1)) throw new Error(name + ': the decoded Opus soundtrack peaks at ' + heard.dbtp.toFixed(2) + ' dBTP, not under -1 dBTP');
+    const loud = loudnessMatch(heard, report.sound);
+    if (loud) throw new Error(name + ': ' + loud);
     sound = {
       seconds: +decoded.duration.toFixed(3), samples: decoded.length, peak: +peak.toFixed(3),
-      gain: report.sound.gain, lufs: +heard.lufs.toFixed(2), dbtp: +heard.dbtp.toFixed(2),
+      gain: report.sound.gain, lufs: +heard.lufs.toFixed(2), dbtp: +heard.dbtp.toFixed(2), short: report.sound.short,
       onset, startDb: +startDb.toFixed(1),
     };
   }
@@ -682,13 +696,15 @@ async function checkPage(client, context, options) {
   }
   const films = [];
   const chosen = await evaluate(client, '(' + filmsToExport.toString() + ')((' + exampleTraits.toString() + ')())');
-  // A forced run checks its one fallback on one film.
-  for (const name of options.force ? chosen.slice(0, 1) : chosen) {
+  // A forced run checks its one fallback on one film, except that without AAC
+  // every film is Opus, so a soundtrack its peaks stop at the Opus ceiling, as
+  // settle's do, is decoded too.
+  for (const name of options.force && options.force !== 'no-aac' ? chosen.slice(0, 1) : chosen) {
     context.phase = 'film export ' + name;
     // A WebM film comes back whole, as base64, and can pass the 4 MiB a reply may carry.
-    const film = await evaluateInPieces(client, '((frameMatch, soundMatch) => (' + inspectFilm.toString() + ')(' + JSON.stringify(name)
+    const film = await evaluateInPieces(client, '((frameMatch, soundMatch, loudnessMatch) => (' + inspectFilm.toString() + ')(' + JSON.stringify(name)
       + (options.force ? ', ' + JSON.stringify(options.force) + ', ' + retryBehindSchedule.toString() : '') + '))('
-      + frameMatch.toString() + ', ' + soundMatch.toString() + ')');
+      + frameMatch.toString() + ', ' + soundMatch.toString() + ', ' + loudnessMatch.toString() + ')');
     const route = routeVerdict(options, film);
     if (route) throw new Error('browser: ' + route);
     if (film.webm) {
@@ -855,6 +871,6 @@ if (require.main === module) main().catch((error) => { console.error(error.messa
 
 module.exports = {
   parseArgs, findEdge, connectCDP, evaluate, servePage, inspectPiece, filmsToExport, inspectFilm, runBrowserCheck, checkPage,
-  stopBrowser, removeProfile, main, FORCED, retryBehindSchedule, sheetReady, captureSheet, frameMatch, soundMatch, withEdge, waitFor, routeVerdict,
+  stopBrowser, removeProfile, main, FORCED, retryBehindSchedule, sheetReady, captureSheet, frameMatch, soundMatch, loudnessMatch, withEdge, waitFor, routeVerdict,
   evaluateInPieces, PIECE_CHARS, SHOT_BYTES, bandRows, sheetPieces, sheetClip,
 };
