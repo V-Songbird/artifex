@@ -1738,6 +1738,20 @@ const MUTATIONS = [
     expect: 'every film soundtrack reaches -14 LUFS with one static gain, or stops at -1 dBTP',
   },
   {
+    why: 'a film far under -14 LUFS does not say how far',
+    file: 'core/film.js',
+    from: '    ...(short > LOUDNESS.short && { short: round2(short) }),\n',
+    to: '',
+    expect: 'every film soundtrack reaches -14 LUFS with one static gain, or stops at -1 dBTP',
+  },
+  {
+    why: 'a film within 3 LU of -14 LUFS reports a shortfall',
+    file: 'core/film.js',
+    from: 'short > LOUDNESS.short &&',
+    to: 'short > 0 &&',
+    expect: 'every film soundtrack reaches -14 LUFS with one static gain, or stops at -1 dBTP',
+  },
+  {
     why: 'the film reports a gain it never applies to the soundtrack it encodes',
     file: 'core/film.js',
     from: '    for (let i = 0; i < x.length; i++) x[i] *= scale;',

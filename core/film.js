@@ -924,8 +924,10 @@ const limited709 = (space) => !!space && space.primaries === 'bt709' && space.ma
 // barely raise a quiet one, so a film mixed quiet stays quiet beside everything
 // else. Each soundtrack is measured as rendered and given one static gain: up
 // to -14 LUFS integrated, unless its true peak would pass -1 dBTP first. No
-// compressor or limiter touches it, so the piece's own dynamics are kept.
-const LOUDNESS = { target: -14, ceiling: -1 };
+// compressor or limiter touches it, so the piece's own dynamics are kept. A
+// soundtrack whose peaks stop it more than `short` LU under the target says
+// how far, so its author can tame the peaks.
+const LOUDNESS = { target: -14, ceiling: -1, short: 3 };
 
 /**
  * The two K-weighting stages for a sample rate, as { b: [b0, b1, b2], a: [a1,
@@ -1049,7 +1051,8 @@ const round2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 /**
  * Bring a rendered soundtrack to LOUDNESS in place with one static gain, and
  * say what was measured and done: `measured` as rendered, the `gain` in dB,
- * and the `lufs` and `dbtp` it is encoded at. A soundtrack with no block above
+ * and the `lufs` and `dbtp` it is encoded at, and `short`, how many LU it ends
+ * under the target, where that is more than LOUDNESS.short. A soundtrack with no block above
  * the -70 LUFS gate has no loudness to set and keeps its level, reported as
  * null. A sample that is not a finite number, which no player can play, is
  * refused.
@@ -1071,9 +1074,11 @@ function normalizeLoudness(buffer) {
     for (let i = 0; i < x.length; i++) x[i] *= scale;
   }
   const result = measureLoudness(buffer);
+  const short = LOUDNESS.target - result.lufs;
   return {
     measured: { lufs: round2(measured.lufs), dbtp: round2(measured.dbtp) },
     gain: round2(gain), lufs: round2(result.lufs), dbtp: round2(result.dbtp),
+    ...(short > LOUDNESS.short && { short: round2(short) }),
   };
 }
 
