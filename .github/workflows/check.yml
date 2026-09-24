@@ -14,11 +14,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  mutations:
+    name: Mutations (${{ matrix.os }}, ${{ matrix.shard }}/8)
+    runs-on: ${{ matrix.os }}
+    # Each shard reruns the suite sequentially for about an eighth of the mutations.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        # The shard count also appears in the job name and the run step.
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Run mutation checks
+        run: node tests/negative.js --shard ${{ matrix.shard }}/8
+
   check:
     name: Check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # Mutations rerun the suite sequentially; allow slower hosted runners.
-    timeout-minutes: 120
+    needs: mutations
+    # Run after failed shards too, so this required check reports them instead of being skipped.
+    if: ${{ !cancelled() }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -40,5 +66,7 @@ jobs:
         run: npm run check
       - name: Build the standalone page
         run: npm run page
-      - name: Run mutation checks
-        run: npm run negative
+      - name: Require every mutation shard
+        env:
+          RESULT: ${{ needs.mutations.result }}
+        run: node -e "if (process.env.RESULT !== 'success') { console.error('Mutation shards did not all succeed: ' + process.env.RESULT); process.exit(1); }"

@@ -3290,24 +3290,30 @@ async function judgeMutation(dir, m, evidence, timeoutMs, execute = executeSuite
   };
 }
 
-const USAGE = 'usage: node tests/negative.js [--file <mutated file>]... [--expect <text of the expected test title>]...';
+const USAGE = 'usage: node tests/negative.js [--file <mutated file>]... [--expect <text of the expected test title>]... [--shard <k>/<n>]';
 
 /**
  * Choose the mutations to run; with no filter, all of them. `--file` matches a
  * mutated file's repository path and `--expect` text within the expected test
  * title. Repeating a kind widens it; giving both kinds requires both.
+ * `--shard k/n` keeps every n-th mutation of the whole list from the k-th, so
+ * shards 1 to n hold each mutation exactly once; it narrows the other filters.
  */
 function selectMutations(args, mutations = MUTATIONS) {
-  const files = [], expects = [];
+  const files = [], expects = [], shards = [];
   for (let i = 0; i < args.length; i += 2) {
-    const kind = { '--file': files, '--expect': expects }[args[i]];
+    const kind = { '--file': files, '--expect': expects, '--shard': shards }[args[i]];
     if (!kind || !args[i + 1] || args[i + 1].startsWith('--')) throw new Error(USAGE);
     kind.push(args[i + 1]);
   }
+  const shard = shards.length && /^([1-9]\d*)\/([1-9]\d*)$/.exec(shards[0]);
+  if (shards.length > 1 || (shards.length && !(shard && +shard[1] <= +shard[2]))) throw new Error(USAGE);
   const normal = (file) => file.replace(/\\/g, '/').replace(/^\.\//, '');
-  const chosen = mutations.filter((m) => (!files.length || files.some((file) => normal(file) === m.file))
-    && (!expects.length || expects.some((text) => m.expect.includes(text))));
-  const filter = [...files.map((file) => `--file ${file}`), ...expects.map((text) => `--expect ${text}`)].join(' ');
+  const chosen = mutations.filter((m, i) => (!files.length || files.some((file) => normal(file) === m.file))
+    && (!expects.length || expects.some((text) => m.expect.includes(text)))
+    && (!shard || i % shard[2] === shard[1] - 1));
+  const filter = [...files.map((file) => `--file ${file}`), ...expects.map((text) => `--expect ${text}`),
+    ...shards.map((text) => `--shard ${text}`)].join(' ');
   if (filter && !chosen.length) throw new Error(`no mutation matches ${filter}`);
   return { chosen, filter };
 }

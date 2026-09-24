@@ -553,6 +553,23 @@ test('mutation filters choose by mutated file and expected title and refuse what
   assert.throws(() => selectMutations(['--file', 'core/film.js', '--expect', 'digit'], list), /no mutation matches --file core\/film\.js --expect digit/);
 });
 
+test('mutation shards hold every mutation exactly once and narrow the other filters', () => {
+  const list = Array.from({ length: 11 }, (_, i) => ({ file: i < 6 ? 'core/a.js' : 'core/b.js', expect: `title ${i}` }));
+  for (const n of [1, 2, 4, 11]) {
+    const shards = Array.from({ length: n }, (_, k) => selectMutations(['--shard', `${k + 1}/${n}`], list));
+    assert.deepEqual(shards.flatMap((s) => s.chosen).sort((a, b) => list.indexOf(a) - list.indexOf(b)), list, `${n} shards cover the list once`);
+    assert.equal(new Set(shards.flatMap((s) => s.chosen)).size, list.length, `${n} shards are disjoint`);
+  }
+  assert.deepEqual(selectMutations(['--shard', '2/4'], list), { chosen: [list[1], list[5], list[9]], filter: '--shard 2/4' });
+  assert.deepEqual(selectMutations(['--file', 'core/b.js', '--shard', '1/2'], list).chosen, [list[6], list[8], list[10]], 'a shard keeps full-list positions');
+  assert.deepEqual(selectMutations(['--expect', 'title 1', '--shard', '2/2'], list).chosen, [list[1]], '"title 1" and "title 10" split by shard');
+  for (const args of [['--shard'], ['--shard', '0/2'], ['--shard', '3/2'], ['--shard', '1/0'], ['--shard', '1'], ['--shard', '1/2x'],
+    ['--shard', '1/2', '--shard', '2/2']]) {
+    assert.throws(() => selectMutations(args, list), /usage: node tests\/negative\.js/, JSON.stringify(args));
+  }
+  assert.throws(() => selectMutations(['--shard', '12/12'], list), /no mutation matches --shard 12\/12/);
+});
+
 /** Run the runner's main on a fixture project with its own mutations, capturing what it prints. */
 async function runMain(t, args, mutations, root) {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'artifex-main-test-'));
