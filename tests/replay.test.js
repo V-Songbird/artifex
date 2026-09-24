@@ -202,9 +202,9 @@ const tone = (n, level = 0.2) => signal(n, (i, c) => level * Math.sin((2 * Math.
 /**
  * compareSound as the page runs it, from its source text alone, with the page's
  * loudness meter and gain: the piece renders `rendered` and the film decodes
- * to `decoded`, or fails to decode.
+ * to `decoded`, or fails to decode, from a soundtrack in `codec`.
  */
-async function soundInPage({ rendered, decoded }) {
+async function soundInPage({ rendered, decoded }, codec = 'mp4a') {
   const vm = require('node:vm');
   const p = validate({ name: 'tone', size: { w: 8, h: 8 }, time: { duration: 1, hz: 10 }, sound() {}, draw() {} });
   class OfflineAudioContext {
@@ -214,7 +214,7 @@ async function soundInPage({ rendered, decoded }) {
   }
   const window = { __artifex: { piece: require('../core/piece.js'), render: require('../core/render.js'), examples: { tone: p }, loudness: measureLoudness, loudnessGain } };
   const recipe = { ...solve(p, p.seed).manifest, film: { frames: 10, hz: 10, loop: false, scale: 1 } };
-  const run = `(${compareSound})(new Uint8Array(${JSON.stringify([...Buffer.from('film')])}), ${JSON.stringify(recipe)}, ${SOUND_BLOCK})`;
+  const run = `(${compareSound})(new Uint8Array(${JSON.stringify([...Buffer.from('film')])}), ${JSON.stringify(recipe)}, ${SOUND_BLOCK}, ${JSON.stringify(codec)})`;
   return vm.runInNewContext(run, { window, OfflineAudioContext, atob });
 }
 
@@ -222,15 +222,20 @@ const comparedInPage = async (films) => soundVerdict(await soundInPage(films), '
 
 test('replay levels a soundtrack with the gain the export applies', async () => {
   const click = signal(48000, (i) => (i === 24000 ? 0.9 : 0.001 * Math.sin(i / 7)));
-  for (const [what, rendered] of [['a steady tone reaches -14 LUFS', tone(48000)], ['a click stops at -1 dBTP', click], ['silence keeps its level', signal(48000, () => 0)]]) {
-    const { gain } = await soundInPage({ rendered, decoded: rendered });
-    assert.equal(Math.round(gain * 100) / 100, normalizeLoudness(audio(rendered.map((x) => x.slice()))).gain, what);
+  for (const [what, rendered] of [['a steady tone reaches -14 LUFS', tone(48000)], ['a click stops at its codec ceiling', click], ['silence keeps its level', signal(48000, () => 0)]]) {
+    for (const codec of ['mp4a', 'Opus']) {
+      const { gain } = await soundInPage({ rendered, decoded: rendered }, codec);
+      assert.equal(Math.round(gain * 100) / 100, normalizeLoudness(audio(rendered.map((x) => x.slice())), codec).gain, `${what}, ${codec}`);
+    }
   }
+  // Opus stops a click 0.2 dB under AAC, so replay must level for the film's codec.
+  const [aac, opus] = await Promise.all(['mp4a', 'Opus'].map((codec) => soundInPage({ rendered: click, decoded: click }, codec)));
+  assert.ok(Math.abs(aac.gain - opus.gain - 0.2) < 1e-9, `AAC ${aac.gain} dB and Opus ${opus.gain} dB`);
 });
 
 test('a film soundtrack matches only where it decodes to its recipe, levelled as the export levels it', async () => {
   const rendered = tone(48000);
-  const scale = 10 ** (loudnessGain(measureLoudness(audio(rendered))) / 20);
+  const scale = 10 ** (loudnessGain(measureLoudness(audio(rendered)), 'mp4a') / 20);
   const heard = rendered.map((x) => x.map((v) => v * scale));
   const same = await comparedInPage({ rendered, decoded: heard });
   assert.equal(same.match, true, same.detail);

@@ -481,7 +481,8 @@ solved trajectory.
   generator makes the soundtrack a function of when it was rendered.
 - **Mix the balance; the film sets the level.** The MP4 export gives every
   soundtrack one gain, up to -14 LUFS unless its true peak reaches -1 dBTP
-  first, and applies no compression. Set voices against each other, not the
+  first (-1.2 dBTP for an Opus soundtrack, whose encoding lifts peaks more),
+  and applies no compression. Set voices against each other, not the
   overall level. Peaks far above the body of the mix stop the gain early, so
   such a film plays quieter than -14 LUFS. More than 3 LU under it, the
   export report's `sound.short` says by how many LU; `npm run browser`

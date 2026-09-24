@@ -923,11 +923,14 @@ const limited709 = (space) => !!space && space.primaries === 'bt709' && space.ma
 // Platforms that play films turn a loud upload down to about -14 LUFS and
 // barely raise a quiet one, so a film mixed quiet stays quiet beside everything
 // else. Each soundtrack is measured as rendered and given one static gain: up
-// to -14 LUFS integrated, unless its true peak would pass -1 dBTP first. No
-// compressor or limiter touches it, so the piece's own dynamics are kept. A
-// soundtrack whose peaks stop it more than `short` LU under the target says
-// how far, so its author can tame the peaks.
-const LOUDNESS = { target: -14, ceiling: -1, short: 3 };
+// to -14 LUFS integrated, unless its true peak would pass its codec's ceiling
+// first. The ceiling is measured before encoding, and a codec moves the peak:
+// in installed Edge AAC moved it by 0.03 dB at most and Opus by -0.10 to +0.14
+// dB, so an Opus soundtrack stops 0.2 dB lower, which keeps it under -1 dBTP
+// once decoded. No compressor or limiter touches it, so the piece's own
+// dynamics are kept. A soundtrack whose peaks stop it more than `short` LU
+// under the target says how far, so its author can tame the peaks.
+const LOUDNESS = { target: -14, ceiling: { mp4a: -1, Opus: -1.2 }, short: 3 };
 
 /**
  * The two K-weighting stages for a sample rate, as { b: [b0, b1, b2], a: [a1,
@@ -1039,25 +1042,30 @@ function measureLoudness(buffer) {
 
 /**
  * The gain in dB that brings a soundtrack measured as `measured`, by
- * measureLoudness, to LOUDNESS: to -14 LUFS, or to -1 dBTP where its peaks come
- * first. A soundtrack with no block above the -70 LUFS gate keeps its level.
+ * measureLoudness, to LOUDNESS: to -14 LUFS, or where its peaks come first to
+ * the ceiling of `codec`, the sample entry it is encoded in: -1 dBTP for
+ * 'mp4a', AAC, and -1.2 dBTP for 'Opus'. A soundtrack with no block above the
+ * -70 LUFS gate keeps its level.
  */
-function loudnessGain(measured) {
-  return measured.lufs === -Infinity ? 0 : Math.min(LOUDNESS.target - measured.lufs, LOUDNESS.ceiling - measured.dbtp);
+function loudnessGain(measured, codec) {
+  const ceiling = LOUDNESS.ceiling[codec];
+  if (typeof ceiling !== 'number') throw new Error(`film: a soundtrack is levelled for AAC ('mp4a') or 'Opus', not ${JSON.stringify(codec)}`);
+  return measured.lufs === -Infinity ? 0 : Math.min(LOUDNESS.target - measured.lufs, ceiling - measured.dbtp);
 }
 
 const round2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 
 /**
- * Bring a rendered soundtrack to LOUDNESS in place with one static gain, and
- * say what was measured and done: `measured` as rendered, the `gain` in dB,
- * and the `lufs` and `dbtp` it is encoded at, and `short`, how many LU it ends
- * under the target, where that is more than LOUDNESS.short. A soundtrack with no block above
+ * Bring a rendered soundtrack to LOUDNESS in place with one static gain, for
+ * encoding in `codec` as loudnessGain takes it, and say what was measured and
+ * done: `measured` as rendered, the `gain` in dB, and the `lufs` and `dbtp` it
+ * is encoded at, and `short`, how many LU it ends under the target, where that
+ * is more than LOUDNESS.short. A soundtrack with no block above
  * the -70 LUFS gate has no loudness to set and keeps its level, reported as
  * null. A sample that is not a finite number, which no player can play, is
  * refused.
  */
-function normalizeLoudness(buffer) {
+function normalizeLoudness(buffer, codec) {
   // Checked before measuring: an infinite sample becomes NaN in the K-weighting
   // filter, which the -70 LUFS gate drops, so the meter alone would pass it.
   for (let c = 0; c < buffer.numberOfChannels; c++) {
@@ -1066,8 +1074,8 @@ function normalizeLoudness(buffer) {
     }
   }
   const measured = measureLoudness(buffer);
+  const gain = loudnessGain(measured, codec);
   if (measured.lufs === -Infinity) return { measured: { lufs: null, dbtp: round2(measured.dbtp) }, gain: 0, lufs: null, dbtp: round2(measured.dbtp) };
-  const gain = loudnessGain(measured);
   const scale = 10 ** (gain / 20);
   for (let c = 0; c < buffer.numberOfChannels; c++) {
     const x = buffer.getChannelData(c);
@@ -1282,7 +1290,7 @@ async function exportFilm(piece, solved, env, opt = {}) {
   const soundtrack = piece.sound ? (async () => {
     const s0 = now();
     const buffer = await renderSound(piece, solved, { OfflineAudioContext: env.OfflineAudioContext, sampleRate: SOUND.sampleRate, channels: SOUND.channels });
-    const level = normalizeLoudness(buffer);
+    const level = normalizeLoudness(buffer, soundCodec.codec === 'opus' ? 'Opus' : 'mp4a');
     const sound = await encodeSound(env, buffer, soundCodec);
     soundMs = now() - s0;
     return { sound, level };
