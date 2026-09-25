@@ -217,7 +217,31 @@ function inspectPiece(name) {
   check(painted > 0, 'native canvas is fully transparent');
   const recipe = new URLSearchParams(location.search);
   check(recipe.get('piece') === name && Number(recipe.get('seed')) === manifest.seed, 'HTTP recipe URL did not update');
-  return { name, stages, manifest, paintedPixels: painted, pixels: canvas.width * canvas.height };
+  const out = { name, stages, manifest, paintedPixels: painted, pixels: canvas.width * canvas.height };
+  if (p.boxes) {
+    // A piece that declares boxes is rebuilt at a narrower one: the page's
+    // canvas, its recipe and its address bar all take the box, and it draws.
+    const box = { w: Math.round((p.boxes.w[0] + p.size.w) / 2), h: p.size.h };
+    api.setBox(box.w, box.h);
+    const at = api.manifest(), shown = document.getElementById('c');
+    check(JSON.stringify(api.read().size) === JSON.stringify(box) && JSON.stringify(at.size) === JSON.stringify(box),
+      'the recipe does not name the box the page was set to');
+    check(shown.width === box.w && shown.height === box.h, 'the canvas did not take the box');
+    check(new URLSearchParams(location.search).get('box') === box.w + 'x' + box.h, 'the recipe URL does not name the box');
+    const q = api.piece.atBox(p, box), again = api.piece.solve(q, at.seed, at.params);
+    check(!again.stages.error, 'the build failed at the box');
+    const boxed = document.createElement('canvas');
+    boxed.width = box.w; boxed.height = box.h;
+    const bg = boxed.getContext('2d', { willReadFrequently: true });
+    api.render.drawFrame(bg, q, again, at.t);
+    const bp = bg.getImageData(0, 0, box.w, box.h).data;
+    let boxPainted = 0;
+    for (let i = 3; i < bp.length; i += 4) if (bp[i]) boxPainted++;
+    check(boxPainted > 0, 'native canvas at the box is fully transparent');
+    api.setBox(p.size.w, p.size.h);
+    out.box = { size: box, paintedPixels: boxPainted, pixels: box.w * box.h };
+  }
+  return out;
 }
 
 // Serialized into the page. What filmsToExport needs of each registered example.

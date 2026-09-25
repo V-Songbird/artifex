@@ -1462,6 +1462,41 @@ test('cues: each note sounds on the frame that first shows its part turning', as
   }
 });
 
+test('refit: a narrower box holds fewer of the same things, each inside it and clear of the rest', () => {
+  const { atBox } = require('../core/piece.js');
+  const p = validate(EXAMPLES.refit);
+  assert.ok(p.boxes, 'refit declares the boxes it accepts');
+  const piles = [1280, 960, 720, 405].map((w) => solve(atBox(p, { w, h: 720 }), p.seed).state);
+  const counts = piles.map((s) => s.things.length);
+  for (let k = 1; k < counts.length; k++) assert.ok(counts[k] < counts[k - 1], `holds ${counts.join(', ')} as the box narrows`);
+
+  // Thing i is thing i at every box: only where it rests may differ.
+  const wide = new Map(piles[0].things.map((th) => [th.i, th]));
+  for (const th of piles[3].things) {
+    const same = wide.get(th.i);
+    if (same) for (const k of ['r', 'kind', 'fill', 'turn']) assert.equal(th[k], same[k], `thing ${th.i}.${k}`);
+  }
+  assert.ok(piles[3].things.filter((th) => wide.has(th.i)).length > piles[3].things.length * 0.8, 'the narrow pile is mostly the wide one\'s things');
+
+  for (const s of piles) {
+    const c = s.container;
+    for (const [n, a] of s.things.entries()) {
+      assert.ok(a.x - a.r >= c.x0 - 1e-9 && a.x + a.r <= c.x1 + 1e-9, `thing ${a.i} crosses a wall at ${s.box.w} wide`);
+      assert.ok(a.y - a.r >= c.rim && a.y + a.r <= c.floor + 1e-9, `thing ${a.i} is above the rim or below the floor`);
+      for (const b of s.things.slice(n + 1)) {
+        assert.ok(Math.hypot(a.x - b.x, a.y - b.y) >= a.r + b.r - 1e-6, `things ${a.i} and ${b.i} overlap at ${s.box.w} wide`);
+      }
+    }
+  }
+});
+
+test('refit: an SVG drawn at another box is that box, and its recipe names it', () => {
+  const { atBox } = require('../core/piece.js');
+  const out = renderVector(atBox(validate(EXAMPLES.refit), { w: 405, h: 720 }), { t: 1 });
+  assert.match(out.svg, /^<svg xmlns="[^"]+" width="405" height="720" viewBox="0 0 405 720"/);
+  assert.deepEqual(out.manifest.size, { w: 405, h: 720 });
+});
+
 test('contours: chaining collapses the segments into few pen-down paths', () => {
   // A plotter lifts between paths, and lifting is the slow, ugly part. Stated
   // as a RATIO the piece publishes, so it is measured rather than assumed.

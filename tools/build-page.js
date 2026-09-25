@@ -599,6 +599,11 @@ function html(bundle, options = {}) {
              margin: 0 0 3px 1px; }
   .note { color: var(--dim); font-size: 10px; line-height: 1.5; margin-top: 8px; }
   .err { color: #e8705a; white-space: pre-wrap; line-height: 1.5; font-size: 11px; }
+  a { color: var(--accent); }
+  /* The live player: the piece alone, at the size of whatever frame holds the page. */
+  body.player aside { display: none; }
+  body.player main { position: fixed; inset: 0; padding: 0; }
+  body.player canvas { max-width: none; max-height: none; box-shadow: none; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -621,11 +626,18 @@ function html(bundle, options = {}) {
         <span id="tread" class="facts"></span>
       </div>
       <input type="range" id="t" min="0" max="1000" value="0">
+      <div class="note"><a id="playerLink" href="?player=1">Open in the live player</a>: the piece alone, fitted to the window.</div>
     </div>
 
     <div class="group" id="paramsGroup" hidden>
       <div class="label">Declared parameters</div>
       <div id="params"></div>
+    </div>
+
+    <div class="group" id="boxGroup" hidden>
+      <div class="label">Box</div>
+      <div id="boxes"></div>
+      <div class="note">This piece recomposes to its box. Exports draw at it and their recipes record it.</div>
     </div>
 
     <div class="group" id="previewGroup" hidden>
@@ -687,7 +699,11 @@ var film = __req('core/film.js');
 var EXAMPLES = __req('examples/index.js');
 
 var names = Object.keys(EXAMPLES);
-var current = null, currentName = null, solved = null, t = 0, playing = false, overrides = {}, raf = 0, videoBusy = false, filmBusy = false;
+// base is the piece as declared; current is base at the box chosen for it.
+var base = null, current = null, currentName = null, solved = null, t = 0, playing = false, overrides = {}, raf = 0, videoBusy = false, filmBusy = false;
+// The live player shows the piece alone, fitted to the window, and a piece that
+// declares boxes takes the window's box. view is device pixels per design unit.
+var player = /(^|[?&])player=1(&|$)/.test(String(location.search || '')), view = 1;
 var filmButtons = [document.getElementById('film1'), document.getElementById('film2')];
 var c = document.getElementById('c'), ctx = c.getContext('2d');
 var facts = document.getElementById('facts'), err = document.getElementById('err');
@@ -766,13 +782,13 @@ function select(name) {
   // The piece is never decorated. playheads() validates whatever it is handed
   // and a stowaway key is refused BY NAME -- which is the contract working, so
   // the name lives beside the piece rather than on it.
-  current = piece.validate(EXAMPLES[name]);
+  base = current = piece.validate(EXAMPLES[name]);
   currentName = name;
   document.getElementById('previewGroup').hidden = !current.preview;
   overrides = {};
   document.getElementById('seed').value = current.seed;
-  c.width = current.size.w;
-  c.height = current.size.h;
+  sizeCanvas();
+  buildBox();
   t = current.time ? 0 : 0;
   document.getElementById('t').value = 0;
   document.getElementById('t').disabled = !current.time;
@@ -895,6 +911,75 @@ function buildParams() {
   });
 }
 
+// THE BOX. A piece that declares boxes is drawn at the one chosen for it, and
+// solved again for it, so it recomposes rather than stretches. Exports read
+// current.size, so they draw at the chosen box and their recipes record it.
+function sizeCanvas() {
+  view = 1;
+  if (player) {
+    // One design unit is one CSS pixel while the box fits the window; a box
+    // that cannot, such as a fixed piece's, is fitted whole. The backing store
+    // has the device's pixels, so the player is sharp at any zoom.
+    var fit = Math.min(window.innerWidth / current.size.w, window.innerHeight / current.size.h);
+    view = fit * (window.devicePixelRatio || 1);
+    c.style.width = current.size.w * fit + 'px';
+    c.style.height = current.size.h * fit + 'px';
+  }
+  c.width = Math.round(current.size.w * view);
+  c.height = Math.round(current.size.h * view);
+}
+
+function setBox(w, h) {
+  // atBox refuses a box outside the declared ranges by name, and leaves the
+  // piece as it was.
+  current = piece.atBox(base, { w: w, h: h });
+  sizeCanvas();
+  offerFilm();
+  resolve();
+}
+
+function buildBox() {
+  var host = document.getElementById('boxes');
+  document.getElementById('boxGroup').hidden = !base.boxes;
+  host.innerHTML = '';
+  if (!base.boxes) return;
+  [['w', 'width'], ['h', 'height']].forEach(function (axis) {
+    var k = axis[0];
+    var lab = document.createElement('div');
+    lab.className = 'facts';
+    lab.textContent = axis[1] + ' ';
+    var val = document.createElement('b');
+    val.textContent = current.size[k];
+    lab.appendChild(val);
+    var r = document.createElement('input');
+    r.type = 'range';
+    r.min = base.boxes[k][0]; r.max = base.boxes[k][1];
+    r.step = 1;
+    r.value = current.size[k];
+    r.setAttribute('aria-label', 'box ' + axis[1]);
+    r.oninput = function () {
+      val.textContent = r.value;
+      var box = { w: current.size.w, h: current.size.h };
+      box[k] = Number(r.value);
+      setBox(box.w, box.h);
+    };
+    host.appendChild(lab);
+    host.appendChild(r);
+  });
+}
+
+// The player's box is the window's, held inside the declared ranges.
+function fitPlayer() {
+  if (!current) return;
+  if (base.boxes) {
+    var clampTo = function (v, range) { return Math.min(range[1], Math.max(range[0], Math.round(v))); };
+    var w = clampTo(window.innerWidth, base.boxes.w), h = clampTo(window.innerHeight, base.boxes.h);
+    if (w !== current.size.w || h !== current.size.h) return setBox(w, h);
+  }
+  sizeCanvas();
+  frame();
+}
+
 function buildControls(ready) {
   document.getElementById('previewMode').disabled = !ready;
   document.getElementById('play').disabled = !ready || !current.time;
@@ -990,7 +1075,7 @@ function frame() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, c.width, c.height);
   var qt;
-  try { qt = render.drawFrame(ctx, current, solved, t); }
+  try { qt = render.drawFrame(ctx, current, solved, t, { scale: view }); }
   catch (e) { err.textContent = String(e.message); stop(); return; }
   var ms = performance.now() - t0;
   previewInfo.presented = { seed: solved.seed, t: qt, params: Object.assign({}, solved.state.params) };
@@ -1094,6 +1179,9 @@ function toUrl() {
   Object.keys(overrides).forEach(function (k) {
     q.push('p.' + encodeURIComponent(k) + '=' + encodeURIComponent(overrides[k]));
   });
+  if (base.boxes) q.push('box=' + current.size.w + 'x' + current.size.h);
+  document.getElementById('playerLink').href = '?' + q.concat('player=1').join('&');
+  if (player) q.push('player=1');
   // Sandboxed documents and data URLs can refuse address-bar updates. The
   // recipe is optional persistence; a refusal must not interrupt the controls.
   try { history.replaceState(null, '', '?' + q.join('&')); }
@@ -1112,7 +1200,7 @@ function fromUrl() {
   // bundle resolved perfectly.
   var q = String(location.search || '').replace(/^\\?/, '');
   if (!q) return null;
-  var out = { piece: null, seed: null, t: null, params: {} };
+  var out = { piece: null, seed: null, t: null, params: {}, box: null };
   q.split('&').forEach(function (kv) {
     var i = kv.indexOf('=');
     if (i < 0) return;
@@ -1122,6 +1210,7 @@ function fromUrl() {
     else if (k === 'seed' && /^[0-9]+$/.test(v)) out.seed = Number(v);
     else if (k === 't' && isFinite(Number(v))) out.t = Math.min(1, Math.max(0, Number(v)));
     else if (k.indexOf('p.') === 0 && isFinite(Number(v))) out.params[k.slice(2)] = Number(v);
+    else if (k === 'box' && /^[0-9.]+x[0-9.]+$/.test(v)) out.box = { w: Number(v.split('x')[0]), h: Number(v.split('x')[1]) };
   });
   return out.piece ? out : null;
 }
@@ -1469,11 +1558,13 @@ window.__artifex = {
   filmOffer: function () { return filmOffer.then(function (choice) { return { format: choice.format, reason: choice.reason }; }); },
   examples: EXAMPLES,
   setSeed: function (s) { document.getElementById('seed').value = s; resolve(); },
+  // Draw the selected piece at another box it declares; throws by name otherwise.
+  setBox: function (w, h) { setBox(w, h); buildBox(); },
   setT: function (v) { stop(); t = v; document.getElementById('t').value = v * 1000; frame(); },
   read: function () {
     return {
       name: currentName, seed: solved && solved.seed, t: t,
-      outputs: current.outputs, size: current.size,
+      outputs: current.outputs, size: current.size, boxes: current.boxes, player: player, view: view,
       frames: render.playheads(current).length,
       error: err.textContent || null,
       preview: previewInfo,
@@ -1520,10 +1611,41 @@ if (from && EXAMPLES[from.piece]) {
     var d = current.params[k];
     if (d && from.params[k] >= d.min && from.params[k] <= d.max) overrides[k] = from.params[k];
   });
+  // A box this piece does not accept is left out, as a stale parameter is.
+  if (from.box) {
+    try { current = piece.atBox(base, from.box); } catch (e) { /* the declared box stands */ }
+    sizeCanvas();
+    offerFilm();
+    buildBox();
+  }
   buildParams();
   resolve();
 } else {
   select(names[0]);
+}
+
+if (player) {
+  document.body.classList.add('player');
+  c.tabIndex = 0;
+  c.setAttribute('role', 'button');
+  c.setAttribute('aria-label', currentName + ': play or pause');
+  var toggle = function () { var b = document.getElementById('play'); b.onclick.call(b); };
+  c.onclick = toggle;
+  c.onkeydown = function (e) { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(); } };
+  // Debounced: a rebuild waits until the window has kept its size for 100 ms,
+  // so a drag rebuilds once rather than on every event, and it then runs at the
+  // start of an animation frame, never in the middle of drawing one.
+  var fitting = 0, settling = 0;
+  window.addEventListener('resize', function () {
+    clearTimeout(settling);
+    settling = setTimeout(function () {
+      if (!fitting) fitting = requestAnimationFrame(function () { fitting = 0; fitPlayer(); });
+    }, 100);
+  });
+  fitPlayer();
+  // A browser starts sound only inside a gesture, so a piece with a soundtrack
+  // waits for the first click; a silent one plays at once.
+  if (current.time && !current.sound) toggle();
 }
 })();
 </script>

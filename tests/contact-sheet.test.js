@@ -16,7 +16,7 @@ const stateDigest = (state) => createHash('sha256').update(JSON.stringify(state)
 
 test('contact sheet: seed-only arguments and seeds retain their existing meaning', () => {
   assert.deepEqual(parseArgs(['drift', '16', '0.5']), {
-    names: ['drift'], count: 16, at: 0.5, paramNames: [], png: false,
+    names: ['drift'], count: 16, at: 0.5, paramNames: [], png: false, box: null,
   });
   assert.equal(parseArgs([]).count, 9);
   assert.equal(parseArgs([]).names.length, Object.keys(EXAMPLES).length);
@@ -27,10 +27,10 @@ test('contact sheet: seed-only arguments and seeds retain their existing meaning
 
 test('contact sheet: parameter arguments support strips and grids without consuming positional inputs', () => {
   assert.deepEqual(parseArgs(['drift', '--param', 'reach,turn']), {
-    names: ['drift'], count: 3, at: 1, paramNames: ['reach', 'turn'], png: false,
+    names: ['drift'], count: 3, at: 1, paramNames: ['reach', 'turn'], png: false, box: null,
   });
   assert.deepEqual(parseArgs(['--param=reach', 'drift', '5', '0.5']), {
-    names: ['drift'], count: 5, at: 0.5, paramNames: ['reach'], png: false,
+    names: ['drift'], count: 5, at: 0.5, paramNames: ['reach'], png: false, box: null,
   });
   for (const args of [
     ['--param', 'reach'], ['drift', '--param'], ['drift', '--param='],
@@ -142,4 +142,21 @@ test('contact sheet: --png names the image beside the sheet, sizes it and counts
   assert.equal(sheetWidth(9, ['reach']), 48 + 9 * 220 + 8 * 14, 'a wide sweep keeps every column in the image');
   assert.deepEqual(sheetPlans(['drift'], 3, ['reach', 'turn']).map((plan) => plan.length), [9]);
   assert.deepEqual(sheetPlans(['drift', 'readout'], 4).map((plan) => plan.length), [4, 4]);
+});
+
+test('contact sheet: --box draws one piece at a box it declares, names the sheet after it, and refuses any other', () => {
+  assert.deepEqual(parseArgs(['refit', '9', '1', '--box', '405x720']).box, { w: 405, h: 720 });
+  assert.deepEqual({ ...parseArgs(['refit', '--box', '405x720']), box: null }, parseArgs(['refit']), 'it changes nothing else');
+  for (const args of [['--box', '405x720'], ['refit', '--box'], ['refit', '--box', '405'], ['refit', '--box', '405x-7'],
+    ['refit', '--box', '405x720', '--box', '720x720']]) {
+    assert.throws(() => parseArgs(args), /seeds/, args.join(' '));
+  }
+  const out = path.join(__dirname, '..', 'out');
+  assert.equal(sheetStem(['refit'], [], null, { w: 405, h: 720 }), path.join(out, 'refit-seeds-405x720'));
+  assert.equal(sheetStem(['refit'], ['grain'], null, { w: 405, h: 720 }), path.join(out, 'refit-param-grain-405x720'));
+  assert.throws(() => sheetPlans(['refit'], 3, [], null, { w: 100, h: 720 }), /refit cannot draw at 100 x 720/);
+  assert.throws(() => sheetPlans(['drift'], 3, [], null, { w: 405, h: 720 }), /drift declares no boxes/);
+  const html = page(['refit'], 2, 1, [], null, { w: 405, h: 720 });
+  assert.match(html, /var BOX = \{"w":405,"h":720\};/);
+  assert.doesNotThrow(() => new vm.Script([...html.matchAll(/<script>([\s\S]*?)<\/script>/g)][0][1]));
 });

@@ -583,7 +583,7 @@ function filmPage(frames = 3, hz = 4) {
   }
   const api = {
     examples: { a: { name: 'a', size: { w: 32, h: 24 }, time: { hz } } },
-    piece: { validate: (p) => p, solve: () => ({}) },
+    piece: { validate: (p) => p, atBox: (p) => p, solve: () => ({}) },
     render: { playheads: () => heads, drawFrame: (g, p, s, t) => { g.canvas.rgb = colour(t); } },
     select() {}, read: () => ({ seed: 1 }),
     filmOffer: async () => ({ format: 'webm', reason: 'h264' }),

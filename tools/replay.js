@@ -19,7 +19,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { validate, VERSION } = require('../core/piece.js');
+const { validate, atBox, VERSION } = require('../core/piece.js');
 const { renderVector, playheads } = require('../core/render.js');
 const { readMp4 } = require('../core/film.js');
 const { svgManifest } = require('../core/surface-vector.js');
@@ -83,6 +83,11 @@ function pieceFor(manifest, modulePath = null, cwd = callerDirectory()) {
   }
   if (piece.name !== manifest.piece) {
     throw new Error(`replay: the file names piece ${JSON.stringify(manifest.piece)} and ${modulePath} is ${JSON.stringify(piece.name)}`);
+  }
+  // A piece that declares boxes is drawn again at the box the file names, if
+  // it still accepts that box; one that does not keeps its size, compared below.
+  if (piece.boxes && manifest.size && typeof manifest.size === 'object') {
+    try { piece = atBox(piece, manifest.size); } catch (e) { throw new Error(`replay: the file was drawn at ${JSON.stringify(manifest.size)} and ${e.message.replace(/^atBox: /, '')}`); }
   }
   if (!same(manifest.size, { w: piece.size.w, h: piece.size.h })) {
     throw new Error(`replay: the file was drawn at ${JSON.stringify(manifest.size)} and ${piece.name} now draws at ${JSON.stringify(piece.size)}`);
@@ -148,7 +153,7 @@ function filmPlan(bytes, manifest, piece) {
 async function compareFilm(bytes, recipe, frames) {
   const api = window.__artifex;
   if (!Object.prototype.hasOwnProperty.call(api.examples, recipe.piece)) throw new Error('replay: the page has no piece named ' + JSON.stringify(recipe.piece));
-  const p = api.piece.validate(api.examples[recipe.piece]);
+  const p = api.piece.atBox(api.piece.validate(api.examples[recipe.piece]), recipe.size);
   const solved = api.piece.solve(p, recipe.seed, recipe.params);
   const heads = api.render.playheads(p);
   const video = document.createElement('video');
@@ -252,7 +257,7 @@ function soundPlan(bytes, piece) {
 async function compareSound(bytes, recipe, block, codec, band, flatness) {
   const api = window.__artifex;
   if (!Object.prototype.hasOwnProperty.call(api.examples, recipe.piece)) throw new Error('replay: the page has no piece named ' + JSON.stringify(recipe.piece));
-  const p = api.piece.validate(api.examples[recipe.piece]);
+  const p = api.piece.atBox(api.piece.validate(api.examples[recipe.piece]), recipe.size);
   const solved = api.piece.solve(p, recipe.seed, recipe.params);
   let decoded;
   try { decoded = await new OfflineAudioContext(2, 1, 48000).decodeAudioData(bytes.slice().buffer); } catch (e) { return { error: String((e && e.message) || e) }; }
@@ -411,7 +416,7 @@ function pngPlan(bytes, manifest, piece) {
 async function comparePng(bytes, recipe, heads, frames) {
   const api = window.__artifex;
   if (!Object.prototype.hasOwnProperty.call(api.examples, recipe.piece)) throw new Error('replay: the page has no piece named ' + JSON.stringify(recipe.piece));
-  const p = api.piece.validate(api.examples[recipe.piece]);
+  const p = api.piece.atBox(api.piece.validate(api.examples[recipe.piece]), recipe.size);
   const solved = api.piece.solve(p, recipe.seed, recipe.params);
   const W = Math.round(p.size.w * recipe.scale), H = Math.round(p.size.h * recipe.scale);
   const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }), { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
@@ -494,7 +499,7 @@ function webmPlan(bytes, manifest, piece) {
 async function compareWebm(bytes, recipe, frames, seeks) {
   const api = window.__artifex;
   if (!Object.prototype.hasOwnProperty.call(api.examples, recipe.piece)) throw new Error('replay: the page has no piece named ' + JSON.stringify(recipe.piece));
-  const p = api.piece.validate(api.examples[recipe.piece]);
+  const p = api.piece.atBox(api.piece.validate(api.examples[recipe.piece]), recipe.size);
   const solved = api.piece.solve(p, recipe.seed, recipe.params);
   const heads = api.render.playheads(p);
   const video = document.createElement('video');

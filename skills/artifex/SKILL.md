@@ -194,6 +194,9 @@ declared `width` parameter and writes `my-piece-param-width.html` with a fixed
 seed. Use the piece's actual parameter name, or two names separated by a comma.
 In PowerShell, use `npm.cmd` to preserve the `--` separator when forwarding
 options such as `--param`.
+For a piece that declares `boxes`, add `--box 405x720` to draw every cell at that
+box; the file name gains the box (`my-piece-seeds-405x720.html`). Make one sheet
+per box you care about, such as 16:9, 1:1 and 9:16, and look at each.
 Literal `require(...)` imports of browser-compatible CommonJS helpers and JSON
 are bundled recursively. Node builtins, ESM and computed requires are unsupported.
 Use unshadowed direct calls outside template interpolation; this is a restricted
@@ -253,6 +256,7 @@ the notes at the top of each say what it is in the set to prove.
 | `cover.js` | a front cover — the type is set first, the picture grows around it | a still | raster + vector |
 | `settle.js` | forces finding their own arrangement — state that evolves, still scrubbable; its sound follows that state on every frame | 144 frames | raster + vector + sound |
 | `pixel-field.js` | seeded pixel noise, domain warp and advection; explicit optional WGSL preview | 240 frames | **raster only** |
+| `refit.js` | responsive — a container whose contents refit to the box it is drawn at: a narrower box holds fewer of the same things | 240 frames | raster + vector, **boxes** |
 
 Subject-specific algorithms stay with their examples; core helpers must remain
 useful across subjects. Marching squares and flow walks live in `core/field.js`,
@@ -286,14 +290,14 @@ textured cubes as voxels, dense bright fills on a dark ground as embroidery.
 validator and field documentation when changing a piece or the contract.
 
 Required: `name`, `size`, `draw`.
-Optional: `state`, `build`, `seed`, `time`, `outputs`, `params`, `sound`, `preview`.
+Optional: `state`, `build`, `seed`, `time`, `outputs`, `params`, `sound`, `preview`, `boxes`.
 **Unknown keys are refused by name.** This catches misspelled or unsupported
 contract fields.
 
 ```js
 {
   name: 'kebab-case',
-  size: { w, h },                 // the DESIGN BOX. It never changes.
+  size: { w, h },                 // the DESIGN BOX. It never changes unless `boxes` says so.
   state: () => ({}),              // a fresh object per solve
   build: [['stage name', fn]],    // pure in seed, data and params; named for errors
   draw(surface, state, t, clock), // pure in (state, t). t is NORMALISED, [0,1]
@@ -303,6 +307,7 @@ contract fields.
   params: {},                     // declared knobs, each of which must move the output
   sound: null,                    // or sound(ctx, state, timeline); needs a timeline
   preview: null,                  // optional explicit webgpu-pixels descriptor
+  boxes: null,                    // or { w: [min, max], h: [min, max] }: it recomposes to its box
 }
 ```
 
@@ -370,9 +375,24 @@ not loop has n frames at `i/(n-1)` and its last frame is the completed one, so a
 reveal finishes. A one-frame timeline has the single playhead 0. Use the shared
 frame helpers for drawing and export so they agree on the frame grid.
 
-The **design box never changes**. Aspect ratio, device scale and output medium
-are render-time choices — that is the whole reason one piece serves four
-outputs.
+The **design box never changes** unless the piece declares `boxes`. Aspect
+ratio, device scale and output medium are render-time choices — that is the
+whole reason one piece serves four outputs.
+
+**A piece that should recompose to its box declares `boxes`**: the ranges of
+width and height, in design units, it can lay itself out in. `size` must lie
+in them and is the box used when nobody chooses one. `atBox(piece, { w, h })`
+returns the piece at another box, refusing one outside the ranges by name.
+Build stages and `draw` read the box they were solved for from `state.box`,
+and decide the composition from it: keep marks at their size in design units
+and change how many fit, rather than scaling everything. Address each element
+by its index, so the same elements appear at every box and only their
+arrangement changes. The recipe records the box as `size`, and replay draws the
+file again at it. `examples/refit.js` shows the whole pattern. The page shows
+width and height sliders for such a piece; its **live player**
+(`index.html?player=1`, linked beside the playhead) shows the piece alone,
+takes the window's box and recomposes as the window changes, without stopping.
+A film is drawn at one box: its frame size cannot change while it plays.
 
 For a costly opaque per-pixel field, an author may add
 `preview: { kind: 'webgpu-pixels', wgsl, uniforms }` to a raster-only piece.

@@ -29,7 +29,7 @@ function openPage(replaceState, search = '', registry = null) {
     }),
   });
   return {
-    api: page.api, elements: page.elements, downloads: page.downloads, png: page.png,
+    api: page.api, elements: page.elements, downloads: page.downloads, png: page.png, blobs: page.blobs,
     advance(ms) {
       now += ms;
       page.frame(now);
@@ -136,4 +136,47 @@ test('fractional parameter defaults and URL overrides agree with range controls 
     assert.equal(Number(label.textContent), expected);
     assert.equal(api.manifest().params.warp, expected);
   }
+});
+
+test('a piece that declares boxes opens at the address bar\'s box, rebuilds from its sliders and records the box', async () => {
+  function registry(module) {
+    module.exports = {
+      boxed: {
+        name: 'boxed', size: { w: 100, h: 50 }, boxes: { w: [40, 200], h: [20, 100] }, outputs: ['raster', 'vector'],
+        build: [['lay out', (s) => { s.cols = Math.floor(s.box.w / 10); }]],
+        draw(g, s) { for (let i = 0; i < s.cols; i++) g.fillRect(i * 10, 0, 8, 8); },
+      },
+      fixed: { name: 'fixed', size: { w: 10, h: 10 }, draw(g) { g.fillRect(0, 0, 1, 1); } },
+    };
+  }
+  const urls = [];
+  const { api, elements, png, blobs } = openPage((_state, _unused, url) => urls.push(url), '?piece=boxed&box=60x40', registry);
+  assert.deepEqual({ ...api.read().size }, { w: 60, h: 40 });
+  assert.deepEqual({ ...api.manifest().size }, { w: 60, h: 40 });
+  assert.equal(elements.get('c').width, 60);
+  assert.equal(elements.get('boxGroup').hidden, false);
+  const [width, height] = elements.get('boxes').children.filter((child) => child.tag === 'input');
+  assert.deepEqual([width.min, width.max, Number(width.value), height.min, height.max, Number(height.value)], [40, 200, 60, 20, 100, 40]);
+  width.value = 150;
+  width.oninput();
+  assert.deepEqual({ ...api.manifest().size }, { w: 150, h: 40 });
+  assert.equal(elements.get('c').width, 150);
+  assert.match(urls.at(-1), /&box=150x40$/);
+  assert.throws(() => api.setBox(300, 40), /boxed cannot draw at 300 x 40/);
+  assert.deepEqual({ ...api.read().size }, { w: 150, h: 40 }, 'a refused box leaves the piece where it was');
+  // The page's own exports carry the box their recipe records.
+  png.onclick();
+  await new Promise(setImmediate);
+  elements.get('svg').onclick();
+  const { pngManifest } = require('../tools/build-page.js');
+  const { svgManifest } = require('../core/surface-vector.js');
+  assert.deepEqual(pngManifest(new Uint8Array(await blobs.at(-2).arrayBuffer())).size, { w: 150, h: 40 });
+  const svg = await blobs.at(-1).text();
+  assert.match(svg, /width="150" height="40"/);
+  assert.deepEqual(svgManifest(svg).size, { w: 150, h: 40 });
+  // A box the piece does not accept is left out of a link, as a stale parameter is.
+  assert.deepEqual({ ...openPage(() => {}, '?piece=boxed&box=999x40', registry).api.read().size }, { w: 100, h: 50 });
+  api.select('fixed');
+  assert.equal(elements.get('boxGroup').hidden, true);
+  assert.doesNotMatch(urls.at(-1), /box=/);
 });
