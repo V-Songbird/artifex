@@ -6,10 +6,10 @@
 // Every shot is an ordinary piece, loaded through the external-piece loader as
 // one list, so a module two shots share is defined once, in shared.js, and
 // each shot's own modules go in its own script, which the stage loads as the
-// visitor nears the shot. core.js is bundle(): the module runtime and the
-// library. data.js is the shot data the stage reads, a same-origin script
-// rather than text in the page. Nothing under a private directory is bundled or
-// copied.
+// visitor nears the shot. core.js is bundle(): the module runtime, the library
+// modules the shots and the stage require, and a registry of the shots.
+// data.js is the shot data the stage reads, a same-origin script rather than
+// text in the page. Nothing under a private directory is bundled or copied.
 //
 // `npm run site -- --serve` also serves out/site/ on loopback until stopped.
 
@@ -17,7 +17,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 const zlib = require('node:zlib');
-const { bundle } = require('./build-page.js');
+const { bundle, reach } = require('./build-page.js');
 const { loadExternal } = require('./piece-input.js');
 const { shots: cut } = require('../core/time.js');
 
@@ -141,8 +141,11 @@ function build({ shots = path.join(SITE, 'shots.js'), site = SITE, out = OUT } =
   files.set('index.html', template.replace('<!-- shots -->', () => sections(list))
     .replace('<!-- data -->', () => '<script src="data.js"></script>'));
   files.set('data.js', 'window.__siteData = ' + JSON.stringify(data) + ';\n');
-  files.set('core.js', parses('core.js', bundle()));
-  for (const name of ['stage.js', 'worker.js']) files.set(name, parses(name, read(name)));
+  // core.js holds the library modules the shots, the stage and the worker require, and what those reach.
+  const runtime = ['stage.js', 'worker.js'].map((name) => [name, read(name)]);
+  const needs = external.library.concat(runtime.flatMap(([, text]) => [...text.matchAll(/\breq\('([^']+)'\)/g)].map((m) => m[1])));
+  files.set('core.js', parses('core.js', bundle({ source: external.registry }, reach(needs))));
+  for (const [name, text] of runtime) files.set(name, parses(name, text));
   files.set('site.css', read('site.css'));
 
   fs.rmSync(out, { recursive: true, force: true });

@@ -47,6 +47,20 @@ const MODULES = modules();
  */
 function checkResolvable(ids) {
   const have = new Set(ids);
+  const bad = [];
+  for (const id of ids) {
+    if (!MODULES.includes(id)) { bad.push(id + ' is asked for, but it is not a module in core/ or examples/'); continue; }
+    for (const [spec, target] of requires(id)) {
+      if (!have.has(target)) bad.push(id + ' requires ' + spec + ' -> ' + target + ', which is not bundled');
+    }
+  }
+  if (bad.length) {
+    throw new Error('build: this page would throw on load and render nothing.\n  ' + bad.join('\n  '));
+  }
+}
+
+/** Each require in a library module, as [spec, id], resolved as the page's own __resolve does. */
+function requires(id) {
   const resolve = (from, spec) => {
     if (spec[0] !== '.') return spec;
     const base = from.split('/').slice(0, -1);
@@ -57,18 +71,24 @@ function checkResolvable(ids) {
     }
     return base.join('/');
   };
-  const bad = [];
-  for (const id of ids) {
-    const src = fs.readFileSync(path.join(ROOT, id), 'utf8');
-    for (const m of src.matchAll(/require\('([^']+)'\)/g)) {
-      if (m[1].startsWith('node:')) continue;
-      const target = resolve(id, m[1]);
-      if (!have.has(target)) bad.push(id + ' requires ' + m[1] + ' -> ' + target + ', which is not bundled');
-    }
-  }
-  if (bad.length) {
-    throw new Error('build: this page would throw on load and render nothing.\n  ' + bad.join('\n  '));
-  }
+  const src = fs.readFileSync(path.join(ROOT, id), 'utf8');
+  return [...src.matchAll(/require\('([^']+)'\)/g)].filter((m) => !m[1].startsWith('node:')).map((m) => [m[1], resolve(id, m[1])]);
+}
+
+/**
+ * The library modules `ids` reach, themselves included, in bundle order: what
+ * a bundle needs for a caller that requires only those. An id outside the
+ * library is left in, so checkResolvable names it rather than this dropping it.
+ */
+function reach(ids) {
+  const found = new Set();
+  const visit = (id) => {
+    if (found.has(id)) return;
+    found.add(id);
+    if (MODULES.includes(id)) for (const [, target] of requires(id)) visit(target);
+  };
+  ids.forEach(visit);
+  return MODULES.filter((id) => found.has(id)).concat([...found].filter((id) => !MODULES.includes(id)));
 }
 
 function wrap(rel) {
@@ -1702,10 +1722,14 @@ function main() {
 // check the delivery tool has would itself be unchecked.
 if (require.main === module) main();
 
-/** The module runtime plus every bundled module, for any page that wants them. */
-function bundle(external = null) {
-  checkResolvable(MODULES);
-  return [RUNTIME].concat(MODULES.map(wrap), external ? [external.source] : []).join(String.fromCharCode(10));
+/**
+ * The module runtime plus the library modules `ids`, every one by default, for
+ * any page that wants them. A list that leaves out a module one of its own
+ * requires is refused by name here, before anything is written.
+ */
+function bundle(external = null, ids = MODULES) {
+  checkResolvable(ids);
+  return [RUNTIME].concat(ids.map(wrap), external ? [external.source] : []).join(String.fromCharCode(10));
 }
 
-module.exports = { modules, checkResolvable, checkParses, bundle, html, ebmlHead, ebmlResize, webmBlockTimes, webmWithDuration, webmWithManifest, webmManifest, pngWithManifest, pngManifest, filmNote, filmVerdict, MODULES };
+module.exports = { modules, checkResolvable, reach, checkParses, bundle, html, ebmlHead, ebmlResize, webmBlockTimes, webmWithDuration, webmWithManifest, webmManifest, pngWithManifest, pngManifest, filmNote, filmVerdict, MODULES };

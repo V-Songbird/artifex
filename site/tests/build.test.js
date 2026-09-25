@@ -63,6 +63,11 @@ test('site: the real shot list builds, one script per shot, every module defined
     const name = vm.runInContext('(() => { const r = __require("test"); return r("core/piece.js").validate(r(' + JSON.stringify(s.id) + ')).name; })()', context);
     assert.equal(name, 'site-' + s.name);
   }
+  // core.js holds library modules and a registry of the shots, and no example.
+  const core = fs.readFileSync(path.join(out, 'core.js'), 'utf8');
+  const bundled = [...core.matchAll(/^__def\(["']([^"']+)["']/gm)].map((m) => m[1]);
+  assert.deepEqual(bundled.filter((id) => !id.startsWith('core/')), ['examples/index.js'], 'core.js holds no example');
+  for (const s of data.shots) assert.ok(core.includes('module.exports["site-' + s.name + '"] = require(' + JSON.stringify(s.id) + ');'), s.name + ' is in the registry');
   const html = fs.readFileSync(path.join(out, 'index.html'), 'utf8');
   assert.match(html, /<section class="shot seam" id="shot-grid" data-shot="8" aria-hidden="true">/);
   assert.equal((html.match(/<figure class="still"/g) || []).length, 5, 'a still for each shot, none for the seam');
@@ -90,6 +95,22 @@ test('site: modules two shots share go in shared.js; a module one shot needs sta
   assert.doesNotMatch(text('shared.js'), /module\.exports = 2;/);
   assert.match(text('shot-one.js'), /module\.exports = 2;/);
   assert.match(text('index.html'), /<p>a &lt; b &amp; &quot;c&quot;<\/p>/);
+});
+
+test('site: core.js holds the library modules the shots and the stage require; a require it cannot see fails by name', (t) => {
+  const lib = (name) => JSON.stringify(path.join(SITE, '..', 'core', name).replace(/\\/g, '/'));
+  const core = (files) => {
+    const { dir, run } = fixture(t, [{ name: 'a', piece: './a.cjs' }], files);
+    run();
+    return [...fs.readFileSync(path.join(dir, 'out', 'core.js'), 'utf8').matchAll(/^__def\("([^"]+)"/gm)].map((m) => m[1]);
+  };
+  const plain = core({ 'a.cjs': piece('a') });
+  for (const id of ['core/piece.js', 'core/render.js', 'core/time.js']) assert.ok(plain.includes(id), 'the stage requires ' + id);
+  assert.ok(!plain.includes('core/sound.js'), 'a module nothing requires is left out');
+  const sound = core({ 'a.cjs': piece('a', "require('./helper.js');"), 'helper.js': 'module.exports = require(' + lib('sound.js') + ');' });
+  assert.ok(sound.includes('core/sound.js'), 'a module a shot requires through a helper is in');
+  assert.throws(fixture(t, [{ name: 'a', piece: './a.cjs' }], { 'a.cjs': piece('a', "require('../core/' + 'sound.js');") }).run,
+    (e) => /literal module path/.test(e.message) && e.message.includes('a.cjs'));
 });
 
 test('site: the shot list is refused when it cannot play', (t) => {
