@@ -1,7 +1,8 @@
 'use strict';
 
 // npm run site: the shot list, per-shot scripts with shared modules defined
-// once, the private-path refusal and the loopback preview server.
+// once and loaded only by the shots that reach them, the private-path refusal
+// and the loopback preview server.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -10,6 +11,7 @@ const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
 const { build, serveSite } = require('../../tools/build-site.js');
+const { loadExternal } = require('../../tools/piece-input.js');
 
 const SITE = path.resolve(__dirname, '..');
 
@@ -40,25 +42,21 @@ test('site: the real shot list builds, one script per shot, every module defined
   assert.deepEqual(data.shots.map((s) => s.name), ['intro', 'bloom', 'ink', 'crack', 'mirror', 'bend', 'portal', 'trace', 'print', 'cad', 'fold', 'rows', 'grid', 'cells']);
   assert.deepEqual(data.shots.map((s) => s.tier), ['frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'worker']);
   assert.equal(data.frames, 2580);
-  // A module two shots reach is in shared.js, and only there: the paper,
-  // wordmark and water the art shots share, and the placeholders' lattice.
-  const scripts = result.files.filter((f) => /^(shared|shot-.*)\.js$/.test(f));
-  const defined = scripts.flatMap((f) => [...fs.readFileSync(path.join(out, f), 'utf8').matchAll(/^__def\("(external\/\d+\.js)"/gm)].map((m) => m[1]));
+  // Every module is defined once, and a shot's scripts define exactly the modules its piece reaches.
+  const defines = (f) => [...fs.readFileSync(path.join(out, f), 'utf8').matchAll(/^__def\("(external\/\d+\.js)"/gm)].map((m) => m[1]);
+  const defined = result.files.filter((f) => /^(shared-\d+|shot-.*)\.js$/.test(f)).flatMap(defines);
   assert.equal(new Set(defined).size, defined.length, 'a module defined twice: ' + defined);
+  const external = loadExternal(require('../shots.js').shots.map((s) => s.piece), SITE);
+  data.shots.forEach((s, i) => assert.deepEqual(s.scripts.flatMap(defines).sort(), external.pieces[i].modules.slice().sort(), s.name + ' loads what it reaches'));
   assert.ok(data.shots.every((s) => s.scripts[s.scripts.length - 1] === 'shot-' + s.name + '.js'));
-  assert.ok(data.shots.every((s) => s.scripts[0] === 'shared.js'));
-  assert.ok(fs.readFileSync(path.join(out, 'shared.js'), 'utf8').includes('solveLattice'));
-  assert.ok(fs.readFileSync(path.join(out, 'shared.js'), 'utf8').includes('drawWord'));
-  assert.ok(fs.readFileSync(path.join(out, 'shared.js'), 'utf8').includes('drawPlumes'));
-  assert.ok(fs.readFileSync(path.join(out, 'shared.js'), 'utf8').includes('drawStrokes'));
-  assert.ok(fs.readFileSync(path.join(out, 'shared.js'), 'utf8').includes('drawTears'));
-  assert.ok(fs.readFileSync(path.join(out, 'shared.js'), 'utf8').includes('drawReflections'));
-  assert.ok(fs.readFileSync(path.join(out, 'shared.js'), 'utf8').includes('drawRims'));
+  const shared = (name) => data.shots.find((s) => s.name === name).scripts.filter((f) => f.startsWith('shared-')).map((f) => fs.readFileSync(path.join(out, f), 'utf8')).join('\n');
+  // The intro loads the paper and wordmark and nothing it does not draw; the placeholders share the lattice.
+  assert.deepEqual(data.shots[0].scripts, ['shared-1.js', 'shot-intro.js']);
+  assert.ok(shared('intro').includes('drawWord') && !shared('intro').includes('drawPlumes'));
+  assert.ok(shared('rows').includes('solveLattice') && !shared('rows').includes('drawWord'));
+  for (const f of ['drawWord', 'drawPlumes', 'drawStrokes', 'drawTears', 'drawReflections', 'drawRims']) assert.ok(shared('fold').includes(f), 'fold shares ' + f);
   // The portal's page and picture, which the shots after it begin from, and the draftsman's sheet those share.
-  assert.ok(fs.readFileSync(path.join(out, 'shared.js'), 'utf8').includes('drawPage'));
-  assert.ok(fs.readFileSync(path.join(out, 'shared.js'), 'utf8').includes('released'));
-  assert.ok(fs.readFileSync(path.join(out, 'shared.js'), 'utf8').includes('drawSheet'));
-  assert.ok(fs.readFileSync(path.join(out, 'shared.js'), 'utf8').includes('drawPlot'));
+  for (const f of ['drawPage', 'released', 'drawSheet', 'drawPlot']) assert.ok(shared('fold').includes(f), 'fold shares ' + f);
   // A module one shot needs stays in its script: the fold's papercut.
   assert.ok(fs.readFileSync(path.join(out, 'shot-fold.js'), 'utf8').includes('drawCut'));
   for (const name of ['ink', 'mirror', 'cad']) assert.ok(fs.existsSync(path.join(out, 'posters', name + '.webp')), name + ' has its poster');
@@ -83,23 +81,33 @@ test('site: the real shot list builds, one script per shot, every module defined
   assert.ok(result.firstLoad <= 150 * 1024, 'first load ' + result.firstLoad + ' bytes of brotli, over the 150 kB budget');
 });
 
-test('site: modules two shots share go in shared.js; a module one shot needs stays in its script', (t) => {
+test('site: modules the same shots share go in one shared script; a module one shot needs stays in its script', (t) => {
   const { dir, run } = fixture(t, [
     { name: 'one', piece: './one.cjs', text: 'a < b & "c"' },
     { name: 'two', piece: './two.cjs', seam: true },
+    { name: 'three', piece: './three.cjs' },
   ], {
     'common.js': 'module.exports = 1;',
     'only.js': 'module.exports = 2;',
+    'pair.js': 'module.exports = 3;',
     'one.cjs': piece('one', "require('./common.js'); require('./only.js');"),
-    'two.cjs': piece('two', "require('./common.js');"),
+    'two.cjs': piece('two', "require('./common.js'); require('./pair.js');"),
+    'three.cjs': piece('three', "require('./pair.js'); require('./common.js');"),
   });
   const result = run();
   const out = path.join(dir, 'out');
-  assert.deepEqual(result.data.shots.map((s) => s.scripts), [['shared.js', 'shot-one.js'], ['shared.js', 'shot-two.js']]);
+  assert.deepEqual(result.data.shots.map((s) => s.scripts), [
+    ['shared-1.js', 'shot-one.js'], ['shared-1.js', 'shared-2.js', 'shot-two.js'], ['shared-1.js', 'shared-2.js', 'shot-three.js'],
+  ]);
   const text = (f) => fs.readFileSync(path.join(out, f), 'utf8');
-  assert.match(text('shared.js'), /module\.exports = 1;/);
-  assert.doesNotMatch(text('shared.js'), /module\.exports = 2;/);
+  assert.match(text('shared-1.js'), /module\.exports = 1;/);
+  assert.doesNotMatch(text('shared-1.js'), /module\.exports = [23];/);
+  assert.match(text('shared-2.js'), /module\.exports = 3;/);
+  assert.doesNotMatch(text('shared-2.js'), /module\.exports = [12];/);
   assert.match(text('shot-one.js'), /module\.exports = 2;/);
+  // The first load holds the first shot's scripts alone.
+  const sizes = ['index.html', 'data.js', 'site.css', 'core.js', 'stage.js', 'shared-1.js', 'shot-one.js'].map((f) => result.sizes[f]);
+  assert.equal(result.firstLoad, sizes.reduce((a, b) => a + b, 0));
   assert.match(text('index.html'), /<p>a &lt; b &amp; &quot;c&quot;<\/p>/);
 });
 
