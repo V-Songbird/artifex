@@ -211,4 +211,4 @@ function draw(g, s) {
   caption(g, 'VOXEL', font, 'rgba(40, 70, 110, 0.85)');
 }
 
-module.exports = { draw };
+module.exports = { name: 'voxel', size: { w: 1000, h: 1000 }, seed: 2026, draw };

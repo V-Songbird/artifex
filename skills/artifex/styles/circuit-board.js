@@ -637,4 +637,4 @@ function draw(g, s) {
   g.restore();
 }
 
-module.exports = { draw };
+module.exports = { name: 'circuit-board', size: { w: 1000, h: 1000 }, seed: 2026, draw };

@@ -375,4 +375,4 @@ function draw(g, s) {
   caption(g, 'WATERCOLOUR', font, 'rgba(80, 76, 72, 0.75)');
 }
 
-module.exports = { draw };
+module.exports = { name: 'watercolour', size: { w: 1000, h: 1000 }, seed: 2026, draw };

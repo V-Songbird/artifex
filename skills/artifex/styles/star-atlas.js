@@ -329,4 +329,4 @@ function draw(g, s) {
   caption(g, 'STAR ATLAS', font, C.label, 62, 930);
 }
 
-module.exports = { draw };
+module.exports = { name: 'star-atlas', size: { w: 1000, h: 1000 }, seed: 2026, draw };

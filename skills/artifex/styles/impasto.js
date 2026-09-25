@@ -152,4 +152,4 @@ function draw(g, s) {
   caption(g, 'IMPASTO', font, 'rgba(90, 50, 30, 0.8)');
 }
 
-module.exports = { draw };
+module.exports = { name: 'impasto', size: { w: 1000, h: 1000 }, seed: 2026, draw };

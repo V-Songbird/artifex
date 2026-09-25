@@ -247,4 +247,4 @@ function draw(g, s) {
   caption(g, 'STICKER', font, 'rgba(95, 80, 150, 0.9)');
 }
 
-module.exports = { draw };
+module.exports = { name: 'sticker', size: { w: 1000, h: 1000 }, seed: 2026, draw };

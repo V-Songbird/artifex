@@ -1,0 +1,107 @@
+[
+  {
+    "name": "papercraft",
+    "title": "Papercraft",
+    "summary": "Torn and cut paper layers under soft shadows.",
+    "guide": "papercraft.md",
+    "module": "papercraft.js"
+  },
+  {
+    "name": "render-3d",
+    "title": "3D render",
+    "summary": "A lit toy on a pedestal.",
+    "guide": "render-3d.md",
+    "module": "render-3d.js"
+  },
+  {
+    "name": "cad",
+    "title": "CAD drawing",
+    "summary": "A CAD model-space technical drawing.",
+    "guide": "cad.md",
+    "module": "cad.js"
+  },
+  {
+    "name": "pixel-art",
+    "title": "Pixel art",
+    "summary": "A 2D 16-bit scene.",
+    "guide": "pixel-art.md",
+    "module": "pixel-art.js"
+  },
+  {
+    "name": "embroidery",
+    "title": "Embroidery",
+    "summary": "Thread on dark cloth.",
+    "guide": "embroidery.md",
+    "module": "embroidery.js"
+  },
+  {
+    "name": "sticker",
+    "title": "Sticker",
+    "summary": "Die-cut vinyl on a cutting mat.",
+    "guide": "sticker.md",
+    "module": "sticker.js"
+  },
+  {
+    "name": "voxel",
+    "title": "Voxel",
+    "summary": "Minecraft-like blocks.",
+    "guide": "voxel.md",
+    "module": "voxel.js"
+  },
+  {
+    "name": "doodle",
+    "title": "Doodle",
+    "summary": "Ballpoint sketches in a notebook.",
+    "guide": "doodle.md",
+    "module": "doodle.js"
+  },
+  {
+    "name": "kandinsky",
+    "title": "Kandinsky",
+    "summary": "Geometric abstraction.",
+    "guide": "kandinsky.md",
+    "module": "kandinsky.js"
+  },
+  {
+    "name": "impasto",
+    "title": "Impasto",
+    "summary": "Thick painted dabs.",
+    "guide": "impasto.md",
+    "module": "impasto.js"
+  },
+  {
+    "name": "circuit-board",
+    "title": "Circuit board",
+    "summary": "A green printed circuit board from above.",
+    "guide": "circuit-board.md",
+    "module": "circuit-board.js"
+  },
+  {
+    "name": "watercolour",
+    "title": "Watercolour",
+    "summary": "Transparent washes on paper.",
+    "guide": "watercolour.md",
+    "module": "watercolour.js"
+  },
+  {
+    "name": "sumi-e",
+    "title": "Sumi-e",
+    "summary": "Black ink brush painting on rice paper.",
+    "guide": "sumi-e.md",
+    "module": "sumi-e.js"
+  },
+  {
+    "name": "star-atlas",
+    "title": "Star atlas",
+    "summary": "A printed celestial chart.",
+    "guide": "star-atlas.md",
+    "module": "star-atlas.js"
+  },
+  {
+    "name": "light-painting",
+    "title": "Light painting",
+    "summary": "A long exposure of lights moved at night.",
+    "guide": "light-painting.md",
+    "module": "light-painting.js"
+  }
+]

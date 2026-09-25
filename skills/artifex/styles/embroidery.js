@@ -233,4 +233,4 @@ function draw(g, s) {
   caption(g, 'EMBROIDERY', font, 'rgba(240, 240, 255, 0.85)');
 }
 
-module.exports = { draw };
+module.exports = { name: 'embroidery', size: { w: 1000, h: 1000 }, seed: 2026, draw };

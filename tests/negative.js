@@ -2803,6 +2803,111 @@ const MUTATIONS = [
     expect: 'external piece requires artifex/core modules from any folder, as the page resolves them',
   },
   {
+    why: 'npm run styles resolves a relative ARTIFEX_HOME from the library, not from where it was invoked',
+    file: 'tools/piece-input.js',
+    from: "['page', 'seeds', 'replay', 'styles']",
+    to: "['page', 'seeds', 'replay']",
+    expect: 'npm run styles resolves ARTIFEX_HOME from the caller and lists, prints JSON and refuses by exit code',
+  },
+  {
+    why: 'a style pack lists a file outside its folder with ..',
+    file: 'tools/styles.js',
+    from: "  if (parts.includes('..')) return",
+    to: '  if (false) return',
+    expect: 'style.json validation refuses each broken rule by name',
+  },
+  {
+    why: 'a style pack lists a file with a backslash, which names another file on each system',
+    file: 'tools/styles.js',
+    from: "  if (file.includes('\\\\')) return",
+    to: '  if (false) return',
+    expect: 'style.json validation refuses each broken rule by name',
+  },
+  {
+    why: 'style.json accepts keys the format does not define',
+    file: 'tools/styles.js',
+    from: '  for (const key of Object.keys(m)) if (!KEYS.includes(key)) bad(',
+    to: '  for (const key of Object.keys(m)) if (false) bad(',
+    expect: 'style.json validation refuses each broken rule by name',
+  },
+  {
+    why: "a pack's name need not match its folder, so one folder can answer to another name",
+    file: 'tools/styles.js',
+    from: '  if (m.name !== folder) bad(',
+    to: '  if (false) bad(',
+    expect: 'style.json validation refuses each broken rule by name',
+  },
+  {
+    why: 'an installed pack takes a built-in style\'s name',
+    file: 'tools/styles.js',
+    from: '    if (reserved.has(m.name)) {',
+    to: '    if (false) {',
+    expect: 'an installed pack with a built-in name is refused and the built-in style is used',
+  },
+  {
+    why: 'a pack counts as trusted by its name, so a changed pack or a new version needs no new trust',
+    file: 'tools/styles.js',
+    from: '      trusted: trusted[m.name]?.sha256 === hash,',
+    to: '      trusted: Boolean(trusted[m.name]),',
+    expect: 'trust records the hash of style.json and check refuses a pack changed since',
+  },
+  {
+    why: 'check runs a pack nobody trusted',
+    file: 'tools/styles.js',
+    from: '  if (!style.trusted) {',
+    to: '  if (false) {',
+    expect: 'trust records the hash of style.json and check refuses a pack changed since',
+  },
+  {
+    why: "a pack file that differs from its hash in style.json is used",
+    file: 'tools/styles.js',
+    from: '    if (sha256(fs.readFileSync(path.join(folder, file))) !== hash) throw',
+    to: '    if (false) throw',
+    expect: 'every use refuses a pack whose files differ from style.json',
+  },
+  {
+    why: 'a pack carries a loadable file style.json does not list, so no hash covers it',
+    file: 'tools/styles.js',
+    from: "      if (file !== 'style.json' && LOADABLE.test(file) && !Object.hasOwn(m.files, file)) {",
+    to: '      if (false) {',
+    expect: 'every use refuses a pack whose files differ from style.json',
+  },
+  {
+    why: 'trust records a pack whose files differ from its style.json',
+    file: 'tools/styles.js',
+    from: '  verify(style);\n  const m = style.manifest;',
+    to: '  const m = style.manifest;',
+    expect: 'every use refuses a pack whose files differ from style.json',
+  },
+  {
+    why: 'a pack holds a link to files outside it',
+    file: 'tools/styles.js',
+    from: "      if (entry.isSymbolicLink()) throw new Error('style: ' + pack.name",
+    to: "      if (false) throw new Error('style: ' + pack.name",
+    expect: 'a pack holding a link is refused, as is a linked pack folder',
+  },
+  {
+    why: "a pack's sample was drawn by another Artifex version than style.json claims",
+    file: 'tools/styles.js',
+    from: '  if (manifest.artifex !== m.artifex) {',
+    to: '  if (false) {',
+    expect: 'check refuses a pack proved on another version and a piece that requires outside its files',
+  },
+  {
+    why: 'check passes a pack proved on another Artifex version',
+    file: 'tools/styles.js',
+    from: '  if (!style.proved) throw',
+    to: '  if (false) throw',
+    expect: 'check refuses a pack proved on another version and a piece that requires outside its files',
+  },
+  {
+    why: "check loads a pack's piece unconfined, so it may require files outside the pack",
+    file: 'tools/styles.js',
+    from: '  loadExternal(style.piece, style.folder, { confine: { root: style.folder, files } });',
+    to: '  loadExternal(style.piece, style.folder);',
+    expect: 'check refuses a pack proved on another version and a piece that requires outside its files',
+  },
+  {
     why: 'the run root takes a long name, so a nested run passes the Windows path limit',
     file: 'tests/negative.js',
     from: "const RUN_PREFIX = 'artifex-" + "neg-';",
@@ -3684,8 +3789,9 @@ const MUTATIONS = [
 ];
 
 // Copy only what `node --test tests/*.test.js` reads: the tests, their modules
-// under `core/`, `examples/` and `tools/`, and `package.json`. Keeping an explicit
-// allowlist prevents unrelated workspace data from increasing every copy.
+// under `core/`, `examples/` and `tools/`, the styles under `skills/`, and
+// `package.json`. Keeping an explicit allowlist prevents unrelated workspace
+// data from increasing every copy.
 //
 // If a test ever reads something new, the control run goes red before any
 // mutation is applied and says so by name. That is the failure announcing
@@ -3693,7 +3799,7 @@ const MUTATIONS = [
 //
 // The names are the tree root's own, so the filter applies there and nowhere
 // else: once inside `core/`, every file is taken.
-const COPIED = new Set(['core', 'examples', 'tests', 'tools', 'package.json']);
+const COPIED = new Set(['core', 'examples', 'skills', 'tests', 'tools', 'package.json']);
 
 function copyDir(src, dst, root = false) {
   fs.mkdirSync(dst, { recursive: true });
