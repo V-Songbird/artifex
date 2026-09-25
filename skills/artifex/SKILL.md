@@ -422,7 +422,7 @@ establish those claims. Shader arithmetic may differ across devices.
 |---|---|
 | an interactive page | pass a real `CanvasRenderingContext2D` to `drawFrame` |
 | a print-resolution still | same, at `scale: 8` or higher. **Not capped.** |
-| a film | walk `playheads(piece)`; the frames are a property of the piece, never of how fast the machine is. The built page does it: **MP4 1x/2x**, frame-exact at any drawing speed and carrying the declared soundtrack, or `__artifex.film({ scale })`, which saves nothing and returns the report read from the file. Only where the browser cannot encode that MP4 does the page offer **WebM video**, which records in real time, so it needs frames cheaper than their budget and has no sound |
+| a film | walk `playheads(piece)`; the frames are a property of the piece, never of how fast the machine is. The built page does it: **MP4**, with the long edge at 1920 px or more, or **MP4 1x** for a draft, frame-exact at any drawing speed and carrying the declared soundtrack, or `__artifex.film({ scale, bitrate })`, which saves nothing and returns the report read from the file. The default bitrate is 0.45 bit per pixel per frame, about 22 Mbit/s at 1080p24, measured to keep fine hatching over replay's 30 dB floor; pass `bitrate` in bit/s to spend more. Only where the browser cannot encode that MP4 does the page offer **WebM video**, which records in real time, so it needs frames cheaper than their budget and has no sound |
 | a plotter / print SVG | `renderVector(piece)` — declare `outputs: ['raster','vector']` first |
 
 **Chain your segments before you draw them.** A plotter lifts its pen between
@@ -557,8 +557,9 @@ finish: {
   stroke. [Texture belongs to the material](#art-direction-preset-focal-composition)
   still holds for every mark, and for stills, which refuse `finish`.
 - **Keep it quiet and look at full size.** Grain spends bitrate: at the export's
-  default the finest grain softens into mottling, so judge it on decoded frames
-  at 100%, not on the canvas.
+  default a film grain keeps about two thirds of its finest detail, and the rest
+  softens into mottling, so judge it on decoded frames at 100%, not on the
+  canvas, and raise `bitrate` if it must survive.
 - **Nothing to schedule.** Each part is a function of the seed and the frame, so
   scrubs, exports and replay agree. An SVG keeps the bare marks; a PNG, a film and
   the page carry the finish. Paint an opaque ground: grain over transparency

@@ -1095,29 +1095,47 @@ function normalizeLoudness(buffer, codec) {
 // ---------------------------------------------------------------------------
 
 // H.264 levels as [level_idc, max macroblocks per second, max frame size in
-// macroblocks]. The lowest level that fits is declared, because an old
-// hardware decoder can refuse a film that claims more than it needs.
+// macroblocks, max bitrate in kbit/s for Main]; High allows 1.25 times that
+// bitrate. The lowest level that fits is declared, because an old hardware
+// decoder can refuse a film that claims more than it needs.
 const LEVELS = [
-  [31, 108000, 3600], [32, 216000, 5120], [40, 245760, 8192], [42, 522240, 8704],
-  [50, 589824, 22080], [51, 983040, 36864], [52, 2073600, 36864],
-  [60, 4177920, 139264], [61, 8355840, 139264], [62, 16711680, 139264],
+  [31, 108000, 3600, 14000], [32, 216000, 5120, 20000], [40, 245760, 8192, 20000], [42, 522240, 8704, 50000],
+  [50, 589824, 22080, 135000], [51, 983040, 36864, 240000], [52, 2073600, 36864, 240000],
+  [60, 4177920, 139264, 240000], [61, 8355840, 139264, 480000], [62, 16711680, 139264, 800000],
 ];
 
-/** Codec strings to try for a size and rate, lowest fitting level first, High profile before Main. */
-function avcCodecs(width, height, hz) {
+/**
+ * Codec strings to try for a size, rate and bitrate in bit/s, lowest fitting
+ * level first, High profile before Main. Without a bitrate, any fits.
+ */
+function avcCodecs(width, height, hz, bitrate = 0) {
   const mw = Math.ceil(width / 16);
   const mh = Math.ceil(height / 16);
   const out = [];
-  for (const [level, rate, size] of LEVELS) {
+  for (const [level, rate, size, kbps] of LEVELS) {
     const side = Math.sqrt(8 * size);
     if (mw * mh > size || mw * mh * hz > rate || mw > side || mh > side) continue;
     const hex = level.toString(16).padStart(2, '0');
-    out.push('avc1.6400' + hex, 'avc1.4d00' + hex);
+    if (bitrate <= 1250 * kbps) out.push('avc1.6400' + hex);
+    if (bitrate <= 1000 * kbps) out.push('avc1.4d00' + hex);
   }
   return out;
 }
 
 const even = (v) => Math.max(2, 2 * Math.round(v / 2));
+
+// The long edge the page draws a film at unless its caller names a scale.
+const LONG_EDGE = 1920;
+
+/** The scale that brings the piece's long edge to LONG_EDGE, and never below 1. */
+function filmScale(piece) {
+  return Math.max(1, LONG_EDGE / Math.max(piece.size.w, piece.size.h));
+}
+
+// Bits per pixel per frame for the default bitrate: the least that kept a
+// boiling hatch over replay's 30 dB floor, and most of a film grain's fine
+// detail, in installed Edge; see docs/knowledge/output-formats.md.
+const BITS_PER_PIXEL = 0.45;
 
 /**
  * The H.264 configuration a film of this piece is encoded with at `opt.scale`
@@ -1131,8 +1149,8 @@ async function filmConfig(piece, VideoEncoder, opt = {}) {
   const hz = piece.time.hz;
   const width = even(piece.size.w * scale);
   const height = even(piece.size.h * scale);
-  const bitrate = opt.bitrate || Math.min(80e6, Math.max(2e6, Math.round(0.12 * width * height * hz)));
-  for (const codec of avcCodecs(width, height, hz)) {
+  const bitrate = opt.bitrate || Math.min(80e6, Math.max(2e6, Math.round(BITS_PER_PIXEL * width * height * hz)));
+  for (const codec of avcCodecs(width, height, hz, bitrate)) {
     const candidate = { codec, width, height, bitrate, bitrateMode: 'variable', framerate: hz, avc: { format: 'avc' }, latencyMode: 'quality' };
     const support = await VideoEncoder.isConfigSupported(candidate);
     if (support && support.supported) return candidate;
@@ -1267,11 +1285,15 @@ async function exportFilm(piece, solved, env, opt = {}) {
   const hz = piece.time.hz;
   const scale = opt.scale === undefined ? 1 : opt.scale;
   if (!Number.isFinite(scale) || scale <= 0) throw new Error(`film: scale must be a positive finite number, got ${scale}`);
+  if (opt.bitrate !== undefined && !(Number.isSafeInteger(opt.bitrate) && opt.bitrate > 0)) {
+    throw new Error(`film: bitrate must be a whole number of bits per second above zero, got ${opt.bitrate}`);
+  }
   const started = now();
 
   const config = await filmConfig(piece, env.VideoEncoder, { scale, bitrate: opt.bitrate });
   if (!config) {
-    throw new Error(`film: no H.264 encoder here accepts ${even(piece.size.w * scale)} x ${even(piece.size.h * scale)} at ${hz} Hz; export at a smaller scale`);
+    throw new Error(`film: no H.264 encoder here accepts ${even(piece.size.w * scale)} x ${even(piece.size.h * scale)} at ${hz} Hz`
+      + (opt.bitrate ? ` and ${opt.bitrate} bit/s; export at a smaller scale or bitrate` : '; export at a smaller scale'));
   }
   const { width, height, bitrate } = config;
 
@@ -1455,6 +1477,6 @@ async function exportFilm(piece, solved, env, opt = {}) {
 }
 
 module.exports = {
-  exportFilm, filmConfig, soundConfig, muxMp4, readMp4, filmCheck, avcCodecs, aacConfig, rgbaToNV12,
+  exportFilm, filmConfig, filmScale, soundConfig, muxMp4, readMp4, filmCheck, avcCodecs, aacConfig, rgbaToNV12,
   kWeighting, measureLoudness, loudnessGain, normalizeLoudness,
 };

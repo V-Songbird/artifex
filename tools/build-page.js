@@ -660,8 +660,8 @@ function html(bundle, options = {}) {
       <div class="note" id="svgnote"></div>
       <div id="mp4">
         <div class="row" style="margin-top:10px">
-          <button id="film1" data-film="1">MP4 1x</button>
-          <button id="film2" data-film="2">MP4 2x</button>
+          <button id="film1" data-film="" title="Long edge at 1920 pixels or more">MP4</button>
+          <button id="film2" data-film="1" title="The design box, for a quick draft">MP4 1x</button>
         </div>
         <div class="note" id="filmnote"></div>
       </div>
@@ -812,8 +812,8 @@ function select(name) {
 }
 
 // THE FILM ON OFFER. MP4 is the film export wherever this browser encodes the
-// piece's H.264 configuration -- the one core/film.js picks at 1x. Only where it
-// cannot does the page offer the real-time WebM recorder, which loses frames on
+// piece's H.264 configuration -- the one core/film.js picks at the default
+// scale, filmScale. Only where it cannot does the page offer the real-time WebM recorder, which loses frames on
 // a piece slower than real time and carries no sound. The MP4 export never
 // writes a film without the soundtrack a piece declares, so where the browser
 // encodes neither AAC nor Opus, a piece with sound is offered a silent WebM. The
@@ -847,7 +847,7 @@ function offerFilm() {
     var key = p.size.w + 'x' + p.size.h + '@' + p.time.hz;
     if (!h264[key]) {
       h264[key] = typeof VideoEncoder !== 'function' || typeof VideoFrame !== 'function' ? Promise.resolve(false)
-        : film.filmConfig(p, VideoEncoder).then(function (config) { return !!config; }, function () { return false; });
+        : film.filmConfig(p, VideoEncoder, { scale: film.filmScale(p) }).then(function (config) { return !!config; }, function () { return false; });
     }
     asked = h264[key];
   }
@@ -1430,11 +1430,15 @@ async function exportVideo() {
 // a piece slower than its frame rate still exports every frame. The browser's
 // encoders are passed in rather than read inside the module, which is what lets
 // the same path run in Node against controlled stand-ins.
+//
+// Unless opts.scale names one, the film is drawn with its long edge at 1920
+// pixels at least; opts.bitrate, in bit/s, replaces the default core/film.js
+// derives from the frame size and rate. core/film.js refuses either by name.
 async function exportFilm(opts) {
   var p = current, s = solved, name = currentName;
-  var scale = opts && opts.scale ? Number(opts.scale) : 1;
   if (!s) throw new Error(err.textContent || 'the piece has no successful build to export');
   if (!p || !p.time) throw new Error('this piece is a still: there is no frame list to walk');
+  var scale = opts && opts.scale !== undefined ? opts.scale : film.filmScale(p);
   var mc = typeof MessageChannel === 'function' ? new MessageChannel() : null;
   var result = await film.exportFilm(p, s, {
     VideoEncoder: typeof VideoEncoder === 'function' ? VideoEncoder : undefined,
@@ -1450,9 +1454,9 @@ async function exportFilm(opts) {
     pause: mc ? function () {
       return new Promise(function (r) { mc.port1.onmessage = function () { r(); }; mc.port2.postMessage(0); });
     } : undefined,
-  }, { scale: scale, onProgress: opts && opts.onProgress });
+  }, { scale: scale, bitrate: opts && opts.bitrate, onProgress: opts && opts.onProgress });
   var report = result.report;
-  report.name = name + '-' + s.seed + (scale !== 1 ? '@' + scale + 'x' : '') + '.mp4';
+  report.name = name + '-' + s.seed + '-' + report.width + 'x' + report.height + '.mp4';
   report.blob = new Blob([result.bytes], { type: 'video/mp4' });
   return report;
 }
@@ -1469,7 +1473,7 @@ filmButtons.forEach(function (button) {
     note.textContent = 'drawing and encoding ' + total + ' frames...';
     var lastNote = note.textContent;
     exportFilm({
-      scale: Number(button.dataset.film),
+      scale: button.dataset.film ? Number(button.dataset.film) : undefined,
       onProgress: function (done) {
         if (solved === request && note.textContent === lastNote) {
           note.textContent = 'frame ' + done + ' of ' + total;

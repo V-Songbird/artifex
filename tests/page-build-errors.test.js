@@ -229,8 +229,27 @@ test('a browser that encodes the film H.264 offers only the MP4 export', async (
   assert.equal(asked.length, 2, 'the encoder is asked once per size and frame rate, then by the export');
 });
 
+test('the page films at 1920 pixels on the long edge unless told a scale, at the bitrate it is given', async () => {
+  const { api, elements, downloads } = openPage({ codecs: fakeCodecs() });
+  api.setSeed(42);
+  const report = await api.film();
+  assert.deepEqual([report.width, report.height, report.manifest.film.scale], [1920, 1440, 48], 'a 40 x 30 box drawn 48 times over');
+  assert.equal(report.name, 'conditional-42-1920x1440.mp4');
+  const draft = await api.film({ scale: 1, bitrate: 3000000 });
+  assert.deepEqual([draft.width, draft.height, draft.bitrate], [40, 30, 3000000]);
+  await assert.rejects(api.film({ bitrate: '3e6' }), /^Error: film: bitrate must be a whole number of bits per second above zero, got 3e6$/);
+  // The stand-in elements carry no markup, so each control takes the scale its button names.
+  const markup = require('node:fs').readFileSync(require.resolve('../tools/build-page.js'), 'utf8');
+  for (const id of ['film1', 'film2']) elements.get(id).dataset = { film: markup.match(new RegExp('<button id="' + id + '" data-film="([^"]*)"'))[1] };
+  for (const [id, name] of [['film1', 'conditional-42-1920x1440.mp4'], ['film2', 'conditional-42-40x30.mp4']]) {
+    elements.get(id).onclick();
+    for (let i = 0; i < 50 && downloads.at(-1) !== name; i++) await settle();
+    assert.equal(downloads.at(-1), name, id === 'film1' ? 'the first control films at the default scale' : 'the second films the design box');
+  }
+});
+
 test('where H.264 cannot encode the film, the page offers the WebM recorder instead', async () => {
-  const cases = [[null, /no VideoEncoder/], [fakeCodecs({ supported: () => false }), /no H\.264 encoder here accepts 40 x 30 at 4 Hz/]];
+  const cases = [[null, /no VideoEncoder/], [fakeCodecs({ supported: () => false }), /no H\.264 encoder here accepts 1920 x 1440 at 4 Hz/]];
   for (const [codecs, refusal] of cases) {
     const { api, elements } = openPage({ codecs, videoFailure: 'fixture recorder reached' });
     assert.equal(await api.filmFormat(), 'webm');
@@ -570,7 +589,8 @@ test('the WebM export names the recipe an MP4 of the same film names', async () 
   const tag = webmManifest(new Uint8Array(await report.blob.arrayBuffer()));
   const mp4 = openPage({ codecs: fakeCodecs() });
   mp4.api.setSeed(42);
-  const film = await mp4.api.film();
+  // At the design box, where the recorder draws it.
+  const film = await mp4.api.film({ scale: 1 });
   // Through JSON: the page's objects belong to another realm.
   assert.deepEqual(tag, JSON.parse(JSON.stringify(film.manifest)), 'the recipe the MP4 carries, frame grid and scale 1 included');
   assert.deepEqual(JSON.parse(JSON.stringify(report.manifest)), tag, 'and the report names it too');

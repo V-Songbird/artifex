@@ -10,7 +10,7 @@ const assert = require('node:assert/strict');
 const { validate, solve, VERSION } = require('../core/piece.js');
 const { playheads } = require('../core/render.js');
 const {
-  exportFilm, muxMp4, readMp4, filmCheck, avcCodecs, aacConfig, rgbaToNV12, kWeighting, measureLoudness, loudnessGain,
+  exportFilm, filmConfig, filmScale, muxMp4, readMp4, filmCheck, avcCodecs, aacConfig, rgbaToNV12, kWeighting, measureLoudness, loudnessGain,
 } = require('../core/film.js');
 const { nullSurface } = require('../tools/bench.js');
 const { fakeAudio, fakeCodecs, fakeCanvas, opusHead, EDGE_AVCC } = require('./fake-media.js');
@@ -979,6 +979,45 @@ test('the lowest H.264 level that fits is declared first, and the frame size is 
   const odd = validate({ name: 'odd', size: { w: 33, h: 21 }, time: { duration: 0.5, hz: 8 }, draw() {} });
   const { report } = await exportFilm(odd, solve(odd), env().env);
   assert.deepEqual([report.width, report.height], [34, 22], '4:2:0 video needs even sides');
+});
+
+test('the page\'s scale takes the long edge to 1920 pixels, never below the design box', () => {
+  const box = (w, h) => ({ size: { w, h } });
+  assert.equal(filmScale(box(960, 540)), 2);
+  assert.equal(filmScale(box(1280, 720)), 1.5);
+  assert.equal(filmScale(box(540, 960)), 2, 'a portrait box by its height');
+  assert.equal(filmScale(box(2400, 1350)), 1, 'a box past 1920 is never shrunk');
+});
+
+test('the default bitrate follows the frame size and rate within its floor and ceiling, and the level declared holds any bitrate', async () => {
+  const asked = [];
+  const VideoEncoder = { isConfigSupported: async (config) => { asked.push(config.codec); return { supported: true }; } };
+  const timed = (w, h, hz) => ({ size: { w, h }, time: { hz } });
+  const hd = await filmConfig(timed(960, 540, 24), VideoEncoder, { scale: 2 });
+  // 0.45 bit per pixel: 22.4 Mbit/s, which High at level 4.0 holds and Main does not.
+  assert.deepEqual([hd.width, hd.height, hd.bitrate, hd.codec], [1920, 1080, 22394880, 'avc1.640028']);
+  assert.equal((await filmConfig(timed(64, 48, 24), VideoEncoder)).bitrate, 2e6, 'a small film gets the floor');
+  assert.equal((await filmConfig(timed(3840, 2160, 60), VideoEncoder)).bitrate, 80e6, 'a large one the ceiling');
+  const given = await filmConfig(timed(960, 540, 24), VideoEncoder, { scale: 2, bitrate: 22e6 });
+  assert.deepEqual([given.bitrate, given.codec], [22e6, 'avc1.640028'], 'High at level 4.0 holds 25 Mbit/s');
+  // Main at level 4.0 holds 20 Mbit/s, so the next Main is at 4.2.
+  assert.deepEqual(avcCodecs(1920, 1080, 24, 22e6).slice(0, 3), ['avc1.640028', 'avc1.64002a', 'avc1.4d002a']);
+  assert.deepEqual(avcCodecs(1920, 1080, 24, 1e9), ['avc1.64003e'], 'High at level 6.2 holds 1 Gbit/s exactly');
+  assert.deepEqual(avcCodecs(1920, 1080, 24, 1e9 + 1), [], 'and nothing holds more');
+});
+
+test('a bitrate that is no whole positive number, or that no level holds, is refused by name', async () => {
+  const { p, solved } = piece();
+  for (const bad of [0, -1, 1.5, '8e6', NaN, Infinity]) {
+    await assert.rejects(exportFilm(p, solved, env().env, { bitrate: bad }),
+      new RegExp('^Error: film: bitrate must be a whole number of bits per second above zero, got ' + String(bad) + '$'));
+  }
+  await assert.rejects(exportFilm(p, solved, env().env, { bitrate: 2e9 }),
+    /^Error: film: no H\.264 encoder here accepts 64 x 48 at 24 Hz and 2000000000 bit\/s; export at a smaller scale or bitrate$/);
+  const asked = [];
+  const { report } = await exportFilm(p, solved, env({ supported: (config) => asked.push(config) > 0 }).env, { bitrate: 3000000 });
+  assert.equal(report.bitrate, 3000000);
+  assert.deepEqual(asked.map((config) => config.bitrate), [3000000], 'the encoder is asked for it');
 });
 
 // ---------------------------------------------------------------------------
