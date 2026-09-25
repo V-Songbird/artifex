@@ -126,7 +126,8 @@ require('./core/geom.js')    // lengthOf, bbox, centroid, pointInPoly, resample,
                              // segmentIntersection, offsetPolyline
 require('./core/field.js')   // sampleGrid, gradient, curl, warp, threshold,
                              // isolines, streamline, streamlines
-require('./core/time.js')    // span, ease, tween, shots, shotAt
+require('./core/time.js')    // span, ease, tween, shots, shotAt, spring,
+                             // follow
 require('./core/layer.js')   // layer
 require('./core/sound.js')   // sumInto
 ```
@@ -362,6 +363,13 @@ draw(g, s, t, clock) {
   passes its mark and settles; `bump` goes out and comes back, an event such as
   a blink. The table is frozen because every piece in a page shares it.
 - **A cut is a hard cut.** The module has no transitions.
+- **`spring` and `follow` move with weight.** `spring({ stiffness, damping,
+  delay })(s)` takes seconds since a cue and rises from 0 to 1: `damping` is a
+  ratio, below 1 it passes the mark and rings, 1 arrives soonest without
+  passing it, above 1 it creeps in. Its `settle` is when it stays within 0.1%.
+  `follow(driver, opts)(s)` is a part hung behind any driver of the same
+  seconds: it trails, passes the driver when it stops, and settles. Use them
+  instead of hand-written recoil arrays and decays.
 
 `examples/cues.js` shows the whole pattern: its build writes every move, bump and
 scene change as a cue in frames, and `draw` and `sound` read only that table. A
@@ -617,6 +625,12 @@ output limit.
   author the change as cues, as `cues.js` blends its scenes part by part.
 - **Gags get anticipation and a hold.** Wind up before the action, let it land,
   then hold the result long enough to read before the next beat.
+- **Motion has weight: parts overlap and follow through.** Nothing moves as one
+  rigid pose. Loose parts, such as a tail, hair, cloth or a held prop, start
+  after the body and arrive after it: drive them with `follow` from the body's
+  own move, with a longer `delay` and softer `stiffness` the further they hang.
+  A landing or a hit rings on a `spring` and holds until its `settle` before
+  the next beat. A sine wobble or an instant pose reads as mechanical.
 
 ### Detail and resolution
 
