@@ -78,6 +78,8 @@ The box is chosen per export: a film is drawn at one box, because its frame size
 | `tween(a, b, rate)` | The function `x => rate(span(a, b, x))`, so a timed move is one value that `draw` and `sound` can both read. Any function of `[0, 1]` can be the rate. |
 | `shots(list, timeline)` | Resolves `[[name, seconds], ...]` onto the whole frames of a `clock` or a sound `timeline`. Returns frozen `{ name, index, start, end }` objects; `end` is exclusive. |
 | `shotAt(film, frame)` | The resolved shot that holds a whole frame, found by integer comparison. |
+| `spring({ stiffness, damping, delay })` | A function of seconds since a cue: how far a part released on a damped spring has got towards its mark, from `0` at rest to `1`. See [springs and followers](#springs-and-followers). |
+| `follow(driver, { stiffness, damping, delay })` | A function of seconds since a cue: where a part hung on a spring behind `driver` sits. It trails a moving driver, passes it when the driver stops and settles on it. |
 
 Each cut lands on the frame nearest its time, `round(hz * elapsed)`, and shots are compared as integers. A boundary summed in seconds can land a float either side of a frame: `0.1 + 0.2` is not `0.3`. The frame at `start` is the cut into a shot. The list must fill the timeline exactly, and each shot must hold at least one frame. A still has no shots. Each violation throws `RangeError` by name. Names may repeat, so a piece can cut back to an earlier shot. Resolve the same list with `clock` in `draw` and with `timeline` in `sound`, and picture and sound cut on the same frame.
 
@@ -108,7 +110,37 @@ const piece = {
 };
 ```
 
-[`examples/readout.js`](../../examples/readout.js) cuts a reading and a one-second rest on whole frames, and schedules its notes from the same shots. [`examples/drift.js`](../../examples/drift.js) times each stroke with `span`. [`examples/cues.js`](../../examples/cues.js) writes its moves (`tween` at named rates), its bumps (`ease.bump`, including a blink) and its scene changes into one cue table in its build; `draw` and `sound` read only that table. Each scene change starts on its `shots` boundary and turns the parts one after another over a short blend, or all at once at `blend: 0`. Run `node --test tests/time.test.js` for the span, rate, tween and shot contracts.
+[`examples/readout.js`](../../examples/readout.js) cuts a reading and a one-second rest on whole frames, and schedules its notes from the same shots. [`examples/drift.js`](../../examples/drift.js) times each stroke with `span`. [`examples/cues.js`](../../examples/cues.js) writes its moves (`tween` at named rates), its bumps (`ease.bump`, including a blink) and its scene changes into one cue table in its build; `draw` and `sound` read only that table. Each scene change starts on its `shots` boundary and turns the parts one after another over a short blend, or all at once at `blend: 0`. Run `node --test tests/time.test.js` for the span, rate, tween, shot, spring and follower contracts.
+
+### Springs and followers
+
+A rate curve arrives when its window closes. A spring arrives when its physics lets it: a part with weight gets there late, passes its mark and rings, or creeps in. Both helpers take seconds since a cue, such as `clock.seconds - 1.5` or the seconds since a shot's first frame, and both are pure: the same time gives the same value however the playhead arrived.
+
+- `stiffness` is in 1/s² for a unit mass: `sqrt(stiffness)` is the natural frequency in radians a second, so four times the stiffness is twice as quick.
+- `damping` is the damping ratio. Below `1` the spring is under-damped: it passes its mark by `exp(-damping * PI / sqrt(1 - damping²))` of its travel at its first peak and rings. At `1` it is critical: the quickest arrival that never passes the mark. Above `1` it is over-damped and creeps in without passing it.
+- `delay` defaults to `0` and holds the part at rest for that many seconds after the cue.
+
+`spring(opts)(s)` is `0` for `s` up to `delay` and leaves from rest after it. Its `settle` property is the time since the cue from which the value stays within 0.1% of `1`, delay included; schedule the next beat after it. Long after the cue the value is exactly `1`, for any finite time. A part kicked off its mark at the cue and coming back to rest, a recoil, is `s < 0 ? 0 : 1 - spring(opts)(s)`; with a delay it holds the kicked pose first. Scale either with `lerp`, as a tween's value is scaled. The returned function is frozen.
+
+`follow(driver, opts)(s)` reads `driver`, any function of seconds since the same cue, `delay` seconds late: a tween, a spring or another follower. The part is at rest on its driver at the cue and sits on the driver before it. Drag holds it `2 * damping / sqrt(stiffness)` seconds of travel behind a driver moving at a steady speed; when the driver stops, the part passes it unless heavily damped, then settles on it. A driver at rest keeps the part on it exactly. Each call steps from the cue at 240 steps a second, reading the driver once a step and taking it as straight between steps, and carries the spring exactly across each step, so a call's work grows with `s`: about 0.07 ms for 10 seconds in Node. Keep cues within the film.
+
+Every invalid stiffness, damping, delay, driver or time throws by name, such as `spring: damping must be a positive, finite ratio, got 0; 1 is critical`. Neither helper allocates per call.
+
+```js
+const { lerp } = require('./core/num.js');
+const { ease, tween, spring, follow } = require('./core/time.js');
+
+const body = tween(0, 0.8, ease.inOut);                               // seconds since the cue
+const tail = follow(body, { stiffness: 150, damping: 0.4, delay: 0.05 }); // arrives late, overshoots
+const land = spring({ stiffness: 220, damping: 0.35 });               // a landing that rings
+
+// In draw, with the cue at 1.5 seconds:
+const s = clock.seconds - 1.5;
+const bodyX = lerp(80, 320, body(s));
+const tailX = lerp(80, 320, tail(s)) - 30;
+const hit = s - 0.8;                                                    // the move lands
+const squash = 1 + 0.2 * (hit < 0 ? 0 : 1 - land(hit));                 // and recoils
+```
 
 ## Colour dissolves
 

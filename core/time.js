@@ -4,7 +4,9 @@
 // The playhead is a piece's only clock, and nothing here knows what moves. A
 // span places a moment inside a window, a rate shapes how a move accelerates, a
 // tween fuses the two into one value, and a shot list puts every cut on a whole
-// frame of the piece's own grid. Transitions between shots are not here.
+// frame of the piece's own grid. A spring and a follower give a move weight:
+// seconds since a cue in, a damped response out. Transitions between shots are
+// not here.
 
 'use strict';
 
@@ -141,4 +143,139 @@ function shotAt(list, frame) {
   return list[lo];
 }
 
-module.exports = { span, ease, tween, shots, shotAt };
+// A spring has settled once it stays within this fraction of its travel.
+const SETTLE = 1e-3;
+// Steps a second that `follow` takes from its cue, reading its driver once each.
+const FOLLOW_HZ = 240;
+
+/** Stiffness in 1/s², damping as a ratio (1 is critical), delay in seconds. */
+function checkSpring(who, opts) {
+  const { stiffness, damping, delay = 0 } = opts || {};
+  if (!Number.isFinite(stiffness) || stiffness <= 0) {
+    throw new RangeError(`${who}: stiffness must be a positive, finite number, got ${stiffness}`);
+  }
+  if (!Number.isFinite(damping) || damping <= 0) {
+    throw new RangeError(`${who}: damping must be a positive, finite ratio, got ${damping}; 1 is critical`);
+  }
+  if (!Number.isFinite(delay) || delay < 0) {
+    throw new RangeError(`${who}: delay must be a finite number of seconds >= 0, got ${delay}`);
+  }
+  return { w: Math.sqrt(stiffness), z: damping, delay };
+}
+
+/**
+ * How a free damped oscillator, f'' + 2zw f' + w² f = 0, carries its offset f
+ * and velocity g over `dt` seconds: out = [f from f, f from g, g from f, g from g].
+ * Once the decay underflows every entry is exactly 0, so a large time cannot
+ * meet a cosine of an overflowed angle and answer NaN.
+ */
+function carry(w, z, dt, out) {
+  if (z < 1) {
+    const s = z * w;
+    const d = w * Math.sqrt(1 - z * z);
+    const e = Math.exp(-s * dt);
+    const c = Math.cos(d * dt);
+    const n = Math.sin(d * dt) / d;
+    out[0] = e * (c + s * n); out[1] = e * n; out[2] = -e * w * w * n; out[3] = e * (c - s * n);
+  } else if (z === 1) {
+    const e = Math.exp(-w * dt);
+    out[0] = e * (1 + w * dt); out[1] = e * dt; out[2] = -e * w * w * dt; out[3] = e * (1 - w * dt);
+  } else {
+    // The slow root as w² over the fast one: -zw + q would cancel at high damping.
+    const k = z + Math.sqrt(z * z - 1);
+    const r1 = -w / k;
+    const r2 = -w * k;
+    const e1 = Math.exp(r1 * dt);
+    const e2 = Math.exp(r2 * dt);
+    out[0] = (r2 * e1 - r1 * e2) / (r2 - r1); out[1] = (e2 - e1) / (r2 - r1);
+    out[2] = r1 * r2 * (e1 - e2) / (r2 - r1); out[3] = (r2 * e2 - r1 * e1) / (r2 - r1);
+  }
+  if (!(Math.abs(out[0]) + Math.abs(out[1]) + Math.abs(out[3]) > 0)) out.fill(0);
+}
+
+/**
+ * A damped spring released at a cue: `spring(opts)(s)` is how far a part has
+ * got towards its mark `s` seconds after the cue, from 0 at rest to 1.
+ *
+ * Under-damped (damping < 1) passes the mark and rings; critical (1) arrives
+ * soonest without passing it; over-damped (> 1) creeps in. 0 before the cue and
+ * through its delay. `settle` is the time since the cue from which the value
+ * stays within 0.1% of the mark. `s < 0 ? 0 : 1 - spring(opts)(s)` is a part
+ * kicked off its mark at the cue coming back to rest, a recoil.
+ */
+function spring(opts) {
+  const { w, z, delay } = checkSpring('spring', opts);
+  const m = new Float64Array(4);
+  const at = (u) => { carry(w, z, u, m); return 1 - m[0]; };
+  // The last time |1 - x| is SETTLE, found by bisection where it falls through
+  // it once: from the last swing that reaches it to the next crossing of the
+  // mark when the spring rings, otherwise from the release.
+  let lo = 0;
+  let hi = 1 / w;
+  if (z < 1) {
+    const d = w * Math.sqrt(1 - z * z);
+    const swing = Math.floor(Math.log(1 / SETTLE) * d / (z * w * Math.PI));
+    lo = swing * Math.PI / d;
+    hi = lo + (Math.PI - Math.atan2(d, z * w)) / d;
+  } else {
+    while (1 - at(hi) > SETTLE) hi *= 2;
+  }
+  for (let i = 0; i < 64; i++) {
+    const mid = (lo + hi) / 2;
+    if (Math.abs(1 - at(mid)) > SETTLE) lo = mid;
+    else hi = mid;
+  }
+  const move = (s) => {
+    if (!Number.isFinite(s)) throw new TypeError(`spring: the time since the cue must be a finite number, got ${s}`);
+    return s <= delay ? 0 : at(s - delay);
+  };
+  move.settle = delay + hi;
+  return Object.freeze(move);
+}
+
+/**
+ * A part that follows a driver: `follow(driver, opts)(s)` is where a part hung
+ * on a spring behind `driver`, read `delay` seconds late, sits `s` seconds after
+ * the cue. It trails a moving driver, passes it when the driver stops and
+ * settles on it.
+ *
+ * The part is at rest on its driver at the cue and sits on it before. Each call
+ * steps from the cue at FOLLOW_HZ, taking the driver as straight between steps
+ * and carrying the spring exactly across each, so its work grows with `s`.
+ */
+function follow(driver, opts) {
+  if (typeof driver !== 'function') {
+    throw new TypeError('follow: the driver must be a function of seconds since the cue, such as a tween or a spring');
+  }
+  const { w, z, delay } = checkSpring('follow', opts);
+  const h = 1 / FOLLOW_HZ;
+  const step = new Float64Array(4);
+  const rest = new Float64Array(4);
+  carry(w, z, h, step);
+  return (s) => {
+    if (!Number.isFinite(s)) throw new TypeError(`follow: the time since the cue must be a finite number, got ${s}`);
+    if (s <= 0) return driver(s - delay);
+    const n = Math.floor(s / h);
+    const r = s - n * h;
+    if (r > 0) carry(w, z, r, rest);
+    let a = driver(-delay);
+    let y = a;
+    let v = 0;
+    for (let i = 1; i <= (r > 0 ? n + 1 : n); i++) {
+      const full = i <= n;
+      const m = full ? step : rest;
+      const next = driver((full ? i * h : s) - delay);
+      const slope = (next - a) / (full ? h : r);
+      // Drag holds a part moving at `slope` 2z/w seconds of travel behind.
+      const lag = -2 * z * slope / w;
+      const f = y - a - lag;
+      const g = v - slope;
+      y = next + lag + m[0] * f + m[1] * g;
+      v = slope + m[2] * f + m[3] * g;
+      a = next;
+    }
+    return y;
+  };
+}
+
+module.exports = { span, ease, tween, shots, shotAt, spring, follow };
