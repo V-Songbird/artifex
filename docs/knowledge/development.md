@@ -92,6 +92,7 @@ Run `node --test tests/replay.test.js` for manifest reading, the version, piece,
 | [`core/field.js`](../../core/field.js) | Grid sampling, derivatives and composition, isolines and streamlines; see the [field API](../apis/fields.md). |
 | [`core/time.js`](../../core/time.js) | Spans, named rate curves, tweens and shot lists cut on whole frames; see [authored time](../apis/piece-api.md#authored-time). |
 | [`core/sound.js`](../../core/sound.js) | Summing many voices into one input two at a time, so one browser renders a soundtrack to the same bytes every time; see the [soundtrack](../apis/piece-api.md#soundtrack). |
+| [`core/finish.js`](../../core/finish.js) | A declared film finish: seeded grain, gate weave, flicker, vignette and a print grade, drawn by `drawFrame` on raster frames; see the [film finish](../apis/piece-api.md#film-finish). |
 | [`core/layer.js`](../../core/layer.js) | Static layers, copied per canvas and device scale on raster surfaces and drawn directly on others; see [static layers](../apis/piece-api.md#static-layers). |
 | [`core/stroke-font.js`](../../core/stroke-font.js) | Shared polyline stroke font; [`examples/stroke-font.js`](../../examples/stroke-font.js) remains a compatibility entry point. |
 | [`core/geom.js`](../../core/geom.js), [`core/path.js`](../../core/path.js) | Geometry and path operations. |
@@ -126,6 +127,8 @@ it cannot measure browser presentation or GPU speedup.
 The [geometry API](../apis/geometry.md) defines segment intersection and closest-point results, bounded open-polyline offsets, and their numerical limits. `pattern` consumes offsets and intersections; `packing` uses segment distance to keep interior dots clear of its outlines. Run `node --test tests/geom.test.js tests/geometry-consumers.test.js` for those contracts and consumers.
 
 [Authored time](../apis/piece-api.md#authored-time) defines spans, rate curves, tweens and shot lists cut on whole frames. `drift` times its strokes with `span`; `readout` cuts a reading and a rest and schedules its notes from the same shots. Run `node --test tests/time.test.js` for those contracts; `tests/examples.test.js` checks that readout's notes and pictures agree on every frame.
+
+A piece's `finish` is drawn by `drawFrame` on surfaces with a canvas, after `draw`, as a function of the seed and the frame. Run `node --test tests/finish.test.js` for its validation, pass order, grade, grain, weave and flicker contracts on a stand-in surface; how it looks, and its cost on GPU and CPU canvases, need installed Edge.
 
 `sumInto` in [`core/sound.js`](../../core/sound.js) sums readout's, settle's and cues' voices two at a time. Run `node --test tests/sound.test.js` for its tree; `tests/examples.test.js` checks that no input in an example's soundtrack takes more than two connections. Whether two renders are byte-identical needs installed Edge.
 

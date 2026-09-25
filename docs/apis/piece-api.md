@@ -1,12 +1,12 @@
 ---
 type: api_spec
-summary: "Shows a runnable custom Artifex piece and the public validation, responsive-box, solving, rendering, static-layer, colour-dissolve and soundtrack entry points."
-related_files: ["core/piece.js", "core/render.js", "core/time.js", "core/film.js", "core/webgpu-preview.js", "core/surface-vector.js", "examples/pixel-field.js", "examples/refit.js", "examples/readout.js", "examples/drift.js", "examples/settle.js", "examples/cues.js", "core/layer.js", "core/sound.js", "core/colour.js", "tests/layer.test.js", "tests/toolkit.test.js", "tests/piece.test.js", "tests/render.test.js", "tests/time.test.js", "tests/sound.test.js", "tests/film.test.js", "tests/webgpu-preview.test.js"]
+summary: "Shows a runnable custom Artifex piece and the public validation, responsive-box, solving, rendering, static-layer, colour-dissolve, soundtrack and film-finish entry points."
+related_files: ["core/piece.js", "core/render.js", "core/time.js", "core/film.js", "core/webgpu-preview.js", "core/surface-vector.js", "examples/pixel-field.js", "examples/refit.js", "examples/readout.js", "examples/drift.js", "examples/settle.js", "examples/cues.js", "core/layer.js", "core/sound.js", "core/colour.js", "core/finish.js", "tests/finish.test.js", "tests/layer.test.js", "tests/toolkit.test.js", "tests/piece.test.js", "tests/render.test.js", "tests/time.test.js", "tests/sound.test.js", "tests/film.test.js", "tests/webgpu-preview.test.js"]
 ---
 
 # Piece API
 
-[`FIELDS` in core/piece.js](../../core/piece.js) is the authoritative contract, including defaults and validation messages. A piece declares `name`, `size`, and `draw`; optional fields add state, build stages, parameters, outputs, a seed, a timeline, a soundtrack, an explicitly authored GPU pixel preview, and the range of boxes it recomposes to.
+[`FIELDS` in core/piece.js](../../core/piece.js) is the authoritative contract, including defaults and validation messages. A piece declares `name`, `size`, and `draw`; optional fields add state, build stages, parameters, outputs, a seed, a timeline, a soundtrack, an explicitly authored GPU pixel preview, the range of boxes it recomposes to, and a film finish.
 
 ## Render a custom piece
 
@@ -152,6 +152,32 @@ sound(ctx, state, timeline) {
 A second of sound is the second `clock.seconds` names in `draw`, so schedule each sound at the second its picture appears and derive both from the same solved state. Take noise from the seeded source rather than an unseeded generator, and schedule only on the context clock. A still cannot declare `sound`; validation refuses it by name. `sound` must build the same graph every time it renders one solved state. Installed Edge adds up three or more connections into one input in an order that changes between renders, so such a graph repeats its samples only to their last bits: in Edge 153 two renders of one in one page differed in a third to four fifths of their samples, by less than 1e-7, and two films of it in their audio bytes. Two connections add up the same either way round. `sumInto(ctx, nodes, into)` in [`core/sound.js`](../../core/sound.js) connects any number of nodes to `into` through a balanced tree of gain nodes at unity, one for each node past the second, so no input takes more than two; `into` must take no other connection. `readout`, `settle` and `cues` sum their voices with it, and in Edge 153 two renders of each soundtrack and two MP4 exports of each film, in one page and across page loads, were identical byte for byte. Compare a soundtrack with a wider sum by measurement. `npm run browser` requires two renders of each example to hold the same bits in every sample. Other browsers can differ further, like pixels. [`examples/readout.js`](../../examples/readout.js) sounds each digit on the frame that first shows it, and [`examples/cues.js`](../../examples/cues.js) each part of a scene change on the frame that first shows it turning. [`examples/settle.js`](../../examples/settle.js) sets every voice's detune, pan and level on every drawn frame from the snapshot that frame draws, ramping linearly between frames.
 
 See the [runtime skill](../../skills/artifex/SKILL.md) for authoring guidance and [output formats](../knowledge/output-formats.md) for delivery limits.
+
+## Film finish
+
+A piece with a timeline may declare `finish`: one treatment `drawFrame` gives every raster frame after `draw`, the same on every frame of the film. Its default is `null`. Every part is optional and off unless declared; unknown keys, out-of-range values and malformed colours are refused by name, and a still (`time: null`) that declares a finish is refused.
+
+```js
+finish: {
+  grain: 0.35,     // [0, 1]: seeded grain laid in soft light, at a new offset on every frame
+  weave: 1.2,      // design units, >= 0: how far the picture moves in the gate, across; half that down
+  flicker: 0.05,   // [0, 1]: how far a frame's exposure may dip
+  vignette: 0.35,  // [0, 1]: how dark the corners fall
+  grade: { black: '#1d1812', white: '#f4ecdc', tone: '#9c7a52', toning: 0.15 },
+},
+```
+
+| Part | What `drawFrame` does |
+| --- | --- |
+| `weave` | Before `draw`: translates the picture by an offset of at most `weave` across and `weave / 2` down, a slow wander plus a little jitter, and enlarges it about its middle by `1 + 2 * weave / min(w, h)` so no offset uncovers an edge. |
+| `grain` | A 512-texel square tile of grey noise about mid-grey, made once per solve from the seed; the frame's shorter side holds 720 texels at any scale. Filled with `soft-light` at alpha `grain`, from an offset chosen per frame. |
+| `grade` | `tone` with `color` at alpha `toning` (`tone` and `toning` come together); then a `multiply` and a `screen` that land each channel's 0 on `black` and its 1 on `white`, which must be lighter than `black` in every channel. Either end defaults to pure black or white. |
+| `flicker` | Black over the frame at alpha `flicker` times a per-frame uniform. |
+| `vignette` | An elliptical gradient the frame's shape, clear inside half its size, black at alpha `vignette` in the corners. |
+
+Every part is a function of the solved seed and `clock.frame`, so a scrub, an export and `npm run replay` draw the same frame. It is drawn only on a surface with a `canvas`: `renderVector`'s SVG, the benchmark's null surface and recording test surfaces receive the marks alone. The page, MP4 and WebM films, PNG exports, contact sheets and replay all draw through `drawFrame` and carry it. Paint an opaque ground: grain over transparent pixels shows as grey. Implemented in [`core/finish.js`](../../core/finish.js); run `node --test tests/finish.test.js` for validation, pass order, the grade's ends, grain per seed and frame, weave coverage, flicker bounds and state restoration. [`examples/cues.js`](../../examples/cues.js) declares one.
+
+Measured in installed Edge 153 on cues at 1920 x 1080: on the MP4 encoder route's GPU-backed canvas the finish added about 0.2 ms a frame (192 frames, 1.36 s export without it, 1.32 s with it); on a CPU-backed canvas, the export's CPU colour route, about 35 ms a frame, 20 ms of it the grain (192 frames, 2.9 s to 9.8 s). Grain spends bitrate: at the export's default bitrate cues' 8-second film grew from 0.9 MB to 7.3 MB, and the finest grain softens into mottling.
 
 ## Optional WebGPU pixel preview
 
