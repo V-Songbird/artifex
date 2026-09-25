@@ -13,11 +13,11 @@ const { recipes, record, stale } = require('../../tools/posters.js');
 
 const NUM = path.resolve(__dirname, '..', '..', 'core', 'num.js');
 
-test('posters: the real shot list draws ink, mirror, cad and kandinsky at 1200 x 800, seed 1, playhead 1, WebP 0.82, and all are current', () => {
+test('posters: the real shot list draws ink, mirror, cad, kandinsky and wall at 1200 x 800, seed 1, each at its still playhead, WebP 0.82, and all are current', () => {
   const entries = recipes();
-  assert.deepEqual(entries.map((e) => e.name), ['ink', 'mirror', 'cad', 'kandinsky']);
+  assert.deepEqual(entries.map((e) => e.name), ['ink', 'mirror', 'cad', 'kandinsky', 'wall']);
   for (const e of entries) {
-    assert.deepEqual(e.recipe, { piece: 'pieces/' + e.name + '.cjs', seed: 1, t: 1, width: 1200, height: 800, type: 'image/webp', quality: 0.82 });
+    assert.deepEqual(e.recipe, { piece: 'pieces/' + e.name + '.cjs', seed: 1, t: e.name === 'wall' ? 0.6 : 1, width: 1200, height: 800, type: 'image/webp', quality: 0.82 });
     assert.ok(e.sources['pieces/' + e.name + '.cjs'] && e.sources['pieces/paper.js'] && e.sources['core/rand.js'], Object.keys(e.sources).join());
   }
   assert.deepEqual(stale(), []);

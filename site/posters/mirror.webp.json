@@ -17,7 +17,7 @@
     "core/stroke-font.js": "c0eeccaf3ed03b72ae94b90d24cca894398e5d91489c77caaefede6bb9a5c8c8",
     "pieces/brush.js": "455862346f2f5de3a930e06548332120f1f136793238ba7c4459c889972a9f10",
     "pieces/dry.js": "a56ea3d62f23a2fd5db82bc0127664cad08e53617e62aa99eb6aa6a38278d922",
-    "pieces/held.js": "daaf4c6806bbffded541d8cc7c178e1f522b68baea6193c627ca2bb3f9cababd",
+    "pieces/held.js": "817b747ab690b9d0ecb74d825df4be7c35ff3a66d19c024459805f5ffb8d0972",
     "pieces/kaleido.js": "fade825245ef2c612a85933e5a0695260fa4b3d255b2e38a8efb75100178e244",
     "pieces/mirror.cjs": "30bdb98a16d040b2417b014d7aa0814cdb79fa961152339dd2b33c8b7fa03ed9",
     "pieces/paper.js": "b943eee6af4e88ab2d3286a7d61c87c38fa0f756acb27bd5986d535684860ef9",
