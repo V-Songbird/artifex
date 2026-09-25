@@ -35,7 +35,9 @@ Style packs add styles beyond this table, installed in `~/.artifex/styles/`
 (or under `ARTIFEX_HOME`). `npm run styles` lists every style by name, built in
 and installed, with each pack's version and whether it is trusted; see
 [style packs](../../../docs/apis/style-packs.md). A pack's guide and piece take
-the place of the guide and module here.
+the place of the guide and module here. For a style in neither, follow
+[Named styles](../SKILL.md#named-styles): name its signature, read the nearest
+guides and check each part on frames.
 
 ## See them
 
