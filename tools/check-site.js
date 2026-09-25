@@ -9,7 +9,8 @@
 // On each of the two references, desktop (1280 x 800 at DPR 1) and slow (390 x
 // 844 at DPR 3, a 1170-pixel canvas, 4x CPU throttling), native wheel events
 // scroll the whole film forward one frame at a time, and the check requires:
-// no page errors; every shot drawn; as many draws as distinct frames, besides
+// a measuring sink that waits for rasterization (calibrated first on a heavy
+// frame); no page errors; every shot drawn; as many draws as distinct frames, besides
 // one redraw of the same frame after each scale change; at most two canvases;
 // no scroll write, no preventDefault on wheel, touch, scroll or keys, and no
 // listener for them that is not passive; and each shot's p95 draw time, forced
@@ -79,6 +80,51 @@ function noTransfer() {
   delete HTMLCanvasElement.prototype.transferControlToOffscreen;
 }
 
+// Drawn in the page, on a canvas the size of the stage's: a frame whose drawing
+// calls are few and whose rasterization is heavy (one long wide stroke), timed
+// without forcing (the calls alone), forced by the stage's own force(), and
+// forced by copying a pixel into a canvas kept for reading, which copies the
+// whole frame to the CPU and so cannot finish before the frame is drawn.
+async function sinkFrames(w, h) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  const copy = new OffscreenCanvas(1, 1).getContext('2d', { willReadFrequently: true });
+  const heavy = (i) => {
+    g.fillStyle = '#eee'; g.fillRect(0, 0, w, h);
+    g.strokeStyle = 'rgba(20, 30, 90, 0.6)'; g.lineWidth = 3; g.lineJoin = 'round';
+    g.beginPath();
+    for (let k = 0; k < 4000; k++) { const a = k * 0.37 + i * 0.01; g.lineTo(w / 2 + Math.cos(a) * (k % (w / 2)), h / 2 + Math.sin(a * 1.3) * (k % (h / 2))); }
+    g.stroke();
+  };
+  const ways = { none: () => {}, forced: () => __stage.force(c), copied: () => { copy.drawImage(c, 0, 0, 1, 1, 0, 0, 1, 1); copy.getImageData(0, 0, 1, 1); } };
+  const out = { none: [], forced: [], copied: [] };
+  for (let i = 0; i < 18; i++) {
+    const way = Object.keys(ways)[i % 3];
+    await new Promise((r) => requestAnimationFrame(r));
+    const a = performance.now();
+    heavy(i);
+    ways[way]();
+    out[way].push(performance.now() - a);
+    // Whatever the frame left unrasterized is finished before the next one is timed.
+    ways.copied();
+  }
+  return out;
+}
+
+/**
+ * Whether the stage's sink waits for rasterization, from sinkFrames' times:
+ * forced, the heavy frame must cost at least half what the whole-frame copy
+ * shows and three times its drawing calls alone. A sink that stopped waiting
+ * would measure the calls alone and let every shot pass fast.
+ */
+function sinkWaits(times) {
+  const med = (xs) => xs.slice().sort((a, b) => a - b)[xs.length >> 1];
+  const out = { noneMs: +med(times.none).toFixed(2), forcedMs: +med(times.forced).toFixed(2), copiedMs: +med(times.copied).toFixed(2) };
+  if (out.forcedMs < out.copiedMs / 2 || out.forcedMs < 3 * out.noneMs) out.failure = 'the measuring sink does not wait for rasterization: a heavy frame measured ' + out.forcedMs + ' ms forced, ' + out.copiedMs + ' ms copied whole and ' + out.noneMs + ' ms unforced';
+  return out;
+}
+
 const SETTLE = 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))';
 
 async function wheel(client, view, deltaY) {
@@ -144,6 +190,7 @@ async function walk(client, context, view, base, shots) {
   context.phase = view.name + ' walk';
   await open(client, context, view, base + '?measure=1');
   const start = await evaluate(client, '({ px: __stage.px, frames: __stage.frames, draws: __stage.draws, canvas: document.querySelectorAll("canvas").length })');
+  const sink = sinkWaits(await evaluate(client, '(' + sinkFrames + ')(...(({ width, height }) => [width, height])(document.querySelector("#stage canvas:not([hidden])")))'));
   // Wheel steps too small to reach the next frame must not draw.
   for (let i = 0; i < 3; i++) await wheel(client, view, 1);
   const tiny = await evaluate(client, '__stage.draws') - start.draws;
@@ -157,12 +204,15 @@ async function walk(client, context, view, base, shots) {
   }
   // A draw still in the worker lands after the last step.
   await evaluate(client, 'new Promise((r) => setTimeout(r, 300))');
-  const end = await evaluate(client, '({ log: __stage.log.slice(' + from + '), frame: __stage.frame, lowered: __stage.lowered, worker: __stage.worker, probe: window.__probe })');
+  const end = await evaluate(client, '({ log: __stage.log.slice(' + from + '), frame: __stage.frame, lowered: __stage.lowered, worker: __stage.worker, probe: window.__probe, held: window.__held || null })');
   const verdict = judgeWalk(view, shots, end.log, samples, end.probe);
+  if (sink.failure) verdict.failures.push(view.name + ': ' + sink.failure);
   if (tiny) verdict.failures.push(view.name + ': ' + tiny + ' draws from wheel steps that did not reach a new frame');
   if (end.frame !== start.frames - 1) verdict.failures.push(view.name + ': the walk ended on frame ' + end.frame + ', not the last, ' + (start.frames - 1));
   if (context.errors.length) verdict.failures.push(view.name + ': page errors: ' + context.errors.join('; '));
-  return { view: view.name, pxPerFrame: +start.px.toFixed(2), lastFrame: end.frame, lowered: end.lowered, worker: end.worker, ...verdict };
+  // The copies site/pieces/held.js keeps on the main thread at the walk's end, and the most pixels they held at once.
+  const kept = end.held && { copies: end.held.copies, megapixels: +(end.held.pixels / 1e6).toFixed(1), peakMegapixels: +(end.held.peak / 1e6).toFixed(1) };
+  return { view: view.name, pxPerFrame: +start.px.toFixed(2), lastFrame: end.frame, lowered: end.lowered, worker: end.worker, kept, sink, ...verdict };
 }
 
 async function reduced(client, context, base, shots) {
@@ -290,7 +340,8 @@ async function main(args = process.argv.slice(2)) {
     console.log(JSON.stringify(report, null, 2));
     const walks = report.walks.map((w) => w.view + ' ' + w.draws + ' draws of ' + w.distinct + ' distinct frames'
       + (w.redraws ? ' and ' + w.redraws + ' redraws after a scale change' : '') + ', p95 '
-      + w.perShot.map((s) => s.shot + ' ' + (s.p95Ms === null ? 'in worker' : s.p95Ms + ' ms')).join(', ')).join('; ');
+      + w.perShot.map((s) => s.shot + ' ' + (s.p95Ms === null ? 'in worker' : s.p95Ms + ' ms')).join(', ')
+      + (w.kept ? ', kept ' + w.kept.copies + ' copies, peak ' + w.kept.peakMegapixels + ' Mpx' : '')).join('; ');
     console.log('site: ' + (report.failures.length ? report.failures.length + ' failed: ' + report.failures.join('; ') : 'passed') + '; ' + walks
       + (failure ? '; cleanup failed' : '; owned browser, server and profile cleaned up'));
     if (report.failures.length && !failure) failure = new Error('site: ' + report.failures.length + ' check(s) failed');
@@ -300,4 +351,4 @@ async function main(args = process.argv.slice(2)) {
 
 if (require.main === module) main().catch((error) => { console.error(error.message); process.exitCode = 1; });
 
-module.exports = { parseArgs, countDraws, judgeWalk, runSiteCheck, main, REFERENCES, probe };
+module.exports = { parseArgs, countDraws, judgeWalk, sinkWaits, runSiteCheck, main, REFERENCES, probe };
