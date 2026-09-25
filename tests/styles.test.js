@@ -507,6 +507,41 @@ test('pack removes its own output when the sample does not replay, and keeps the
   assert.deepEqual(proofCopies(), []);
 });
 
+test('pack --replace restores the old pack and its trust when installing the new one fails', async (t) => {
+  const { dir, env } = tempHome(t);
+  const author = project(t, { 'dotted.cjs': PIECE.replace('./lib/dots.js', './dots.js'), 'dots.js': DOTS, 'guide.md': GUIDE });
+  const options = { piece: path.join(author, 'dotted.cjs'), name: 'pointillism', guide: path.join(author, 'guide.md'), summary: 'Dots.', version: '2.0.0', replace: true };
+  const old = makePack(dir);
+  styles.trust('pointillism', env, quiet);
+  const snapshot = () => Object.fromEntries(fs.readdirSync(old.folder, { recursive: true }).sort()
+    .filter((file) => fs.statSync(path.join(old.folder, file)).isFile()).map((file) => [file, fs.readFileSync(path.join(old.folder, file), 'utf8')]));
+  const before = { pack: snapshot(), trust: fs.readFileSync(path.join(dir, 'trust.json'), 'utf8') };
+  const unchanged = async () => {
+    assert.deepEqual(snapshot(), before.pack, 'the old pack is back in its folder');
+    assert.equal(fs.readFileSync(path.join(dir, 'trust.json'), 'utf8'), before.trust, 'with its trust');
+    assert.deepEqual(fs.readdirSync(dir).sort(), ['styles', 'trust.json'], 'no build or old folder is left');
+    await styles.check('pointillism', env, quiet);
+  };
+
+  // The rename into styles/ fails, as a locked file or a full disk makes it.
+  const rename = fs.renameSync;
+  const locked = t.mock.method(fs, 'renameSync', (from, to) => {
+    if (path.basename(from).startsWith('.pack-')) throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' });
+    return rename(from, to);
+  });
+  await assert.rejects(styles.pack(options, env, quiet), /^Error: EPERM: operation not permitted, rename$/);
+  locked.mock.restore();
+  await unchanged();
+
+  // The new pack is installed and trusted, and then the install fails.
+  await assert.rejects(styles.pack(options, env, (line) => { if (line.startsWith('Trusted')) throw new Error('log failed'); }), /^Error: log failed$/);
+  await unchanged();
+
+  await styles.pack(options, env, quiet);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(old.folder, 'style.json'), 'utf8')).version, '2.0.0');
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['styles', 'trust.json'], 'the old pack is removed once the new one is trusted');
+});
+
 test('check replays a pack\'s sample from a clean copy and names the first difference', async (t) => {
   const { dir, env } = tempHome(t);
   const pack = makePack(dir);
