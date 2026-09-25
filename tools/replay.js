@@ -26,9 +26,9 @@ const { svgManifest } = require('../core/surface-vector.js');
 const EXAMPLES = require('../examples/index.js');
 const { loadExternal, callerDirectory } = require('./piece-input.js');
 const { bundle, html, pngManifest, webmManifest, webmBlockTimes, ebmlHead } = require('./build-page.js');
-const { withEdge, waitFor, evaluate } = require('./check-browser.js');
+const { withEdge, waitFor, evaluate, saveReport } = require('./check-browser.js');
 
-const USAGE = 'usage: npm run replay -- <file> [--piece ./piece.cjs] [--edge PATH] [--timeout-ms N] [--headed]';
+const USAGE = 'usage: npm run replay -- <file> [--piece ./piece.cjs] [--edge PATH] [--timeout-ms N] [--headed] [--json]';
 
 /** 'svg', 'mp4', 'png' or 'webm' from a file's first bytes, or null. */
 function fileType(bytes) {
@@ -628,6 +628,7 @@ function parseArgs(args) {
     else if (a === '--edge') out.browser.edge = args[++i];
     else if (a === '--timeout-ms') out.browser.timeoutMs = Number(args[++i]);
     else if (a === '--headed') out.browser.headed = true;
+    else if (a === '--json') out.json = true;
     else if (a.startsWith('--') || out.file) throw new Error(USAGE);
     else out.file = a;
   }
@@ -637,18 +638,21 @@ function parseArgs(args) {
   return out;
 }
 
-async function main() {
-  const options = parseArgs(process.argv.slice(2));
-  const result = await replay(options.file, options);
-  console.log(JSON.stringify(result, null, 2));
+// Without --json the full report goes to out/replay-<file name>.json, so the
+// output holds only the verdict, which names the first difference, and its path.
+async function main(args = process.argv.slice(2), run = replay, dir) {
+  const options = parseArgs(args);
+  const result = await run(options.file, options);
+  if (options.json) console.log(JSON.stringify(result, null, 2));
   console.log(`replay: ${result.file} (${result.type}, ${result.manifest.piece} seed ${result.manifest.seed}): ${result.match ? 'matches' : 'DIFFERS'}; ${result.detail}`);
+  if (!options.json) console.log('report: ' + await saveReport('replay-' + path.basename(result.file), result, dir));
   if (!result.match) process.exitCode = 1;
 }
 
 if (require.main === module) main().catch((error) => { console.error(error.message); process.exitCode = 1; });
 
 module.exports = {
-  fileType, manifestOf, pieceFor, replaySvg, filmPlan, filmFrames, replayVerdict, compareFilm, replay, parseArgs, FILM_FLOOR_DB,
+  fileType, manifestOf, pieceFor, replaySvg, filmPlan, filmFrames, replayVerdict, compareFilm, replay, parseArgs, main, FILM_FLOOR_DB,
   soundPlan, compareSound, soundVerdict, SOUND_BLOCK, SOUND_FLOOR_DB, SOUND_GATE_DB, SOUND_BAND, SOUND_FLATNESS, SOUND_NOISE_DB,
   pngPlan, pngVerdict, comparePng, webmPlan, compareWebm, PNG_FLOOR_DB, sendBytes, PIECE_BYTES,
 };

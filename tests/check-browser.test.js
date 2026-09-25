@@ -212,12 +212,34 @@ test('a run whose checks passed prints its report before a cleanup-only failure'
   t.mock.method(console, 'log', (line) => logged.push(line));
   const report = { browser: 'Edge/1', mode: 'headless', pieces: [{ name: 'a' }, { name: 'b' }], films: [], errors: [] };
   const failure = Object.assign(new Error('browser: cleanup failed: stuck'), { report });
-  await assert.rejects(main([], async () => { throw failure; }), /cleanup failed: stuck/);
+  await assert.rejects(main(['--json'], async () => { throw failure; }), /cleanup failed: stuck/);
   assert.deepEqual(JSON.parse(logged[0]), report);
   assert.match(logged[1], /^browser: 2 examples passed; no example has a timeline, so no film was exported; cleanup failed$/);
   logged.length = 0;
   await assert.rejects(main([], async () => { throw new Error('browser: page errors'); }), /page errors/);
   assert.deepEqual(logged, [], 'a failed check prints no report');
+});
+
+test('by default the browser check prints its summary and the path of its full report, and --json prints the report instead', async (t) => {
+  const logged = [];
+  t.mock.method(console, 'log', (line) => logged.push(line));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'artifex-report-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const report = { browser: 'Edge/1', mode: 'headless', pieces: [{ name: 'a' }], films: [], errors: [] };
+  const file = path.join(dir, 'out', 'browser.json');
+  await main([], async () => report, path.join(dir, 'out'));
+  assert.deepEqual(logged, ['browser: 1 examples passed; no example has a timeline, so no film was exported; owned browser, server and profile cleaned up', 'report: ' + file]);
+  assert.deepEqual(JSON.parse(await fs.readFile(file, 'utf8')), report);
+  logged.length = 0;
+  const failure = Object.assign(new Error('browser: cleanup failed: stuck'), { report });
+  await assert.rejects(main([], async () => { throw failure; }, path.join(dir, 'out')), /cleanup failed: stuck/);
+  assert.match(logged[0], /; cleanup failed$/);
+  assert.equal(logged[1], 'report: ' + file, 'a cleanup-only failure still writes its report');
+  logged.length = 0;
+  await main(['--json'], async () => report, path.join(dir, 'json'));
+  assert.deepEqual(JSON.parse(logged[0]), report);
+  assert.equal(logged.length, 2);
+  await assert.rejects(fs.stat(path.join(dir, 'json')), { code: 'ENOENT' }, '--json writes no file');
 });
 
 test('the browser check exports a film for every example that declares sound, else the first with a timeline', () => {
@@ -285,12 +307,12 @@ test('a forced run names its condition in its summary and report, and the defaul
     browser: 'Edge/1', mode: 'headless', ...(options.force && { forced: options.force }), pieces: [{ name: 'a' }], films, errors: [],
   });
   const mp4 = (soundCodec, conversion) => ({ name: 'a', offered: 'mp4', frames: 48, sound: {}, soundCodec, conversion });
-  await main([], run([mp4('mp4a', 'gpu')]));
+  await main(['--json'], run([mp4('mp4a', 'gpu')]));
   assert.equal(JSON.parse(logged[0]).forced, undefined);
   assert.equal(logged[1], 'browser: 1 examples passed; film a offered as MP4 with WebM hidden, exported 48 frames with an AAC soundtrack,'
     + ' colour converted on the GPU, decoded, and named the page\'s recipe; owned browser, server and profile cleaned up');
   logged.length = 0;
-  await main([], run([mp4('mp4a', 'encoder')]));
+  await main(['--json'], run([mp4('mp4a', 'encoder')]));
   assert.match(logged[1], /exported 48 frames with an AAC soundtrack, colour converted by the encoder, decoded,/, 'the encoder route reads as itself');
   for (const [force, films, summary] of [
     ['no-aac', [mp4('Opus', 'gpu')], /^browser with AAC refused: 1 examples passed; film a .* with an Opus soundtrack, colour converted on the GPU,/],
@@ -301,7 +323,7 @@ test('a forced run names its condition in its summary and report, and the defaul
       /^browser with H\.264 refused: .* recorded 96 frames lasting 4 s after 2 refused recordings \(93, 95 of 96 frames\), decoded,/],
   ]) {
     logged.length = 0;
-    await main(['--force', force], run(films));
+    await main(['--force', force, '--json'], run(films));
     assert.equal(JSON.parse(logged[0]).forced, force, 'the report names the condition');
     assert.match(logged[1], summary);
   }
@@ -522,11 +544,11 @@ test('a run that accepts a fallback colour route says so in its summary', async 
     browser: 'Edge/1', mode: 'headless', ...(options.force && { forced: options.force }), ...(options.allowFallback && { allowFallback: true }),
     pieces: [{ name: 'a' }], films: [{ name: 'a', offered: 'mp4', frames: 48, sound: {}, soundCodec: 'mp4a', conversion: 'cpu' }], errors: [],
   });
-  await main(['--allow-fallback'], run);
+  await main(['--allow-fallback', '--json'], run);
   assert.equal(JSON.parse(logged[0]).allowFallback, true);
   assert.match(logged[1], /^browser accepting a fallback colour route: 1 examples passed; film a .* colour converted on the CPU,/);
   logged.length = 0;
-  await main(['--force', 'no-aac', '--allow-fallback'], run);
+  await main(['--force', 'no-aac', '--allow-fallback', '--json'], run);
   assert.match(logged[1], /^browser with AAC refused, accepting a fallback colour route: 1 examples passed;/);
 });
 
