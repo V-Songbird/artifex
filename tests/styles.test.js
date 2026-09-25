@@ -176,10 +176,10 @@ test('an unknown style name lists every built-in and installed style and the ins
   });
 });
 
-test('trust records the hash of style.json and check refuses a pack changed since', (t) => {
+test('trust records the hash of style.json and check refuses a pack changed since', async (t) => {
   const { dir, env } = tempHome(t);
   const pack = makePack(dir);
-  assert.throws(() => styles.check('pointillism', env, quiet), /pointillism is not trusted\. Read its files, then run: npm run styles -- trust pointillism/);
+  await assert.rejects(styles.check('pointillism', env, quiet), /pointillism is not trusted\. Read its files, then run: npm run styles -- trust pointillism/);
   const shown = [];
   styles.trust('pointillism', env, (line) => shown.push(line));
   const record = JSON.parse(fs.readFileSync(path.join(dir, 'trust.json'), 'utf8'));
@@ -193,56 +193,56 @@ test('trust records the hash of style.json and check refuses a pack changed sinc
   }
   assert.match(text, /piece\.cjs .*\n {4}requires: artifex\/core\/rand\.js, \.\/lib\/dots\.js/);
   const lines = [];
-  styles.check('pointillism', env, (line) => lines.push(line));
-  assert.deepEqual(lines, ['check pointillism: 4 files match style.json, trusted, proved with 0.1.0, and its piece loads within its own files; the sample was not replayed']);
+  await styles.check('pointillism', env, (line) => lines.push(line));
+  assert.deepEqual(lines, ['check pointillism: 4 files match style.json, trusted, proved with 0.1.0, its piece loads within its own files, and sample.svg replays from a clean copy: ' + fs.statSync(path.join(pack.folder, 'sample.svg')).size + ' bytes, identical to the replay']);
 
   // A new version, even with the same files, must be trusted again.
   pack.manifest.version = '1.0.1';
   pack.write('style.json', JSON.stringify(pack.manifest));
-  assert.throws(() => styles.check('pointillism', env, quiet), /pointillism changed since it was trusted as version 1\.0\.0\. Read its files, then run: npm run styles -- trust pointillism/);
+  await assert.rejects(styles.check('pointillism', env, quiet), /pointillism changed since it was trusted as version 1\.0\.0\. Read its files, then run: npm run styles -- trust pointillism/);
   styles.trust('pointillism', env, quiet);
-  styles.check('pointillism', env, quiet);
+  await styles.check('pointillism', env, quiet);
 
   // Pack code is refused before it runs when it is not the code trusted.
   rewrite(pack, 'piece.cjs', "throw new Error('pack code ran');\n");
-  assert.throws(() => styles.check('pointillism', env, quiet), /changed since it was trusted/);
+  await assert.rejects(styles.check('pointillism', env, quiet), /changed since it was trusted/);
   styles.trust('pointillism', env, quiet);
-  assert.throws(() => styles.check('pointillism', env, quiet), /pack code ran/);
+  await assert.rejects(styles.check('pointillism', env, quiet), /pack code ran/);
 });
 
-test('every use refuses a pack whose files differ from style.json', (t) => {
+test('every use refuses a pack whose files differ from style.json', async (t) => {
   const { dir, env } = tempHome(t);
   const pack = makePack(dir);
   styles.trust('pointillism', env, quiet);
   fs.writeFileSync(path.join(pack.folder, 'lib', 'dots.js'), DOTS + '// changed\n');
-  assert.throws(() => styles.check('pointillism', env, quiet), /^Error: style: pointillism: lib\/dots\.js differs from its hash in style\.json$/);
+  await assert.rejects(styles.check('pointillism', env, quiet), /^Error: style: pointillism: lib\/dots\.js differs from its hash in style\.json$/);
   assert.throws(() => styles.trust('pointillism', env, quiet), /lib\/dots\.js differs from its hash/);
   fs.writeFileSync(path.join(pack.folder, 'lib', 'dots.js'), DOTS);
-  styles.check('pointillism', env, quiet);
+  await styles.check('pointillism', env, quiet);
   for (const unlisted of ['lib/extra.js', 'extra.cjs', 'lib/data.json', 'loader.mjs']) {
     fs.writeFileSync(path.join(pack.folder, unlisted), 'module.exports = 1;');
-    assert.throws(() => styles.check('pointillism', env, quiet), new RegExp(unlisted.replace('.', '\\.') + ' is not listed in style\\.json, and only listed files may be loaded'));
+    await assert.rejects(styles.check('pointillism', env, quiet), new RegExp(unlisted.replace('.', '\\.') + ' is not listed in style\\.json, and only listed files may be loaded'));
     fs.rmSync(path.join(pack.folder, unlisted));
   }
   fs.writeFileSync(path.join(pack.folder, 'Thumbs.db'), 'ignored, never read');
-  styles.check('pointillism', env, quiet);
+  await styles.check('pointillism', env, quiet);
   fs.rmSync(path.join(pack.folder, 'guide.md'));
-  assert.throws(() => styles.check('pointillism', env, quiet), /pointillism: guide\.md is listed in style\.json but missing/);
+  await assert.rejects(styles.check('pointillism', env, quiet), /pointillism: guide\.md is listed in style\.json but missing/);
 });
 
-test('a pack holding a link is refused, as is a linked pack folder', (t) => {
+test('a pack holding a link is refused, as is a linked pack folder', async (t) => {
   const { dir, env } = tempHome(t);
   const pack = makePack(dir);
   styles.trust('pointillism', env, quiet);
   const outside = path.join(dir, 'outside');
   fs.mkdirSync(outside);
   fs.symlinkSync(outside, path.join(pack.folder, 'more'), 'junction');
-  assert.throws(() => styles.check('pointillism', env, quiet), /pointillism: more is a link; a pack holds only its own files/);
+  await assert.rejects(styles.check('pointillism', env, quiet), /pointillism: more is a link; a pack holds only its own files/);
   fs.symlinkSync(pack.folder, path.join(dir, 'styles', 'alias'), 'junction');
   assert.deepEqual(styles.scan(env).problems.map((one) => [one.name, one.reason]), [['alias', 'the folder is a link; install the pack itself']]);
 });
 
-test('check refuses a pack proved on another version and a piece that requires outside its files', (t) => {
+test('check refuses a pack proved on another version and a piece that requires outside its files', async (t) => {
   const { dir, env } = tempHome(t);
   const pack = makePack(dir);
   const svg = fs.readFileSync(path.join(pack.folder, 'sample.svg'), 'utf8');
@@ -253,18 +253,18 @@ test('check refuses a pack proved on another version and a piece that requires o
   pack.write('style.json', JSON.stringify(pack.manifest));
   assert.equal(styles.scan(env).packs[0].proved, false);
   styles.trust('pointillism', env, quiet);
-  assert.throws(() => styles.check('pointillism', env, quiet), /pointillism is not proved on this version: its sample was proved with Artifex 0\.0\.1, this is 0\.1\.0/);
+  await assert.rejects(styles.check('pointillism', env, quiet), /pointillism is not proved on this version: its sample was proved with Artifex 0\.0\.1, this is 0\.1\.0/);
 
   const other = makePack(dir, 'reaching');
   fs.writeFileSync(path.join(dir, 'styles', 'secret.js'), 'module.exports = {};');
   rewrite(other, 'lib/dots.js', "require('../../secret.js');\n" + DOTS);
   styles.trust('reaching', env, quiet);
-  assert.throws(() => styles.check('reaching', env, quiet), /requires \.\.\/\.\.\/secret\.js .*which is not a listed file of/);
+  await assert.rejects(styles.check('reaching', env, quiet), /requires \.\.\/\.\.\/secret\.js .*which is not a listed file of/);
 });
 
-test('a built-in style checks as a piece of its name', () => {
+test('a built-in style checks as a piece of its name', async () => {
   const lines = [];
-  styles.check('papercraft', { ARTIFEX_HOME: path.join(os.tmpdir(), 'artifex-styles-absent') }, (line) => lines.push(line));
+  await styles.check('papercraft', { ARTIFEX_HOME: path.join(os.tmpdir(), 'artifex-styles-absent') }, (line) => lines.push(line));
   assert.deepEqual(lines, ['check papercraft: built in; its module loads as the piece papercraft and its guide is present']);
 });
 
@@ -360,4 +360,163 @@ test('npm run page and seeds take --style, write out/style-<name>-page.html and 
   const sheet = run('contact-sheet.js', '--style', name, '2', '0.5');
   assert.equal(sheet.status, 0, sheet.stderr);
   assert.match(fs.readFileSync(files[1], 'utf8'), /var NAMES = \["dotted"\];/);
+});
+
+const GUIDE = '# Pointillism\n\nDots.\n\n## What makes it read as pointillism\n\nDots.\n\n## Recipe\n\nDot.\n\n## Palette\n\nTwo.\n\n## Pitfalls\n\nLines.\n\n## Any subject\n\nDots.\n';
+const LIBRARY = ROOT.split(path.sep).join('/');
+
+/** A project folder holding `files`, as a piece's author keeps it before packing. */
+function project(t, files) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'artifex-project-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const [file, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+    fs.writeFileSync(path.join(dir, file), text);
+  }
+  return dir;
+}
+
+/** What `pack` leaves in the temporary folder of this process: proof copies it never removed. */
+const proofCopies = () => fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith('artifex-proof-' + process.pid + '-'));
+
+test('pack copies a piece and the files it reaches into piece.cjs and lib/, rewriting their requires', (t) => {
+  const body = "module.exports = { name: 'dotted', size: { w: 60, h: 40 }, seed: 3, outputs: ['raster', 'vector'],\n"
+    + "  draw(g, s) { g.fillStyle = data.ground; g.fillRect(0, 0, 60, 40); const r = rng(s.seed); for (let i = 0; i < 8; i++) { dot(g, lerp(4, 52, r('d' + i, 'x')), r('d' + i, 'y') * 36); more.ring(g, 30, 20, 4 + i * 2); } } };\n";
+  const dir = project(t, {
+    'dotted.cjs': "#!/usr/bin/env node\nconst { rng } = require('artifex/core/rand.js');\n"
+      + "const { lerp } = require('" + LIBRARY + "/core/num.js');\nconst font = require(\"" + LIBRARY + "/examples/stroke-font.js\");\n"
+      + "const { dot } = require('./lib/dots.js');\nconst more = require('./more/dots');\nconst data = require('./data.json');\n" + body,
+    'lib/dots.js': DOTS,
+    'more/dots.js': "const data = require('../data.json');\nmodule.exports = { ring(g, x, y, r) { g.strokeStyle = data.ink; g.beginPath(); g.arc(x, y, r, 0, 3); g.stroke(); } };\n",
+    'data.json': '{ "ground": "#f5efe1", "ink": "#295c7b" }\n',
+  });
+  const sources = styles.packSources(path.join(dir, 'dotted.cjs'));
+  assert.deepEqual(sources, {
+    'piece.cjs': "\nconst { rng } = require(\"artifex/core/rand.js\");\nconst { lerp } = require(\"artifex/core/num.js\");\n"
+      + "const font = require(\"artifex/core/stroke-font.js\");\nconst { dot } = require(\"./lib/dots.js\");\n"
+      + "const more = require(\"./lib/dots-2.js\");\nconst data = require(\"./lib/data.json\");\n" + body,
+    'lib/dots.js': DOTS,
+    'lib/dots-2.js': "const data = require(\"./data.json\");\nmodule.exports = { ring(g, x, y, r) { g.strokeStyle = data.ink; g.beginPath(); g.arc(x, y, r, 0, 3); g.stroke(); } };\n",
+    'lib/data.json': '{ "ground": "#f5efe1", "ink": "#295c7b" }\n',
+  });
+  // The rewritten files load confined to themselves and draw what the author's files draw.
+  const pack = project(t, sources);
+  const confined = loadExternal('piece.cjs', pack, { confine: { root: pack, files: Object.keys(sources) } });
+  assert.equal(renderVector(confined.piece).svg, renderVector(loadExternal(path.join(dir, 'dotted.cjs'), dir).piece).svg);
+
+  const reaching = project(t, { 'drift.cjs': "module.exports = require('" + LIBRARY + "/examples/drift.js');\n" });
+  assert.throws(() => styles.packSources(path.join(reaching, 'drift.cjs')),
+    /requires .*drift\.js, the library file examples\/drift\.js; a pack may require only its own files and artifex\/core\/<file>\.js$/);
+});
+
+test('a pack guide needs a title and the built-in guides\' headings in order', () => {
+  assert.equal(styles.guideProblem(GUIDE), null);
+  for (const style of styles.builtins()) assert.equal(styles.guideProblem(fs.readFileSync(style.guide, 'utf8')), null, style.name);
+  assert.equal(styles.guideProblem(GUIDE.replace('\n## Palette\n\nTwo.\n', '')), null, 'Palette is not required');
+  assert.equal(styles.guideProblem(GUIDE.replace('# Pointillism', 'Pointillism')), 'has no "# " title');
+  assert.equal(styles.guideProblem(GUIDE.replace('## What makes it read as pointillism', '## Why dots')), 'has no "## What makes it read as" heading');
+  assert.equal(styles.guideProblem(GUIDE.replace('## Pitfalls', '## Mistakes')), 'has no "## Pitfalls" heading after "## Recipe"');
+  const swapped = GUIDE.replace('## Recipe', '## Held').replace('## Any subject', '## Any subject\n\n## Recipe');
+  assert.equal(styles.guideProblem(swapped), 'has no "## Pitfalls" heading after "## Recipe"');
+});
+
+test('pack writes style.json and the sample, proves it from a clean copy, then installs and trusts the pack', async (t) => {
+  const { dir, env } = tempHome(t);
+  const author = project(t, { 'dotted.cjs': PIECE.replace('./lib/dots.js', './dots.js'), 'dots.js': DOTS, 'guide.md': GUIDE });
+  const shown = [];
+  await styles.pack({ piece: path.join(author, 'dotted.cjs'), name: 'pointillism', guide: path.join(author, 'guide.md'), summary: 'Dots of unmixed colour.', license: 'MIT', seed: '5', t: '1' },
+    env, (line) => shown.push(line));
+  const folder = path.join(dir, 'styles', 'pointillism');
+  const read = (file) => fs.readFileSync(path.join(folder, file));
+  const svg = renderVector(loadExternal(path.join(author, 'dotted.cjs'), author).piece, { seed: 5 }).svg;
+  assert.equal(read('sample.svg').toString('utf8'), svg);
+  assert.equal(read('guide.md').toString('utf8'), GUIDE);
+  assert.equal(read('lib/dots.js').toString('utf8'), DOTS);
+  const manifest = JSON.parse(read('style.json'));
+  assert.deepEqual(manifest, {
+    stylePack: 1, name: 'pointillism', title: 'Pointillism', version: '1.0.0', artifex: VERSION, summary: 'Dots of unmixed colour.', license: 'MIT',
+    piece: 'piece.cjs', guide: 'guide.md', sample: 'sample.svg',
+    files: Object.fromEntries(['lib/dots.js', 'piece.cjs', 'guide.md', 'sample.svg'].map((file) => [file, sha(read(file))])),
+  });
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'trust.json'), 'utf8')), { packs: { pointillism: { version: '1.0.0', sha256: sha(read('style.json')) } } });
+  assert.equal(shown[0], 'pack pointillism: 4 files in ' + folder + '; sample.svg replays from a clean copy: ' + Buffer.byteLength(svg) + ' bytes, identical to the replay');
+  assert.match(shown.at(-1), /^Trusted pointillism 1\.0\.0 /);
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['styles', 'trust.json'], 'no build folder is left');
+  assert.deepEqual(proofCopies(), []);
+  await styles.check('pointillism', env, quiet);
+
+  // --replace installs a new pack in the old one's place, and trusts it.
+  await styles.pack({ piece: path.join(author, 'dotted.cjs'), name: 'pointillism', guide: path.join(author, 'guide.md'), summary: 'Dots.', title: 'Dots', version: '2.0.0', replace: true }, env, quiet);
+  assert.deepEqual([JSON.parse(read('style.json')).title, JSON.parse(read('style.json')).version], ['Dots', '2.0.0']);
+  assert.equal(styles.scan(env).packs[0].trusted, true);
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['styles', 'trust.json']);
+});
+
+test('pack refuses by name and writes nothing', async (t) => {
+  const { dir, env } = tempHome(t);
+  const author = project(t, { 'dotted.cjs': PIECE.replace('./lib/dots.js', './dots.js'), 'dots.js': DOTS, 'guide.md': GUIDE, 'thin.md': '# Thin\n\n## Recipe\n' });
+  const options = { piece: path.join(author, 'dotted.cjs'), name: 'pointillism', guide: path.join(author, 'guide.md'), summary: 'Dots.' };
+  const refused = (change, pattern) => assert.rejects(styles.pack({ ...options, ...change }, env, quiet), pattern);
+  await refused({ name: 'Pointillism' }, /^Error: pack: the name must be lowercase kebab-case, at most 40 characters, not "Pointillism"$/);
+  await refused({ name: 'a'.repeat(41) }, /at most 40 characters/);
+  await refused({ name: 'impasto' }, /^Error: pack: "impasto" is a built-in style's name; choose another$/);
+  await refused({ guide: path.join(author, 'thin.md') }, /thin\.md has no "## What makes it read as" heading; a guide has "# <title>", then "## What makes it read as", "## Recipe", "## Pitfalls", "## Any subject", in that order$/);
+  await refused({ seed: '-1' }, /^Error: pack: --seed must be an integer from 0 to 4294967295$/);
+  await refused({ seed: '1.5' }, /--seed must be an integer/);
+  await refused({ t: '2' }, /^Error: pack: --t must be a number from 0 to 1$/);
+  await refused({ t: 'end' }, /--t must be a number/);
+  assert.deepEqual(fs.readdirSync(dir), [], 'a refused pack writes nothing');
+  const existing = makePack(dir);
+  await refused({}, /pointillism exists; pass --replace to replace it$/);
+  fs.rmSync(existing.folder, { recursive: true });
+  fs.symlinkSync(author, existing.folder, 'junction');
+  await refused({ replace: true }, /pointillism is a link; remove it yourself first$/);
+  assert.deepEqual(fs.readdirSync(author).sort(), ['dots.js', 'dotted.cjs', 'guide.md', 'thin.md'], 'a linked folder is left alone');
+  const usage = /^Error: styles: usage: npm run styles -- pack <piece> --name <name> --guide <guide\.md> --summary <text> /;
+  for (const args of [['pack'], ['pack', 'dotted.cjs'], ['pack', 'dotted.cjs', '--name', 'dots', '--guide', 'guide.md'], ['pack', 'a.cjs', 'b.cjs', '--name', 'dots', '--guide', 'g.md', '--summary', 's'],
+    ['pack', 'dotted.cjs', '--name', 'dots', '--guide', 'guide.md', '--summary', 's', '--frame', '3'], ['pack', 'dotted.cjs', '--summary']]) {
+    await assert.rejects(styles.main(args, env, quiet), usage, args.join(' '));
+  }
+  assert.deepEqual(styles.packArgs(['dotted.cjs', '--name', 'dots', '--guide', 'g.md', '--summary', 's', '--replace', '--seed', '4', '--t', '0.5']),
+    { replace: true, piece: 'dotted.cjs', name: 'dots', guide: 'g.md', summary: 's', seed: '4', t: '0.5' });
+});
+
+test('pack removes its own output when the sample does not replay, and keeps the pack it would replace', async (t) => {
+  const { dir, env } = tempHome(t);
+  // Each draw moves the square, so the redraw can never match the sample.
+  const author = project(t, {
+    'restless.cjs': "module.exports = { name: 'restless', size: { w: 40, h: 40 }, outputs: ['raster', 'vector'],\n"
+      + "  draw(g) { globalThis.__artifexRestless = (globalThis.__artifexRestless || 0) + 1; g.fillStyle = '#123456'; g.fillRect(globalThis.__artifexRestless, 0, 10, 10); } };\n",
+    'guide.md': GUIDE,
+  });
+  t.after(() => { delete globalThis.__artifexRestless; });
+  const options = { piece: path.join(author, 'restless.cjs'), name: 'restless', guide: path.join(author, 'guide.md'), summary: 'Never still.' };
+  await assert.rejects(styles.pack(options, env, quiet),
+    /^Error: pack: restless: sample\.svg does not replay from a clean copy of the pack, so nothing was installed: byte \d+ of \d+ differs: /);
+  assert.deepEqual(fs.readdirSync(dir), [], 'nothing is left in ARTIFEX_HOME');
+  assert.deepEqual(proofCopies(), []);
+
+  const old = makePack(dir, 'restless');
+  styles.trust('restless', env, quiet);
+  const before = fs.readFileSync(path.join(dir, 'trust.json'), 'utf8');
+  await assert.rejects(styles.pack({ ...options, replace: true }, env, quiet), /does not replay from a clean copy of the pack, so nothing was installed/);
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['styles', 'trust.json']);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(old.folder, 'style.json'), 'utf8')), old.manifest, 'the old pack is kept');
+  assert.equal(fs.readFileSync(path.join(dir, 'trust.json'), 'utf8'), before, 'and its trust');
+  await styles.check('restless', env, quiet);
+  assert.deepEqual(proofCopies(), []);
+});
+
+test('check replays a pack\'s sample from a clean copy and names the first difference', async (t) => {
+  const { dir, env } = tempHome(t);
+  const pack = makePack(dir);
+  styles.trust('pointillism', env, quiet);
+  await styles.check('pointillism', env, quiet);
+  // The same recipe, another drawing: the file matches its hash and trust, but not its piece.
+  const svg = fs.readFileSync(path.join(pack.folder, 'sample.svg'), 'utf8');
+  rewrite(pack, 'sample.svg', svg.replace('#295c7b', '#295c7c'));
+  styles.trust('pointillism', env, quiet);
+  await assert.rejects(styles.check('pointillism', env, quiet),
+    /^Error: style: pointillism: sample\.svg does not replay from a clean copy of the pack: byte \d+ of \d+ differs: the file has .*#295c7c.* where the replay draws .*#295c7b/);
+  assert.deepEqual(proofCopies(), []);
 });

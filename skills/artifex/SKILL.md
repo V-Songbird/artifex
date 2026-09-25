@@ -304,7 +304,11 @@ piece). They write `out/style-<name>-page.html` and
 `out/style-<name>-seeds.html` in the library. A pack must be trusted before its
 code runs, and a pack changed since it was trusted is refused until it is
 trusted again; a pack proved on another Artifex version draws with a warning
-that its sample is not proved here.
+that its sample is not proved here. `npm run styles -- check <name>` also
+replays a pack's sample to prove the pack draws as it did for its author.
+
+When the user wants a style they like saved or shared as a pack, follow the
+[style-pack skill](../style-pack/SKILL.md).
 
 - **Never trust a pack for the user.** Do not run `npm run styles -- trust`.
   When a pack is refused, give the user the command it names and let them read

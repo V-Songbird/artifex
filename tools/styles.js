@@ -12,10 +12,15 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { VERSION } = require('../core/piece.js');
+const { createRequire } = require('node:module');
+const { VERSION, frameT } = require('../core/piece.js');
+const { renderVector } = require('../core/render.js');
 const { callerDirectory, imports, loadExternal } = require('./piece-input.js');
-const { manifestOf } = require('./replay.js');
+const { manifestOf, replay } = require('./replay.js');
+const { bundle, html, pngWithManifest } = require('./build-page.js');
+const { withEdge, waitFor, evaluateInPieces } = require('./check-browser.js');
 
+const ROOT = path.resolve(__dirname, '..');
 const STYLES = path.resolve(__dirname, '..', 'skills', 'artifex', 'styles');
 const KEYS = ['stylePack', 'name', 'title', 'version', 'artifex', 'summary', 'author', 'license', 'piece', 'guide', 'sample', 'files'];
 const OPTIONAL = new Set(['author', 'license']);
@@ -223,11 +228,30 @@ function load(name, env = process.env, unproved = console.warn) {
 }
 
 /**
- * A built-in style's module must load as a piece of its name. A pack must
- * load as `load` loads it and be proved on this version. The sample is not
- * replayed.
+ * Replay a pack's sample from a fresh copy of its listed files, so the proof
+ * reads nothing from where the pack was made; its callers have loaded the
+ * piece confined to those files first. Resolves to replay's result; the copy
+ * is removed either way.
  */
-function check(name, env = process.env, log = console.log) {
+async function prove(folder, m, browser = {}) {
+  const copy = fs.mkdtempSync(path.join(os.tmpdir(), 'artifex-proof-' + process.pid + '-'));
+  try {
+    for (const file of Object.keys(m.files)) {
+      fs.mkdirSync(path.dirname(path.join(copy, file)), { recursive: true });
+      fs.copyFileSync(path.join(folder, file), path.join(copy, file));
+    }
+    return await replay(m.sample, { piece: m.piece, cwd: copy, browser });
+  } finally {
+    fs.rmSync(copy, { recursive: true, force: true });
+  }
+}
+
+/**
+ * A built-in style's module must load as a piece of its name. A pack must
+ * load as `load` loads it, be proved on this version, and its sample must
+ * replay from a clean copy of the pack.
+ */
+async function check(name, env = process.env, log = console.log, browser = {}) {
   const { style, piece } = load(name, env, (message) => { throw new Error(message); });
   if (style.source === 'builtin') {
     if (piece.name !== style.name) throw new Error('style: ' + style.piece + ' is named ' + piece.name + ', not ' + style.name);
@@ -235,8 +259,193 @@ function check(name, env = process.env, log = console.log) {
     log('check ' + style.name + ': built in; its module loads as the piece ' + piece.name + ' and its guide is present');
     return;
   }
+  const proof = await prove(style.folder, style.manifest, browser);
+  if (!proof.match) throw new Error('style: ' + style.name + ': ' + style.manifest.sample + ' does not replay from a clean copy of the pack: ' + proof.detail);
   log('check ' + style.name + ': ' + Object.keys(style.manifest.files).length + ' files match style.json, trusted, proved with ' + style.artifex
-    + ', and its piece loads within its own files; the sample was not replayed');
+    + ', its piece loads within its own files, and ' + style.manifest.sample + ' replays from a clean copy: ' + proof.detail);
+}
+
+// The headings every built-in guide has, in this order, each matched by its start.
+const HEADINGS = ['What makes it read as', 'Recipe', 'Pitfalls', 'Any subject'];
+
+/** Why a guide lacks the built-in guides' title and headings, or null. */
+function guideProblem(text) {
+  if (!/^# +\S/m.test(text)) return 'has no "# " title';
+  const headings = [...text.matchAll(/^## +(.+)$/gm)].map((found) => found[1].trim().toLowerCase());
+  let at = 0;
+  for (const want of HEADINGS) {
+    const found = headings.findIndex((heading, i) => i >= at && heading.startsWith(want.toLowerCase()));
+    if (found < 0) return 'has no "## ' + want + '" heading' + (at ? ' after "## ' + HEADINGS[HEADINGS.indexOf(want) - 1] + '"' : '');
+    at = found + 1;
+  }
+  return null;
+}
+
+const LIBRARY_EXAMPLE = /^examples\/[^/]+\.js$/;
+
+/**
+ * The files a pack of `entry` holds: the piece as piece.cjs and each local
+ * helper or JSON file it reaches as lib/<name>, as { name: text }, with every
+ * literal require rewritten to its new place. The library's core/ becomes
+ * artifex/core/<file>.js, as does examples/stroke-font.js, which re-exports
+ * core's; any other library file is refused, since only core/ is API.
+ */
+function packSources(entry) {
+  const names = new Map([[entry, 'piece.cjs']]), taken = new Set(['piece.cjs']), found = new Map();
+  const nameOf = (file) => {
+    if (!names.has(file)) {
+      const extension = path.extname(file).toLowerCase(), stem = path.basename(file, path.extname(file));
+      let name = 'lib/' + stem + extension;
+      for (let n = 2; taken.has(name.toLowerCase()); n++) name = 'lib/' + stem + '-' + n + extension;
+      taken.add(name.toLowerCase());
+      names.set(file, name);
+    }
+    return names.get(file);
+  };
+  (function walk(file) {
+    if (found.has(file)) return;
+    const text = fs.readFileSync(file, 'utf8').replace(/^﻿/, '').replace(/^#![^\n]*/, '');
+    const one = { text, rewrites: [] };
+    found.set(file, one);
+    if (/\.json$/i.test(file)) return;
+    for (const dependency of imports(text, file)) {
+      let spec = dependency.spec;
+      if (!/^artifex\/core\//.test(spec)) {
+        const target = createRequire(file).resolve(spec);
+        const library = path.relative(ROOT, target).split(path.sep).join('/');
+        if (/^core\/[^/]+\.js$/.test(library) || library === 'examples/stroke-font.js') spec = 'artifex/core/' + path.basename(library);
+        else if (LIBRARY_EXAMPLE.test(library)) {
+          throw new Error('pack: ' + file + ' requires ' + dependency.spec + ', the library file ' + library + '; a pack may require only its own files and artifex/core/<file>.js');
+        } else {
+          walk(target);
+          spec = path.posix.relative(path.posix.dirname(nameOf(file)), nameOf(target));
+          if (!spec.startsWith('.')) spec = './' + spec;
+        }
+      }
+      one.rewrites.push({ ...dependency, spec });
+    }
+  })(entry);
+  const sources = {};
+  for (const [file, { text, rewrites }] of found) {
+    let out = text;
+    for (const r of rewrites.reverse()) out = out.slice(0, r.start) + 'require(' + JSON.stringify(r.spec) + ')' + out.slice(r.end);
+    sources[nameOf(file)] = out;
+  }
+  return sources;
+}
+
+// Serialized into the page: what the page's PNG button does, at `scale`, for
+// the one piece the page holds. Resolves to the recipe and the PNG as base64.
+async function drawPng(name, seed, t, width) {
+  const api = window.__artifex;
+  const p = api.piece.validate(api.examples[name]);
+  const solved = api.piece.solve(p, seed, {});
+  if (solved.stages.error) throw new Error('build stage ' + solved.stages.error.stage + ' threw: ' + solved.stages.error.message);
+  const scale = width / p.size.w;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(p.size.w * scale);
+  canvas.height = Math.round(p.size.h * scale);
+  const drawn = api.render.drawFrame(canvas.getContext('2d'), p, solved, t, { scale: scale });
+  const bytes = new Uint8Array(await (await new Promise((resolve) => canvas.toBlob(resolve))).arrayBuffer());
+  let text = '';
+  for (let at = 0; at < bytes.length; at += 0x8000) text += String.fromCharCode.apply(null, bytes.subarray(at, at + 0x8000));
+  return { manifest: Object.assign({}, solved.manifest, { t: drawn, scale: scale }), png: btoa(text) };
+}
+
+const SAMPLE_WIDTH = 600;
+
+/**
+ * The sample a pack's piece draws: an SVG in Node for a piece that declares
+ * vector output, else a PNG SAMPLE_WIDTH pixels wide from installed Edge,
+ * each carrying its replay manifest.
+ */
+async function drawSample(external, seed, t, browser = {}) {
+  const { piece } = external;
+  if (piece.outputs.includes('vector')) return { file: 'sample.svg', bytes: Buffer.from(renderVector(piece, { seed, t }).svg, 'utf8') };
+  const drawn = await withEdge(html(bundle(external), { count: 1 }), browser, async (client, context) => {
+    await waitFor(client, context, 'document.readyState === "complete" && !!window.__artifex');
+    context.phase = 'sample drawing';
+    const value = await evaluateInPieces(client, '(' + drawPng.toString() + ')(' + [piece.name, seed, t, SAMPLE_WIDTH].map((v) => JSON.stringify(v)).join(', ') + ')');
+    if (context.errors.length) throw new Error('browser: page errors:\n' + context.errors.join('\n'));
+    return value;
+  });
+  return { file: 'sample.png', bytes: Buffer.from(pngWithManifest(new Uint8Array(Buffer.from(drawn.png, 'base64')), drawn.manifest)) };
+}
+
+const PACK_USAGE = 'styles: usage: npm run styles -- pack <piece> --name <name> --guide <guide.md> --summary <text> '
+  + '[--title <text>] [--version <v>] [--author <text>] [--license <spdx>] [--seed <n>] [--t <0..1>] [--replace]';
+
+function packArgs(args) {
+  const flags = { '--name': 'name', '--guide': 'guide', '--summary': 'summary', '--title': 'title', '--version': 'version', '--author': 'author', '--license': 'license', '--seed': 'seed', '--t': 't' };
+  const options = { replace: false, piece: null };
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--replace') options.replace = true;
+    else if (Object.hasOwn(flags, args[i]) && i + 1 < args.length) options[flags[args[i]]] = args[++i];
+    else if (args[i].startsWith('-') || options.piece) throw new Error(PACK_USAGE);
+    else options.piece = args[i];
+  }
+  if (!options.piece || !options.name || !options.guide || !options.summary) throw new Error(PACK_USAGE);
+  return options;
+}
+
+/**
+ * Package the piece at `options.piece` as the pack `options.name`: copy it and
+ * the files it reaches, rewriting their requires; draw its sample; write
+ * style.json; replay the sample from a clean copy; and only when it matches,
+ * install the pack in <ARTIFEX_HOME>/styles/<name> and trust it. The pack is
+ * built in a folder of its own beside styles/, removed whatever happens, so a
+ * failure leaves the install folder and any pack it replaces as they were.
+ */
+async function pack(options, env = process.env, log = console.log, browser = {}) {
+  const cwd = callerDirectory(process.cwd(), env);
+  const name = options.name;
+  if (!NAME.test(name) || name.length > 40) throw new Error('pack: the name must be lowercase kebab-case, at most 40 characters, not "' + name + '"');
+  if (builtins().some((style) => style.name === name)) throw new Error('pack: "' + name + '" is a built-in style\'s name; choose another');
+  const dest = path.join(home(env), 'styles', name);
+  const existing = fs.lstatSync(dest, { throwIfNoEntry: false });
+  if (existing && existing.isSymbolicLink()) throw new Error('pack: ' + dest + ' is a link; remove it yourself first');
+  if (existing && !options.replace) throw new Error('pack: ' + dest + ' exists; pass --replace to replace it');
+  const guidePath = path.resolve(cwd, options.guide);
+  const guide = fs.readFileSync(guidePath);
+  const problem = guideProblem(guide.toString('utf8'));
+  if (problem) throw new Error('pack: ' + guidePath + ' ' + problem + '; a guide has "# <title>", then "## ' + HEADINGS.join('", "## ') + '", in that order');
+  const { entry, piece } = loadExternal(options.piece, cwd);
+  const seed = options.seed === undefined ? piece.seed : Number(options.seed);
+  if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) throw new Error('pack: --seed must be an integer from 0 to 4294967295');
+  const t = options.t === undefined ? 1 : Number(options.t);
+  if (!(t >= 0 && t <= 1)) throw new Error('pack: --t must be a number from 0 to 1');
+  const sources = packSources(entry);
+
+  fs.mkdirSync(home(env), { recursive: true });
+  const stage = fs.mkdtempSync(path.join(home(env), '.pack-' + name + '-'));
+  try {
+    for (const [file, text] of Object.entries(sources)) {
+      fs.mkdirSync(path.dirname(path.join(stage, file)), { recursive: true });
+      fs.writeFileSync(path.join(stage, file), text);
+    }
+    fs.writeFileSync(path.join(stage, 'guide.md'), guide);
+    const staged = loadExternal('piece.cjs', stage, { confine: { root: stage, files: Object.keys(sources) } });
+    const sample = await drawSample(staged, seed, frameT(staged.piece, t), browser);
+    fs.writeFileSync(path.join(stage, sample.file), sample.bytes);
+    const files = {};
+    for (const file of [...Object.keys(sources).sort(), 'guide.md', sample.file]) files[file] = sha256(fs.readFileSync(path.join(stage, file)));
+    const title = options.title || /^# +(.+)$/m.exec(guide.toString('utf8'))[1].trim();
+    const m = validateManifest({
+      stylePack: 1, name, title, version: options.version || '1.0.0', artifex: VERSION, summary: options.summary,
+      ...(options.author && { author: options.author }), ...(options.license && { license: options.license }),
+      piece: 'piece.cjs', guide: 'guide.md', sample: sample.file, files,
+    }, name);
+    fs.writeFileSync(path.join(stage, 'style.json'), JSON.stringify(m, null, 2) + '\n');
+    const proof = await prove(stage, m, browser);
+    if (!proof.match) throw new Error('pack: ' + name + ': ' + sample.file + ' does not replay from a clean copy of the pack, so nothing was installed: ' + proof.detail);
+    if (existing) fs.rmSync(dest, { recursive: true });
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.renameSync(stage, dest);
+    log('pack ' + name + ': ' + Object.keys(files).length + ' files in ' + dest + '; ' + sample.file + ' replays from a clean copy: ' + proof.detail);
+  } finally {
+    fs.rmSync(stage, { recursive: true, force: true });
+  }
+  trust(name, env, log);
 }
 
 function list(env = process.env, json = false, log = console.log) {
@@ -252,9 +461,10 @@ function list(env = process.env, json = false, log = console.log) {
   log('Packs are installed in ' + dir + '.');
 }
 
-const USAGE = 'styles: usage: npm run styles [-- list] [-- --json] | npm run styles -- check <name> | npm run styles -- trust <name>';
+const USAGE = 'styles: usage: npm run styles [-- list] [-- --json] | npm run styles -- check <name> | npm run styles -- trust <name> | npm run styles -- pack <piece> …';
 
-function main(args = process.argv.slice(2), env = process.env, log = console.log) {
+async function main(args = process.argv.slice(2), env = process.env, log = console.log) {
+  if (args[0] === 'pack') return pack(packArgs(args.slice(1)), env, log);
   const json = args.includes('--json');
   const rest = args.filter((arg) => arg !== '--json');
   if (rest.some((arg) => arg.startsWith('-'))) throw new Error(USAGE);
@@ -265,8 +475,9 @@ function main(args = process.argv.slice(2), env = process.env, log = console.log
   throw new Error(USAGE);
 }
 
-if (require.main === module) {
-  try { main(); } catch (error) { console.error(error.message); process.exitCode = 1; }
-}
+if (require.main === module) main().catch((error) => { console.error(error.message); process.exitCode = 1; });
 
-module.exports = { home, builtins, pathProblem, validateManifest, scan, resolve, verify, trust, load, check, list, main, STYLES };
+module.exports = {
+  home, builtins, pathProblem, validateManifest, scan, resolve, verify, trust, load, check, list, main, STYLES,
+  prove, guideProblem, packSources, packArgs, pack, drawPng, SAMPLE_WIDTH,
+};
