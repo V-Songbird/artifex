@@ -1569,9 +1569,11 @@ window.__artifex = {
   video: exportVideo,
   film: exportFilm,
   // Integrated loudness and true peak of an AudioBuffer, by the meter the film
-  // export levels its soundtrack with, so a decoded film can be measured.
+  // export levels its soundtrack with, so a decoded film can be measured, and
+  // the levelling itself, gain and limiter, applied in place for a codec's
+  // sample entry, so a fresh render can be levelled as the export levelled it.
   loudness: film.measureLoudness,
-  loudnessGain: film.loudnessGain,
+  level: film.normalizeLoudness,
   // The film export the page offers for the selected piece, once the encoders
   // have answered: 'mp4', 'webm' where H.264 cannot encode it or no codec can
   // encode its declared soundtrack, or null for a still. filmOffer() says why,

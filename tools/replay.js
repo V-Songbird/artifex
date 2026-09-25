@@ -263,8 +263,9 @@ function soundPlan(bytes, piece) {
 }
 
 // Serialized into the page. The film's soundtrack is decoded as a player hears
-// it, trimmed by its edit list, and the recipe's is rendered and levelled with
-// the page's loudnessGain for the film's `codec`, the gain the export applies.
+// it, trimmed by its edit list, and the recipe's is rendered and levelled in
+// place by the page's level for the film's `codec`, the gain and limiter the
+// export applies, to the same bits.
 // It first measures `cut`, the band the codec kept, as SOUND_CUT describes.
 // Then for each block of `block` samples, over every channel and the bins it
 // judges, it returns the rendered energy and the energy of the difference, then,
@@ -281,8 +282,7 @@ async function compareSound(bytes, recipe, block, codec, band, flatness, cut) {
   let decoded;
   try { decoded = await new OfflineAudioContext(2, 1, 48000).decodeAudioData(bytes.slice().buffer); } catch (e) { return { error: String((e && e.message) || e) }; }
   const rendered = await api.render.renderSound(p, solved, { OfflineAudioContext, sampleRate: 48000, channels: 2 });
-  const gain = api.loudnessGain(api.loudness(rendered), codec);
-  const scale = 10 ** (gain / 20);
+  const { gain, limited } = api.level(rendered, codec);
   const channels = Math.min(decoded.numberOfChannels, rendered.numberOfChannels), n = Math.min(decoded.length, rendered.length);
   // An in-place radix-2 transform of `block` points.
   const fft = (re, im) => {
@@ -312,7 +312,7 @@ async function compareSound(bytes, recipe, block, codec, band, flatness, cut) {
     const r = rendered.getChannelData(c), d = decoded.getChannelData(c);
     for (const s of [xr, xi, yr, yi, wr, wi, vr, vi]) s.fill(0);
     for (let i = at; i < Math.min(n, at + block); i++) {
-      const x = scale * r[i];
+      const x = r[i];
       xr[i - at] = x; yr[i - at] = d[i]; wr[i - at] = x * hann[i - at]; vr[i - at] = d[i] * hann[i - at];
     }
     fft(xr, xi); fft(yr, yi); fft(wr, wi); fft(vr, vi);
@@ -361,7 +361,7 @@ async function compareSound(bytes, recipe, block, codec, band, flatness, cut) {
     blocks.push([signal, error, noise, noiseError, envelope]);
   }
   return {
-    gain, rate: rendered.sampleRate, block, blocks, cut: top < bins ? (top * rendered.sampleRate) / block : null,
+    gain, limited, rate: rendered.sampleRate, block, blocks, cut: top < bins ? (top * rendered.sampleRate) / block : null,
     channels: [decoded.numberOfChannels, rendered.numberOfChannels], length: [decoded.length, rendered.length],
   };
 }
@@ -658,7 +658,7 @@ async function replay(file, options = {}) {
     return { browser: context.version.Browser, rows, sound };
   });
   const heard = plan && plan.codec ? soundVerdict(report.sound, plan.codec) : plan;
-  const sound = heard && { ...heard, ...(report.sound && { gain: report.sound.gain, length: report.sound.length, cut: report.sound.cut }) };
+  const sound = heard && { ...heard, ...(report.sound && { gain: report.sound.gain, limited: report.sound.limited, length: report.sound.length, cut: report.sound.cut }) };
   return { file, type, manifest, browser: report.browser, frames: report.rows, ...(sound && { sound }), ...replayVerdict(report.rows, heard) };
 }
 
