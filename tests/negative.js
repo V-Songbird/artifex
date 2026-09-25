@@ -3207,6 +3207,87 @@ const MUTATIONS = [
     to: 'envelope += (got - want) ** 2;',
     expect: 'a noise voice replays by what a perceptual codec keeps of it, and a different one still differs',
   },
+  {
+    why: 'a piece whose size lies outside the boxes it declares validates',
+    file: 'core/piece.js',
+    from: '  if (off) throw new PieceError(`boxes: size ${off}`);\n',
+    to: '',
+    expect: 'boxes are opt-in ranges that hold the size, and carry no other keys',
+  },
+  {
+    why: 'atBox draws a piece at a box outside the ranges it declares',
+    file: 'core/piece.js',
+    from: '  if (off) throw new PieceError(`atBox: ${piece.name} cannot draw at',
+    to: '  if (false) throw new PieceError(`atBox: ${piece.name} cannot draw at',
+    expect: 'atBox redraws a piece at a declared box and refuses any other, by name',
+  },
+  {
+    why: 'atBox stretches a piece that declares no boxes to any box asked of it',
+    file: 'core/piece.js',
+    from: '  if (!piece.boxes) {\n    throw new PieceError(`atBox:',
+    to: '  if (false) {\n    throw new PieceError(`atBox:',
+    expect: 'atBox redraws a piece at a declared box and refuses any other, by name',
+  },
+  {
+    why: 'the build stages are never told the box they are solved for',
+    file: 'core/piece.js',
+    from: '  if (piece.boxes) state.box = { w: piece.size.w, h: piece.size.h };',
+    to: '',
+    expect: 'a piece that declares boxes is solved for its box, and the recipe names it',
+  },
+  {
+    why: 'a piece that declares no boxes gets a box in its state it never had',
+    file: 'core/piece.js',
+    from: '  if (piece.boxes) state.box = { w: piece.size.w, h: piece.size.h };',
+    to: '  state.box = { w: piece.size.w, h: piece.size.h };',
+    expect: 'a piece that declares boxes is solved for its box, and the recipe names it',
+  },
+  {
+    why: 'refit lets a thing rest above the rim of its container',
+    file: 'examples/refit.js',
+    from: '        if (best.y - r < c.rim) { misses++; continue; }',
+    to: '        if (false) { misses++; continue; }',
+    expect: 'refit: a narrower box holds fewer of the same things, each inside it and clear of the rest',
+  },
+  {
+    why: 'replay draws a responsive piece at its default box, whatever box the file names',
+    file: 'tools/replay.js',
+    from: "  if (piece.boxes && manifest.size && typeof manifest.size === 'object') {",
+    to: '  if (false) {',
+    expect: 'a piece that declares boxes replays at the box its file names, and refuses a box it does not accept',
+  },
+  {
+    why: 'a contact sheet draws at the piece\'s own box whatever --box names, and refuses nothing',
+    file: 'tools/contact-sheet.js',
+    from: '    return planSheet(box ? atBox(p, box) : p, count, paramNames);',
+    to: '    return planSheet(p, count, paramNames);',
+    expect: 'contact sheet: --box draws one piece at a box it declares, names the sheet after it, and refuses any other',
+  },
+  {
+    why: 'the page opens a responsive piece at its default box whatever box the address bar names',
+    file: 'tools/build-page.js',
+    from: '    try { current = piece.atBox(base, from.box); }',
+    to: '    try { current = base; }',
+    expect: 'a piece that declares boxes opens at the address bar\'s box, rebuilds from its sliders and records the box',
+  },
+  {
+    why: 'the page leaves the box out of the recipe URL, so a shared link opens at the default box',
+    file: 'tools/build-page.js',
+    from: "  if (base.boxes) q.push('box=' + current.size.w + 'x' + current.size.h);\n",
+    to: '',
+    expect: 'a piece that declares boxes opens at the address bar\'s box, rebuilds from its sliders and records the box',
+  },
+  ...['compareFilm(bytes, recipe, frames)', 'compareSound(bytes, recipe, block, codec, band, flatness)', 'comparePng(bytes, recipe, heads, frames)', 'compareWebm(bytes, recipe, frames, seeks)'].map((head) => ({
+    why: `replay's ${head.split('(')[0]} redraws a responsive piece at its default box, whatever box the file names`,
+    file: 'tools/replay.js',
+    from: `async function ${head} {\n  const api = window.__artifex;\n`
+      + "  if (!Object.prototype.hasOwnProperty.call(api.examples, recipe.piece)) throw new Error('replay: the page has no piece named ' + JSON.stringify(recipe.piece));\n"
+      + '  const p = api.piece.atBox(api.piece.validate(api.examples[recipe.piece]), recipe.size);',
+    to: `async function ${head} {\n  const api = window.__artifex;\n`
+      + "  if (!Object.prototype.hasOwnProperty.call(api.examples, recipe.piece)) throw new Error('replay: the page has no piece named ' + JSON.stringify(recipe.piece));\n"
+      + '  const p = api.piece.validate(api.examples[recipe.piece]);',
+    expect: 'the page redraws a responsive film, its soundtrack, a PNG or a WebM at the box its recipe records',
+  })),
 
 ];
 

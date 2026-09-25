@@ -21,4 +21,5 @@ module.exports = {
   cover: require('./cover.js'),
   settle: require('./settle.js'),
   'pixel-field': require('./pixel-field.js'),
+  refit: require('./refit.js'),
 };

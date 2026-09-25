@@ -6,7 +6,7 @@ related_files: ["core/render.js", "core/film.js", "core/webgpu-preview.js", "cor
 
 # Output formats
 
-A piece keeps one design box and one drawing function. [`core/render.js`](../../core/render.js) applies the selected playhead and scale without changing that design box.
+A piece keeps one design box and one drawing function. [`core/render.js`](../../core/render.js) applies the selected playhead and scale without changing that design box. A piece that declares `boxes` can be drawn at another box in its ranges, chosen per export and recorded in the manifest as `size`; see [responsive boxes](../apis/piece-api.md#responsive-boxes).
 
 ## Interactive page and PNG
 
@@ -174,7 +174,7 @@ The PNG's JSON is ASCII: any other character is written as a `\uXXXX` escape, as
 
 ### Replaying a saved file
 
-`npm run replay -- <file>` reads the manifest back from a saved SVG, PNG, MP4 film or WebM film and draws its recipe again. The piece is the registered example the manifest names, looked up as an own property, or the module passed with `--piece`; a module named inside the file is never loaded. A file made by another library version, for another piece, or for a box or outputs the piece no longer declares is refused before anything is drawn, and so is a PNG whose size, scale or playhead no longer matches, and a film whose frame grid (frame count, rate and loop), size or number of frames no longer matches. Every refusal and every mismatch exits nonzero and names the first difference.
+`npm run replay -- <file>` reads the manifest back from a saved SVG, PNG, MP4 film or WebM film and draws its recipe again. The piece is the registered example the manifest names, looked up as an own property, or the module passed with `--piece`; a module named inside the file is never loaded. A file made by another library version, for another piece, or for a box or outputs the piece no longer declares is refused before anything is drawn; a piece that declares `boxes` is drawn again at the box the file names, if its ranges still hold it, and so is a PNG whose size, scale or playhead no longer matches, and a film whose frame grid (frame count, rate and loop), size or number of frames no longer matches. Every refusal and every mismatch exits nonzero and names the first difference.
 
 An SVG is drawn again in Node and must be byte-identical; a difference is named by its first byte. `svgManifest(svg)` in [`core/surface-vector.js`](../../core/surface-vector.js) reads the recipe from any SVG, whether `renderVector` or the page's SVG button wrote it. The page draws its SVG with the browser's JavaScript engine, and replay draws it again with Node's. So for a page SVG, byte identity also means the two engines computed the same numbers, which ECMAScript does not promise (see [verification culture](verification-culture.md)). A differing byte cannot tell a changed recipe from a different engine. In installed Edge 153, the page's SVGs of settle, readout, cues, contours and inversion replayed byte-identical in Node 22.
 

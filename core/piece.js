@@ -33,9 +33,10 @@ const FIELDS = {
       if (extra.length) return `unknown key(s) in size: ${extra.join(', ')}`;
       return null;
     },
-    doc: 'The DESIGN BOX, in design units. It never changes. Aspect ratio, '
-       + 'device scale and output medium are render-time choices, so one piece '
-       + 'serves a page, a video, a print and a plotter.',
+    doc: 'The DESIGN BOX, in design units. It never changes unless the piece '
+       + 'declares `boxes`. Aspect ratio, device scale and output medium are '
+       + 'render-time choices, so one piece serves a page, a video, a print and '
+       + 'a plotter.',
   },
 
   draw: {
@@ -183,6 +184,31 @@ const FIELDS = {
        + 'An explicit shader and up to 16 float uniforms; draw remains the CPU '
        + 'reference and every export uses it. This never translates JavaScript.',
   },
+
+  boxes: {
+    required: false,
+    default: () => null,
+    check: (v) => {
+      if (!v || typeof v !== 'object' || Array.isArray(v)) {
+        return v === null ? null : 'must be null (one fixed box) or { w: [min, max], h: [min, max] }';
+      }
+      const extra = Object.keys(v).filter((k) => k !== 'w' && k !== 'h');
+      if (extra.length) return `unknown key(s) in boxes: ${extra.join(', ')}`;
+      for (const k of ['w', 'h']) {
+        const r = v[k];
+        if (!Array.isArray(r) || r.length !== 2 || !r.every((x) => Number.isFinite(x) && x > 0)) {
+          return `boxes.${k} must be [min, max], two positive finite numbers`;
+        }
+        if (r[0] > r[1]) return `boxes.${k}: min must not exceed max`;
+      }
+      return null;
+    },
+    doc: 'null: the piece draws only at `size`. { w: [min, max], h: [min, max] }: '
+       + 'the design boxes it accepts, in design units, with `size` among them as '
+       + 'the box it draws at when nobody chooses one. A caller picks another with '
+       + 'atBox; build stages and draw read the box they were solved for from '
+       + 'state.box, so the piece recomposes to it rather than being stretched.',
+  },
 };
 
 const OUTPUTS = ['raster', 'vector'];
@@ -227,7 +253,40 @@ function validate(piece) {
   if (out.sound && !out.time) {
     throw new PieceError('sound: a soundtrack needs a timeline; declare time: { duration, hz }');
   }
+  const off = out.boxes && outside(out.boxes, out.size);
+  if (off) throw new PieceError(`boxes: size ${off}`);
   return out;
+}
+
+/** Why a box lies outside declared ranges, or null when it lies inside. */
+function outside(boxes, box) {
+  for (const k of ['w', 'h']) {
+    const [lo, hi] = boxes[k];
+    if (!(box[k] >= lo && box[k] <= hi)) return `${k} ${box[k]} is outside the declared [${lo}, ${hi}]`;
+  }
+  return null;
+}
+
+/**
+ * A validated piece at another design box.
+ *
+ * Returns a copy whose `size` is `box`, so everything that reads `size` -- the
+ * page's canvas, a film, a PNG, an SVG, the replay manifest -- takes the box
+ * without being told it changed. A piece that declares no `boxes` draws only at
+ * its own size; any other box, or one outside the declared ranges, is refused
+ * by name rather than stretched.
+ */
+function atBox(piece, box) {
+  if (!box || !Number.isFinite(box.w) || !Number.isFinite(box.h)) {
+    throw new PieceError(`atBox: a box is { w, h } in design units, got ${JSON.stringify(box)}`);
+  }
+  if (box.w === piece.size.w && box.h === piece.size.h) return piece;
+  if (!piece.boxes) {
+    throw new PieceError(`atBox: ${piece.name} declares no boxes, so it draws only at ${piece.size.w} x ${piece.size.h}`);
+  }
+  const off = outside(piece.boxes, box);
+  if (off) throw new PieceError(`atBox: ${piece.name} cannot draw at ${box.w} x ${box.h}: ${off}`);
+  return { ...piece, size: { w: box.w, h: box.h } };
 }
 
 /** Number of distinct drawn frames. 1 for a still. */
@@ -311,6 +370,9 @@ function solve(piece, seed, params, opt) {
   const sd = seed === undefined ? piece.seed : seed >>> 0;
   const state = piece.state();
   state.seed = sd;
+  // Only a piece that declares boxes is told its box; any other keeps the state
+  // it always had.
+  if (piece.boxes) state.box = { w: piece.size.w, h: piece.size.h };
   // Resolve every declared parameter to its value before running build stages.
   state.params = {};
   for (const [k, p] of Object.entries(piece.params)) state.params[k] = p.value;
@@ -414,6 +476,6 @@ function summarise(state) {
 }
 
 module.exports = {
-  FIELDS, OUTPUTS, VERSION, PieceError, validate,
+  FIELDS, OUTPUTS, VERSION, PieceError, validate, atBox,
   frameT, frameCount, frameDen, frameIndex, clockAt, solve, summarise, manifest,
 };

@@ -15,7 +15,7 @@ const zlib = require('node:zlib');
 
 const { renderVector, playheads } = require('../core/render.js');
 const { exportFilm, muxMp4 } = require('../core/film.js');
-const { solve } = require('../core/piece.js');
+const { solve, atBox } = require('../core/piece.js');
 const { nullSurface } = require('../tools/bench.js');
 const { callerDirectory, loadExternal } = require('../tools/piece-input.js');
 const { pngWithManifest, webmWithDuration, webmWithManifest } = require('../tools/build-page.js');
@@ -166,6 +166,38 @@ test('a film is checked against its frame grid, size and frame count before any 
     manifest, video: { width: 32, height: 24, timescale: 12000, delta: 1000, avcC: EDGE_AVCC, samples: Array.from({ length: 11 }, (_, i) => ({ data: Uint8Array.of(i, 1, 2, 3), key: i === 0 })) },
   });
   assert.throws(() => filmPlan(short, manifest, piece), /the film holds 11 of the 12 frames its manifest names/);
+});
+
+test('a piece that declares boxes replays at the box its file names, and refuses a box it does not accept', async (t) => {
+  const dir = scratch(t);
+  const narrow = atBox(validate(EXAMPLES.refit), { w: 405, h: 720 });
+  const { svg, manifest } = renderVector(narrow, { t: 0.5 });
+  const file = path.join(dir, 'narrow.svg');
+  fs.writeFileSync(file, svg);
+  const result = await replay(file);
+  assert.equal(result.match, true, result.detail);
+  assert.deepEqual(pieceFor(manifest).piece.size, { w: 405, h: 720 });
+  fs.writeFileSync(file, withManifest(svg, { ...manifest, size: { w: 100, h: 720 } }));
+  await assert.rejects(replay(file), /drawn at \{"w":100,"h":720\} and refit cannot draw at 100 x 720: w 100 is outside the declared \[240, 1920\]/);
+  // A film records its box too, and its frame size is checked against that box.
+  const bytes = await filmOf(narrow);
+  const film = manifestOf(bytes).manifest;
+  assert.deepEqual(film.size, { w: 405, h: 720 });
+  assert.equal(filmPlan(bytes, film, pieceFor(film).piece).length, 24);
+});
+
+test('the page redraws a responsive film, its soundtrack, a PNG or a WebM at the box its recipe records', async () => {
+  // Each page function is stopped at its solve, which is handed the piece it will draw.
+  const vm = require('node:vm');
+  const core = require('../core/piece.js');
+  for (const f of [compareFilm, compareSound, comparePng, compareWebm]) {
+    const solvedAt = [];
+    const piece = { validate: core.validate, atBox: core.atBox, solve: (p) => { solvedAt.push({ ...p.size }); throw new Error('stopped at the solve'); } };
+    const window = { __artifex: { examples: { refit: EXAMPLES.refit }, piece } };
+    const recipe = { piece: 'refit', seed: 5, params: {}, size: { w: 405, h: 720 }, film: { scale: 1 } };
+    await assert.rejects(vm.runInNewContext(`(${f})(new Uint8Array(0), ${JSON.stringify(recipe)}, [], [])`, { window }), /stopped at the solve/, f.name);
+    assert.deepEqual(solvedAt, [{ w: 405, h: 720 }], f.name + ' draws at the recorded box');
+  }
 });
 
 test('a long film is compared at 24 frames spread evenly, first and last included', () => {
@@ -509,7 +541,7 @@ test('a WebM frame whose read throws still closes the VideoFrame it was read thr
   });
   // Reading a frame fails where it is drawn onto the small canvas.
   const canvas = () => ({ getContext: () => ({ clearRect() {}, drawImage() { throw new Error('the frame could not be read'); } }) });
-  const api = { examples: { a: { name: 'a' } }, piece: { validate: (p) => p, solve: () => ({}) }, render: { playheads: () => [0, 1], drawFrame() {} } };
+  const api = { examples: { a: { name: 'a' } }, piece: { validate: (p) => p, atBox: (p) => p, solve: () => ({}) }, render: { playheads: () => [0, 1], drawFrame() {} } };
   const globals = {
     window: { __artifex: api }, VideoFrame, Blob, setTimeout, clearTimeout, atob,
     URL: { createObjectURL: () => 'blob:film', revokeObjectURL() {} },

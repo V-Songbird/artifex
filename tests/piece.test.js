@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { validate, frameT, frameCount, solve, summarise, PieceError } = require('../core/piece.js');
+const { validate, atBox, frameT, frameCount, solve, summarise, PieceError } = require('../core/piece.js');
 
 /** assert.throws() returns undefined, so catch the error to read its text. */
 function grab(fn) {
@@ -55,6 +55,49 @@ test('size must be a positive finite box, and carries no other keys', () => {
   assert.throws(() => validate({ ...minimal(), size: { w: 0, h: 10 } }), /size\.w must be a positive/);
   assert.throws(() => validate({ ...minimal(), size: { w: 10, h: Infinity } }), /size\.h must be a positive/);
   assert.throws(() => validate({ ...minimal(), size: { w: 10, h: 10, dpr: 2 } }), /unknown key\(s\) in size: dpr/);
+});
+
+test('boxes are opt-in ranges that hold the size, and carry no other keys', () => {
+  assert.equal(validate(minimal()).boxes, null, 'a piece draws at one box unless it declares more');
+  const boxes = { w: [50, 400], h: [25, 200] };
+  assert.equal(validate({ ...minimal(), boxes }).boxes, boxes);
+  assert.throws(() => validate({ ...minimal(), boxes: { w: [200, 400], h: [25, 200] } }), /boxes: size w 100 is outside the declared \[200, 400\]/);
+  assert.throws(() => validate({ ...minimal(), boxes: { w: [50, 400], h: [60, 200] } }), /boxes: size h 50 is outside/);
+  assert.throws(() => validate({ ...minimal(), boxes: { ...boxes, aspect: [1, 2] } }), /unknown key\(s\) in boxes: aspect/);
+  assert.throws(() => validate({ ...minimal(), boxes: { w: [400, 50], h: [25, 200] } }), /boxes\.w: min must not exceed max/);
+  for (const w of [[50], [0, 400], [50, Infinity], '50-400']) {
+    assert.throws(() => validate({ ...minimal(), boxes: { w, h: [25, 200] } }), /boxes\.w must be \[min, max\]/);
+  }
+  assert.throws(() => validate({ ...minimal(), boxes: [] }), /boxes: must be null/);
+});
+
+test('atBox redraws a piece at a declared box and refuses any other, by name', () => {
+  const p = validate({ ...minimal(), boxes: { w: [50, 400], h: [25, 200] } });
+  const narrow = atBox(p, { w: 60, h: 200 });
+  assert.deepEqual(narrow.size, { w: 60, h: 200 });
+  assert.deepEqual(p.size, { w: 100, h: 50 }, 'the declared piece is not changed');
+  assert.equal(atBox(p, { w: 100, h: 50 }), p, 'its own size is itself');
+  assert.throws(() => atBox(p, { w: 401, h: 50 }), /thing cannot draw at 401 x 50: w 401 is outside the declared \[50, 400\]/);
+  assert.throws(() => atBox(p, { w: 100, h: 24 }), /h 24 is outside/);
+  assert.throws(() => atBox(p, { w: NaN, h: 50 }), /a box is \{ w, h \}/);
+  const fixed = validate(minimal());
+  assert.equal(atBox(fixed, { w: 100, h: 50 }), fixed, 'a fixed piece accepts its own size');
+  assert.throws(() => atBox(fixed, { w: 60, h: 50 }), /thing declares no boxes, so it draws only at 100 x 50/);
+});
+
+test('a piece that declares boxes is solved for its box, and the recipe names it', () => {
+  const seen = [];
+  const p = validate({
+    ...minimal(),
+    boxes: { w: [50, 400], h: [25, 200] },
+    build: [['read the box', (s) => { seen.push({ ...s.box }); }]],
+  });
+  const at = solve(atBox(p, { w: 300, h: 30 }));
+  assert.deepEqual(seen, [{ w: 300, h: 30 }], 'the build stages read the box they are solved for');
+  assert.deepEqual(at.state.box, { w: 300, h: 30 });
+  assert.deepEqual(at.manifest.size, { w: 300, h: 30 });
+  assert.deepEqual(solve(p).state.box, { w: 100, h: 50 }, 'with no box chosen, it is the size');
+  assert.equal('box' in solve(validate(minimal())).state, false, 'a piece without boxes keeps the state it always had');
 });
 
 test('A STILL IS A LEGAL PIECE, and a timeline is opt-in', () => {
