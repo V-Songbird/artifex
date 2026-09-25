@@ -1,12 +1,12 @@
 ---
 type: api_spec
-summary: "Shows a runnable custom Artifex piece and the public validation, solving, rendering, static-layer, colour-dissolve and soundtrack entry points."
-related_files: ["core/piece.js", "core/render.js", "core/time.js", "core/film.js", "core/webgpu-preview.js", "core/surface-vector.js", "examples/pixel-field.js", "examples/readout.js", "examples/drift.js", "examples/settle.js", "examples/cues.js", "core/layer.js", "core/sound.js", "core/colour.js", "tests/layer.test.js", "tests/toolkit.test.js", "tests/piece.test.js", "tests/render.test.js", "tests/time.test.js", "tests/sound.test.js", "tests/film.test.js", "tests/webgpu-preview.test.js"]
+summary: "Shows a runnable custom Artifex piece and the public validation, responsive-box, solving, rendering, static-layer, colour-dissolve and soundtrack entry points."
+related_files: ["core/piece.js", "core/render.js", "core/time.js", "core/film.js", "core/webgpu-preview.js", "core/surface-vector.js", "examples/pixel-field.js", "examples/refit.js", "examples/readout.js", "examples/drift.js", "examples/settle.js", "examples/cues.js", "core/layer.js", "core/sound.js", "core/colour.js", "tests/layer.test.js", "tests/toolkit.test.js", "tests/piece.test.js", "tests/render.test.js", "tests/time.test.js", "tests/sound.test.js", "tests/film.test.js", "tests/webgpu-preview.test.js"]
 ---
 
 # Piece API
 
-[`FIELDS` in core/piece.js](../../core/piece.js) is the authoritative contract, including defaults and validation messages. A piece declares `name`, `size`, and `draw`; optional fields add state, build stages, parameters, outputs, a seed, a timeline, a soundtrack, and an explicitly authored GPU pixel preview.
+[`FIELDS` in core/piece.js](../../core/piece.js) is the authoritative contract, including defaults and validation messages. A piece declares `name`, `size`, and `draw`; optional fields add state, build stages, parameters, outputs, a seed, a timeline, a soundtrack, an explicitly authored GPU pixel preview, and the range of boxes it recomposes to.
 
 ## Render a custom piece
 
@@ -29,6 +29,7 @@ The command writes `out/first.svg`, containing one horizontal stroke. The piece 
 | Function | Contract |
 | --- | --- |
 | `validate(piece)` | Returns a normalized copy or throws `PieceError` naming invalid or unknown fields. |
+| `atBox(validatedPiece, { w, h })` | Returns the piece at another design box it declares in `boxes`, or itself at its own size; throws `PieceError` naming the box and the range it falls outside. See [responsive boxes](#responsive-boxes). |
 | `solve(validatedPiece, seed, params, options)` | Creates state, applies parameter overrides, and runs named build stages; stage errors are returned in `stages.error`. |
 | `drawFrame(surface, validatedPiece, solved, t, options)` | Draws onto a Canvas2D-shaped surface at a quantized playhead; `options.scale` controls output scale. |
 | `renderVector(piece, options)` | Validates, solves, and renders SVG, returning `svg`, `marks`, `seed`, `t`, `stages`, and `manifest`. |
@@ -46,6 +47,25 @@ Parameters declare `{ min, max, value, meaning }`. Validated values reach drawin
 For more than one frame, a looping timeline uses `i/n` and a non-looping timeline uses `i/(n-1)`. A single-frame timeline uses playhead zero. The same helpers define both drawing and export grids.
 
 For fixed source, input data, parameters, output configuration, and execution environment, repeated seed/playhead pairs should produce the same frame. Use addressed randomness from [`core/rand.js`](../../core/rand.js); do not make drawing depend on prior calls or wall-clock time.
+
+## Responsive boxes
+
+`size` is the design box a piece draws at. A piece that declares `boxes: { w: [min, max], h: [min, max] }`, in design units, accepts any box in those ranges and lays itself out for it; `size` must lie in them and is the box used when nobody chooses one. `boxes` defaults to `null`: such a piece draws only at `size`, as before, and its state gets no box.
+
+`atBox(piece, { w, h })` returns a copy of the validated piece whose `size` is that box. Everything that reads `size` then takes the box: `solve`, `drawFrame`, `renderVector`, the page's canvas and its PNG, SVG and film exports, and the manifest, which records it as `size`. `solve` sets `state.box = { w, h }` before the build stages run, so stages and `draw` compose for the box rather than stretching one composition. A box outside the ranges, or any box but its own size for a piece without `boxes`, is refused by name.
+
+```js
+const { validate, atBox } = require('./core/piece.js');
+const { renderVector } = require('./core/render.js');
+
+const piece = validate(require('./examples/refit.js'));
+const tall = renderVector(atBox(piece, { w: 405, h: 720 }), { t: 1 });
+tall.manifest.size;   // { w: 405, h: 720 }
+```
+
+The box is chosen per export: a film is drawn at one box, because its frame size cannot change while it plays. The built page shows width and height sliders for a piece that declares `boxes`, rebuilds as they move and keeps the box in its address bar as `box=WxH`; `__artifex.setBox(w, h)` does the same from a script. The page's live player, `?player=1`, shows the piece alone, fitted to the window: a piece with `boxes` takes the window's box, held inside its ranges, and recomposes on every resize without stopping playback; any other piece is scaled whole. It starts playing at once unless the piece has a soundtrack, which waits for a click or key because a browser starts sound only inside a gesture. The player was checked by hand on one Android phone: it recomposed on rotation without stretching and kept playing, paused and resumed on a tap, and started a soundtrack on the first tap. It has not been checked on iOS. `npm run seeds -- <piece> [count] [playhead] --box WxH` draws a contact sheet at a box, and `npm run replay` draws a file again at the box its manifest names.
+
+[`examples/refit.js`](../../examples/refit.js) keeps its things at their size in design units and fills a container that takes the box less a fixed margin, so a narrower box holds fewer of the same things. Run `node --test tests/piece.test.js` for the `boxes`, `atBox` and `state.box` contracts, and `node --test tests/examples.test.js tests/replay.test.js tests/contact-sheet.test.js` for refit, replay at a box and `--box`.
 
 ## Authored time
 

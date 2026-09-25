@@ -441,7 +441,7 @@ const PNG_STUB = () => Uint8Array.of(0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0
 /**
  * Run the built page in a vm sandbox of the host it needs, as every page test
  * does. Every element is a fakeCanvas over nullSurface, `width` by `height`,
- * that keeps its children, dataset, text, value and markup; `fields(tag)` adds
+ * that keeps its children, dataset, text, value, markup and attributes; `fields(tag)` adds
  * a test's own fields to each. toBlob hands `png()` back as an image/png Blob
  * through `onBlob(finish)`, and click records the element's download name in
  * `downloads`. Animation frames wait in `frames` until `frame(timestamp)` runs
@@ -459,6 +459,7 @@ function fakePage({
     tag, children: [], dataset: {}, textContent: '', value: '', width, height,
     classList: { add() {}, remove() {}, toggle() {} },
     appendChild(child) { this.children.push(child); },
+    setAttribute(name, value) { (this.attributes ||= {})[name] = String(value); },
     set innerHTML(value) { this.children = []; this.markup = value; },
     get innerHTML() { return this.markup || ''; },
     toBlob(callback) { onBlob(() => callback(new Blob([png()], { type: 'image/png' }))); },
