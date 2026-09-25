@@ -11,8 +11,8 @@
 // from the same recipe), `title` and `text`.
 //
 // The intro, the bloom seam, the ink shot, the crack seam, the mirror shot,
-// the bend and portal seams, the trace and print seams, the CAD shot and the
-// fold seam are the site's art. The three shots after them (rows, grid,
+// the bend and portal seams, the trace and print seams, the CAD shot, the fold
+// and paint seams and the Kandinsky shot are the site's art. The three shots after them (rows, grid,
 // cells) are placeholders that keep the stage's worker tier and recipe checks
 // exercised until the real shots replace them.
 'use strict';
@@ -32,6 +32,8 @@ module.exports = {
     { name: 'print', piece: './pieces/print.cjs', seam: true, text: 'The page is pulled from under the film. A lamp exposes the cyanotype beneath, the film is lifted away, and water washes the print blue: the doodle is a blueprint.' },
     { name: 'cad', piece: './pieces/cad.cjs', poster: './posters/cad.webp', title: 'One subject, ten media', text: 'The same bird crosses every medium. On the blueprint, the plotter from the first shot lays the CAD drawing a layer at a time: views, section, dimensions and fold lines, each in its own colour.' },
     { name: 'fold', piece: './pieces/fold.cjs', seam: true, text: 'A knife cuts the plot out part by part. The parts rise onto their own layers, the wing folds on its phantom line, and the sheet tears into strips: papercraft.' },
+    { name: 'paint', piece: './pieces/paint.cjs', seam: true, text: 'A wide knife spreads a thick ground over the papercraft, and the paper soaks up its oil. A brush lays the paint on in short, thick strokes, each dragging a little of the last: the swirling background first, the bird last.' },
+    { name: 'kandinsky', piece: './pieces/kandinsky.cjs', poster: './posters/kandinsky.webp', title: 'Thick paint, scraped thin', text: "A palette knife drags the strokes off in long passes, smearing their colour across the ground, and spreads the bird's own paint into circles, arcs, bars and lines: the same bird, as a Kandinsky." },
     { name: 'rows', piece: './pieces/rows.cjs', title: 'A placeholder shot', text: 'Scroll, and a pen rules rows across the page. Scroll back and it lifts them again: every frame is a function of the seed and the playhead.' },
     { name: 'grid', piece: './pieces/grid.cjs', seam: true, text: 'Columns cross the rows, and the cells they make fill.' },
     { name: 'cells', piece: './pieces/cells.cjs', seconds: 2, tier: 'worker', title: 'A placeholder still', text: 'The finished grid holds while you read, drawn off the main thread where the browser allows it.' },

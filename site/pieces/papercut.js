@@ -409,4 +409,4 @@ function drawKnife(g, s, sec, light) {
   g.restore();
 }
 
-module.exports = { cut, drawCut, CUT, LIFT, FOLD, TEARS, SPREAD };
+module.exports = { cut, drawCut, lifted, CUT, LIFT, FOLD, TEARS, SPREAD, PARTS };
