@@ -56,6 +56,9 @@ test('site: the real shot list builds, one script per shot, every module defined
   const html = fs.readFileSync(path.join(out, 'index.html'), 'utf8');
   assert.match(html, /<section class="shot seam" id="shot-grid" data-shot="1" aria-hidden="true">/);
   assert.equal((html.match(/<figure class="still"/g) || []).length, 2, 'a still for each shot, none for the seam');
+  // The data is a same-origin script, not text in the page: the page has no inline script.
+  assert.deepEqual(html.match(/<script[^>]*>/g), ['<script src="data.js">', '<script src="core.js">', '<script src="stage.js">']);
+  assert.equal(fs.readFileSync(path.join(out, 'data.js'), 'utf8'), 'window.__siteData = ' + JSON.stringify(data) + ';\n');
   assert.ok(result.firstLoad <= 150 * 1024, 'first load ' + result.firstLoad + ' bytes of brotli, over the 150 kB budget');
 });
 
@@ -110,6 +113,18 @@ test('site: a module, asset or shot list under a private directory is refused, b
   // A public poster is copied under the shot's name.
   const ok = fixture(t, [{ name: 'a', piece: './a.cjs', poster: './art/a.webp' }], { 'a.cjs': piece('a'), 'art/a.webp': 'RIFF' });
   assert.equal(ok.run().data.shots[0].poster, 'posters/a.webp');
+});
+
+test('site: a poster reaches the page only as posters/<name>, whatever the shot list names', (t) => {
+  // The stage sets the poster's src from data.js alone, and only the build writes it.
+  for (const poster of ['javascript:alert(1)//a.png', 'data:image/png;base64,AAAA.png', 'https://evil.example/a.png']) {
+    assert.throws(fixture(t, [{ name: 'a', piece: './a.cjs', poster }], { 'a.cjs': piece('a') }).run, { code: 'ENOENT' }, poster);
+  }
+  const outside = temp(t);
+  fs.writeFileSync(path.join(outside, 'a.png'), 'PNG');
+  const { dir, run } = fixture(t, [{ name: 'a', piece: './a.cjs', poster: '../' + path.basename(outside) + '/a.png' }], { 'a.cjs': piece('a') });
+  assert.equal(run().data.shots[0].poster, 'posters/a.png');
+  assert.ok(!fs.readFileSync(path.join(dir, 'out', 'data.js'), 'utf8').includes(path.basename(outside)));
 });
 
 test('site: the preview server serves the built files on loopback and nothing outside them', async (t) => {
