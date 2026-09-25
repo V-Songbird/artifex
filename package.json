@@ -16,7 +16,8 @@
     "examples": "node tools/render-examples.js",
     "bench": "node tools/bench.js",
     "site": "node tools/build-site.js",
-    "site:check": "node --test \"site/tests/*.test.js\""
+    "site:check": "node --test \"site/tests/*.test.js\"",
+    "posters": "node tools/posters.js"
   },
   "engines": {
     "node": ">=20"

@@ -1,0 +1,26 @@
+{
+  "recipe": {
+    "piece": "pieces/ink.cjs",
+    "seed": 1,
+    "t": 1,
+    "width": 1200,
+    "height": 800,
+    "type": "image/webp",
+    "quality": 0.82
+  },
+  "sources": {
+    "core/colour.js": "7a695b5727b6e3c78ec1a0c2a36e484a901f1996b710f0da75f659d404180f80",
+    "core/field.js": "34661a47d118e63b41671b7a77cfdb2e47f5bfbc18e4d3f191119166dcf5f35b",
+    "core/geom.js": "e91e30f1c25bbcc3482a1a6f3707e414187eb2108ea4b38ab75828a33f05e785",
+    "core/num.js": "19b90cec897a7b98bd6315f362b5cba41911b8be1e3e5dc226edaad0bd687203",
+    "core/rand.js": "67681661c602c813aa58ced7a87b8f6ff068cbadc5f260e05794cc7082d332f9",
+    "core/stroke-font.js": "c0eeccaf3ed03b72ae94b90d24cca894398e5d91489c77caaefede6bb9a5c8c8",
+    "pieces/brush.js": "455862346f2f5de3a930e06548332120f1f136793238ba7c4459c889972a9f10",
+    "pieces/held.js": "daaf4c6806bbffded541d8cc7c178e1f522b68baea6193c627ca2bb3f9cababd",
+    "pieces/ink.cjs": "c9f8540b3670b2b9f259cf80e7e16c087b964344f25014e8fa767c34b5ff7819",
+    "pieces/paper.js": "b943eee6af4e88ab2d3286a7d61c87c38fa0f756acb27bd5986d535684860ef9",
+    "pieces/water.js": "36574e66a487f4323d6bd3961022e6b113addd6c2ae8bda03d5a2d6a1d056407",
+    "pieces/wordmark.js": "ad4e7e19a591c686be905069d96b4a8cda8e1eb9deff9c65ae74628ddfa46714"
+  },
+  "poster": "c349e2c456e82232a9eee507813a41a8d3a59302a0a8df625ac7b2146c34e29b"
+}

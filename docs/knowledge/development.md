@@ -29,6 +29,7 @@ Artifex has no dependency installation or source compilation step. Use the Node 
 | `npm run bench` | Measures build, draw, and vector emission costs. |
 | `npm run site` | Builds the showcase site into `out/site/` from `site/shots.js`; `-- --serve` also serves it on loopback. See [the site](site.md). |
 | `npm run site:check` | Runs the site's own tests in `site/tests/`, outside the mutation suite. |
+| `npm run posters` | Draws the site's posters in installed Edge from the recipe in [the site](site.md#the-art-shots) and writes each that changed, with its recipe record, under `site/posters/`. |
 | `node tools/check-site.js` | Checks the built site in installed Edge: scroll, draws, reduced motion, the worker fallback, recipes and the frame budget on two references; run `npm run site` first. |
 
 Run `npm run check` after source changes. Run the mutation suite when changing a check, contract key, or invariant; it executes a full test run for each mutation and takes longer than the unit suite.
