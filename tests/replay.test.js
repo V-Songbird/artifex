@@ -20,7 +20,7 @@ const { nullSurface } = require('../tools/bench.js');
 const { callerDirectory, loadExternal } = require('../tools/piece-input.js');
 const { pngWithManifest, webmWithDuration, webmWithManifest } = require('../tools/build-page.js');
 const {
-  fileType, manifestOf, pieceFor, filmPlan, filmFrames, replayVerdict, replay, parseArgs, FILM_FLOOR_DB,
+  fileType, manifestOf, pieceFor, filmPlan, filmFrames, replayVerdict, replay, parseArgs, main, FILM_FLOOR_DB,
   soundPlan, compareSound, soundVerdict, SOUND_BLOCK, SOUND_FLOOR_DB, SOUND_GATE_DB, SOUND_BAND, SOUND_FLATNESS, SOUND_NOISE_DB,
   pngPlan, pngVerdict, webmPlan, PNG_FLOOR_DB, compareFilm, comparePng, compareWebm, sendBytes, PIECE_BYTES,
 } = require('../tools/replay.js');
@@ -568,6 +568,31 @@ test('replay reads every file type it knows by its bytes and names a file that c
   assert.throws(() => parseArgs(['a.svg', '--piece']), /usage/);
   assert.throws(() => parseArgs(['a.mp4', '--timeout-ms', '5']), /--timeout-ms must be an integer from 100 to 300000/);
   assert.deepEqual(parseArgs(['a.mp4', '--piece', './p.cjs', '--headed']), { file: 'a.mp4', piece: './p.cjs', browser: { headed: true } });
+  assert.equal(parseArgs(['a.svg', '--json']).json, true);
   const env = { npm_lifecycle_event: 'replay', npm_package_json: path.join(ROOT, 'package.json'), INIT_CWD: dir };
   assert.equal(callerDirectory(path.join(dir, 'elsewhere'), env), dir, 'npm run replay resolves paths from where it was called');
+});
+
+test('by default replay prints its verdict, naming the first difference, and the path of its full report, and --json prints the report too', async (t) => {
+  const dir = scratch(t);
+  const logged = [];
+  t.mock.method(console, 'log', (line) => logged.push(line));
+  const exitCode = process.exitCode;
+  t.after(() => { process.exitCode = exitCode; });
+  const result = { file: path.join(dir, 'a.svg'), type: 'svg', manifest: { piece: 'a', seed: 3 }, match: false, detail: 'first difference at byte 12' };
+  await main([result.file], async () => result, dir);
+  const verdict = `replay: ${result.file} (svg, a seed 3): DIFFERS; first difference at byte 12`;
+  const file = path.join(dir, 'replay-a.svg.json');
+  assert.deepEqual(logged, [verdict, 'report: ' + file]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), result);
+  assert.equal(process.exitCode, 1, 'a file that differs still fails');
+  logged.length = 0;
+  fs.rmSync(file);
+  process.exitCode = undefined;
+  await main([result.file, '--json'], async () => ({ ...result, match: true, detail: 'identical' }), dir);
+  assert.equal(JSON.parse(logged[0]).match, true);
+  assert.equal(logged[1], `replay: ${result.file} (svg, a seed 3): matches; identical`);
+  assert.equal(logged.length, 2);
+  assert.equal(fs.existsSync(file), false, '--json writes no file');
+  assert.equal(process.exitCode, undefined);
 });

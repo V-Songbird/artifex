@@ -13,7 +13,8 @@ const { setTimeout: delay } = require('node:timers/promises');
 const { webmBlockTimes, filmVerdict } = require('./build-page.js');
 
 const ROOT = path.resolve(__dirname, '..');
-const USAGE = 'usage: node tools/check-browser.js [--edge PATH] [--timeout-ms 60000] [--headed] [--force no-aac|no-webgl2|no-h264] [--allow-fallback]';
+const OUT = path.join(ROOT, 'out');
+const USAGE = 'usage: node tools/check-browser.js [--edge PATH] [--timeout-ms 60000] [--headed] [--force no-aac|no-webgl2|no-h264] [--allow-fallback] [--json]';
 
 // Serialized into the page before it loads, one per export fallback. Each takes
 // away one thing the browser can do, as a browser without it would answer, and
@@ -54,6 +55,8 @@ function parseArgs(args) {
     else if (arg === '--force' && !options.force && Object.hasOwn(FORCED, args[i + 1] || '')) options.force = args[++i];
     // For a machine without a usable GPU, where the encoder route cannot run.
     else if (arg === '--allow-fallback') options.allowFallback = true;
+    // Print the whole report instead of writing it to a file.
+    else if (arg === '--json') options.json = true;
     else throw new Error(USAGE);
   }
   if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 100 || options.timeoutMs > 300000) {
@@ -863,13 +866,21 @@ async function captureSheet(html, stem, { cells, width = 1280, ...options }) {
   });
 }
 
-async function main(args = process.argv.slice(2), run = runBrowserCheck) {
+// Writes a tool's full JSON report under `dir` and returns its absolute path.
+async function saveReport(name, report, dir = OUT) {
+  const file = path.resolve(dir, name + '.json');
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(file, JSON.stringify(report, null, 2) + '\n');
+  return file;
+}
+
+async function main(args = process.argv.slice(2), run = runBrowserCheck, dir = OUT) {
   const options = parseArgs(args);
   if (options.help) { console.log(USAGE); return; }
   let report, failure;
   try { report = await run(options); } catch (error) { failure = error; report = error.report; }
   if (report) {
-    console.log(JSON.stringify(report, null, 2));
+    if (options.json) console.log(JSON.stringify(report, null, 2));
     const films = report.films.length
       ? report.films.map((f) => '; film ' + f.name + (f.offered === 'webm'
         ? ' offered as WebM with MP4 hidden, recorded ' + f.frames + ' frames lasting ' + f.seconds + ' s'
@@ -887,6 +898,7 @@ async function main(args = process.argv.slice(2), run = runBrowserCheck) {
       + (report.allowFallback ? (report.forced ? ',' : '') + ' accepting a fallback colour route' : '')
       + ': ' + report.pieces.length + ' examples passed' + films
       + (failure ? '; cleanup failed' : '; owned browser, server and profile cleaned up'));
+    if (!options.json) console.log('report: ' + await saveReport('browser', report, dir));
   }
   if (failure) throw failure;
 }
@@ -895,6 +907,6 @@ if (require.main === module) main().catch((error) => { console.error(error.messa
 
 module.exports = {
   parseArgs, findEdge, connectCDP, evaluate, servePage, inspectPiece, filmsToExport, inspectFilm, runBrowserCheck, checkPage,
-  stopBrowser, removeProfile, main, FORCED, retryBehindSchedule, sheetReady, captureSheet, frameMatch, soundMatch, loudnessMatch, withEdge, waitFor, routeVerdict,
+  stopBrowser, removeProfile, main, saveReport, FORCED, retryBehindSchedule, sheetReady, captureSheet, frameMatch, soundMatch, loudnessMatch, withEdge, waitFor, routeVerdict,
   evaluateInPieces, PIECE_CHARS, SHOT_BYTES, bandRows, sheetPieces, sheetClip,
 };
