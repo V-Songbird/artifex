@@ -4,9 +4,10 @@
 // Build the showcase site into out/site/ from site/shots.js.
 //
 // Every shot is an ordinary piece, loaded through the external-piece loader as
-// one list, so a module two shots share is defined once, in shared.js, and
-// each shot's own modules go in its own script, which the stage loads as the
-// visitor nears the shot. core.js is bundle(): the module runtime, the library
+// one list, so a module two shots share is defined once, in the shared-<n>.js
+// that holds the modules those same shots share, and each shot's own modules
+// go in its own script. The stage loads a shot's scripts as the visitor nears
+// the shot. core.js is bundle(): the module runtime, the library
 // modules the shots and the stage require, and a registry of the shots.
 // data.js is the shot data the stage reads, a same-origin script rather than
 // text in the page. Nothing under a private directory is bundled or copied.
@@ -105,24 +106,28 @@ function build({ shots = path.join(SITE, 'shots.js'), site = SITE, out = OUT } =
   for (const m of external.modules) refusePrivate(m.file, 'module');
   const { list, frames } = readShots(config, external.pieces);
 
-  // A module reached by two shots goes in shared.js; the rest in its shot's own script.
+  // Modules reached by the same two or more shots go in one shared-<n>.js,
+  // numbered in order of the first shot that needs them; the rest in the
+  // shot's own script. A shot loads only the shared scripts it reaches.
   const users = new Map();
-  for (const p of external.pieces) for (const id of p.modules) users.set(id, (users.get(id) || 0) + 1);
+  external.pieces.forEach((p, i) => { for (const id of p.modules) users.set(id, (users.get(id) || []).concat(i)); });
   const files = new Map();
   const chunk = (name, ids) => {
     const source = external.modules.filter((m) => ids.includes(m.id)).map((m) => m.source).join('\n');
     if (source) files.set(name, parses(name, source));
     return source ? [name] : [];
   };
-  const shared = [...users].filter(([, n]) => n > 1).map(([id]) => id);
-  chunk('shared.js', shared);
+  const groups = new Map();
+  for (const [id, shots] of users) if (shots.length > 1) groups.set(shots.join(','), (groups.get(shots.join(',')) || []).concat(id));
+  const shared = [...groups].sort(([a], [b]) => a.split(',')[0] - b.split(',')[0] || (a < b ? -1 : 1))
+    .map(([key, ids], n) => ({ shots: key.split(',').map(Number), name: chunk('shared-' + (n + 1) + '.js', ids)[0] }));
   const posters = new Map();
   const data = {
     hz: config.hz, seed: config.seed, frames,
     shots: list.map((s, i) => {
       const reach = external.pieces[i].modules;
-      const scripts = (reach.some((id) => shared.includes(id)) ? ['shared.js'] : [])
-        .concat(chunk('shot-' + s.name + '.js', reach.filter((id) => !shared.includes(id))));
+      const scripts = shared.filter((c) => c.shots.includes(i)).map((c) => c.name)
+        .concat(chunk('shot-' + s.name + '.js', reach.filter((id) => users.get(id).length === 1)));
       let poster = null;
       if (s.poster) {
         const file = refusePrivate(path.resolve(base, s.poster), 'asset');
