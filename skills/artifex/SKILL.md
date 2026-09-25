@@ -199,9 +199,12 @@ For a piece that declares `boxes`, add `--box 405x720` to draw every cell at tha
 box; the file name gains the box (`my-piece-seeds-405x720.html`). Make one sheet
 per box you care about, such as 16:9, 1:1 and 9:16, and look at each.
 Literal `require(...)` imports of browser-compatible CommonJS helpers and JSON
-are bundled recursively. Node builtins, ESM and computed requires are unsupported.
-Use unshadowed direct calls outside template interpolation; this is a restricted
-CommonJS subset, not an arbitrary-module bundler.
+are bundled recursively. Import the library with `require('artifex/core/rand.js')`
+(any file in `core/`), which works from any folder. Node builtins, ESM and
+computed requires are unsupported. Use unshadowed direct calls outside template
+interpolation; this is a restricted CommonJS subset, not an arbitrary-module bundler.
+Node runs the piece from the same module text as the page, so `__dirname`,
+`__filename` and `require.resolve` are absent in both.
 Loading the module executes trusted local code; it is not a sandbox. Keep the
 piece and its helpers in the user's project rather than modifying the plugin's examples.
 
