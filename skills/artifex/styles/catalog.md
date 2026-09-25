@@ -23,6 +23,11 @@ subject, a small songbird, in that style.
 | <img src="images/doodle.png" width="120" alt="Ballpoint bird and doodles on a ruled notebook page"> | 7 | Doodle | ballpoint sketches in a notebook | double-pass pen lines, hatching, margin doodles | [doodle.md](doodle.md) |
 | <img src="images/kandinsky.png" width="120" alt="Bird made of circles, arcs and bars in the manner of Kandinsky"> | 8 | Kandinsky | geometric abstraction | halos, rings, arcs, bars, multiply glazes | [kandinsky.md](kandinsky.md) |
 | <img src="images/impasto.png" width="120" alt="Bird painted in thick dabs among orange swirls"> | 9 | Impasto | thick painted dabs | flow-aligned dabs with lit and dark ridges | [impasto.md](impasto.md) |
+| <img src="images/circuit-board.png" width="120" alt="Green circuit board with the bird laid out as gold and hatched copper art"> | 10 | Circuit board | a green printed circuit board from above | 45-degree copper under the mask, gold pads, silkscreen, parts | [circuit-board.md](circuit-board.md) |
+| <img src="images/watercolour.png" width="120" alt="Watercolour bird on a branch under a graded blue sky"> | 11 | Watercolour | transparent washes on paper | layered deformed washes, pooled pigment, dried rims, pencil | [watercolour.md](watercolour.md) |
+| <img src="images/sumi-e.png" width="120" alt="Ink brush bird on a plum branch under a reserved moon"> | 12 | Sumi-e | black ink brush painting on rice paper | pressed strokes that run dry, pale washes, reserved white | [sumi-e.md](sumi-e.md) |
+| <img src="images/star-atlas.png" width="120" alt="Star chart with the bird as a constellation"> | 13 | Star atlas | a printed celestial chart | projected grid, stars by magnitude, constellation, legend | [star-atlas.md](star-atlas.md) |
+| <img src="images/light-painting.png" width="120" alt="Bird traced in glowing light trails at night with sparks and an orb"> | 14 | Light painting | a long exposure of lights moved at night | additive trails with white cores, sparks, rippled reflection | [light-painting.md](light-painting.md) |
 
 ## See them
 
@@ -30,7 +35,7 @@ From the library root, this writes `skills/artifex/styles/gallery-param-style.ht
 one cell per style:
 
 ```shell
-npm run seeds -- ./skills/artifex/styles/gallery.cjs 10 1 --param style
+npm run seeds -- ./skills/artifex/styles/gallery.cjs 15 1 --param style
 ```
 
 `npm run page -- ./skills/artifex/styles/gallery.cjs` writes an interactive

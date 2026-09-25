@@ -277,7 +277,8 @@ surfaces without a reader use scale 1. The tree also stops after twelve reflecti
 
 When someone asks for a style by name, open the [style catalog](styles/catalog.md)
 and that style's guide before writing code: papercraft, 3D render, CAD
-drawing, pixel art, embroidery, sticker, voxel, doodle, Kandinsky or impasto.
+drawing, pixel art, embroidery, sticker, voxel, doodle, Kandinsky, impasto,
+circuit board, watercolour, sumi-e, star atlas or light painting.
 Each guide says what makes the style read as itself, then gives its recipe,
 palette and pitfalls. Start from the style's reference module in `styles/` and
 replace the demo subject with yours. A technique that misses the signature
