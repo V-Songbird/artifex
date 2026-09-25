@@ -627,16 +627,20 @@ function soundFilmPage(sound, heard) {
   const api = globals.window.__artifex;
   const length = 36000, samples = (scale) => Float32Array.from({ length }, (_, i) => scale * 0.1 * Math.sin(i / 10));
   const buffer = (scale) => ({ numberOfChannels: 2, length, sampleRate: 48000, duration: length / 48000, getChannelData: () => samples(scale) });
-  const manifest = { piece: 'a', seed: 1, film: { frames: 3, hz: 4, loop: false, scale: 1 } };
-  const video = { width: 32, height: 24, timescale: 12000, delta: 3000, avcC: EDGE_AVCC, samples: [0, 1, 2].map((i) => ({ data: Uint8Array.of(i, 1, 2, 3), key: !i })) };
+  // Exported at the page's default scale: a 32 x 24 box with its long edge at 1920 pixels.
+  const manifest = { piece: 'a', seed: 1, film: { frames: 3, hz: 4, loop: false, scale: 60 } };
+  const video = { width: 1920, height: 1440, timescale: 12000, delta: 3000, avcC: EDGE_AVCC, samples: [0, 1, 2].map((i) => ({ data: Uint8Array.of(i, 1, 2, 3), key: !i })) };
   Object.assign(api, {
     manifest: () => ({ piece: 'a', seed: 1, t: 0.5 }),
     filmOffer: async () => ({ format: 'mp4' }),
-    film: async () => ({ blob: new Blob([muxMp4({ manifest, video })]), width: 32, height: 24, frames: 3, seconds: 0.75, sound }),
+    film: async () => ({ blob: new Blob([muxMp4({ manifest, video })]), manifest, width: 1920, height: 1440, frames: 3, seconds: 0.75, sound }),
     loudness: () => heard,
   });
   api.examples.a.sound = {};
   api.render.renderSound = async () => buffer(1);
+  // Every reference frame is drawn at the scale the film names.
+  const draw = api.render.drawFrame;
+  api.render.drawFrame = (g, p, s, t, opt) => { if (!opt || opt.scale !== 60) throw new Error('a reference drawn at scale ' + (opt && opt.scale)); return draw(g, p, s, t); };
   globals.OfflineAudioContext = class { async decodeAudioData() { return buffer(10 ** (sound.gain / 20)); } };
   globals.document.getElementById = (id) => ({ checkVisibility: () => id === 'film1' });
   return globals;

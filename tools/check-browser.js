@@ -393,7 +393,8 @@ async function inspectFilm(name, force, retry) {
     manifest = JSON.parse(String.fromCharCode(...bytes.subarray(at + 24, at + new DataView(bytes.buffer).getUint32(at))));
     const recipe = api.manifest();
     delete recipe.t;
-    recipe.film = { frames: heads.length, hz: p.time.hz, loop: !!p.time.loop, scale: 1 };
+    // Drawn with the long edge at 1920 pixels, the page's default, never below the design box.
+    recipe.film = { frames: heads.length, hz: p.time.hz, loop: !!p.time.loop, scale: Math.max(1, 1920 / Math.max(p.size.w, p.size.h)) };
     if (JSON.stringify(manifest) !== JSON.stringify(recipe)) {
       throw new Error(name + ': the film names ' + JSON.stringify(manifest) + ' and the page ' + JSON.stringify(recipe));
     }
@@ -424,7 +425,7 @@ async function inspectFilm(name, force, retry) {
   full.width = width; full.height = height;
   const fg = report.conversion === 'cpu' ? full.getContext('2d', { willReadFrequently: true }) : full.getContext('2d');
   const pixels = (source) => { sg.clearRect(0, 0, w, h); sg.drawImage(source, 0, 0, w, h); return sg.getImageData(0, 0, w, h).data; };
-  const drawn = (i) => { fg.clearRect(0, 0, full.width, full.height); api.render.drawFrame(fg, p, solved, heads[i]); return pixels(full); };
+  const drawn = (i) => { fg.clearRect(0, 0, full.width, full.height); api.render.drawFrame(fg, p, solved, heads[i], { scale: webm ? 1 : report.manifest.film.scale }); return pixels(full); };
   const psnr = (a, b) => {
     let se = 0;
     for (let k = 0; k < a.length; k += 4) for (let c = 0; c < 3; c++) se += (a[k + c] - b[k + c]) ** 2;
