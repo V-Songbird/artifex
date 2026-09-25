@@ -95,7 +95,7 @@
   function boot() {
     const req = __require('stage');
     const P = req('core/piece.js'), R = req('core/render.js'), T = req('core/time.js');
-    const data = JSON.parse(document.getElementById('site-data').textContent);
+    const data = window.__siteData;
     const film = T.shots(data.shots.map((s) => [s.name, s.seconds]), { hz: data.hz, frames: data.frames });
     const last = data.frames - 1;
     const budget = 1000 / data.hz - 4;

@@ -7,7 +7,9 @@
 // one list, so a module two shots share is defined once, in shared.js, and
 // each shot's own modules go in its own script, which the stage loads as the
 // visitor nears the shot. core.js is bundle(): the module runtime and the
-// library. Nothing under a private directory is bundled or copied.
+// library. data.js is the shot data the stage reads, a same-origin script
+// rather than text in the page. Nothing under a private directory is bundled or
+// copied.
 //
 // `npm run site -- --serve` also serves out/site/ on loopback until stopped.
 
@@ -137,7 +139,8 @@ function build({ shots = path.join(SITE, 'shots.js'), site = SITE, out = OUT } =
     if (!template.includes(marker)) throw new Error('site: ' + path.join(site, 'index.html') + ' has no ' + marker + ' marker');
   }
   files.set('index.html', template.replace('<!-- shots -->', () => sections(list))
-    .replace('<!-- data -->', () => '<script type="application/json" id="site-data">' + JSON.stringify(data).replace(/</g, '\\u003c') + '</script>'));
+    .replace('<!-- data -->', () => '<script src="data.js"></script>'));
+  files.set('data.js', 'window.__siteData = ' + JSON.stringify(data) + ';\n');
   files.set('core.js', parses('core.js', bundle()));
   for (const name of ['stage.js', 'worker.js']) files.set(name, parses(name, read(name)));
   files.set('site.css', read('site.css'));
@@ -150,7 +153,7 @@ function build({ shots = path.join(SITE, 'shots.js'), site = SITE, out = OUT } =
   const brotli = (name) => zlib.brotliCompressSync(fs.readFileSync(path.join(out, name))).length;
   const sizes = Object.fromEntries([...files.keys(), ...posters.keys()].map((name) => [name, brotli(name)]));
   // What a visitor loads before the first shot draws.
-  const first = ['index.html', 'site.css', 'core.js', 'stage.js', ...data.shots[0].scripts, ...(data.shots[0].poster ? [data.shots[0].poster] : [])];
+  const first = ['index.html', 'data.js', 'site.css', 'core.js', 'stage.js', ...data.shots[0].scripts, ...(data.shots[0].poster ? [data.shots[0].poster] : [])];
   return {
     out, data, files: Object.keys(sizes), sizes,
     firstLoad: first.reduce((sum, name) => sum + sizes[name], 0),

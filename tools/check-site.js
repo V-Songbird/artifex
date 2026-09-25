@@ -236,9 +236,9 @@ async function play(client, context, base, data) {
 
 async function runSiteCheck(options = {}) {
   const dir = options.dir || OUT;
-  const index = path.join(dir, 'index.html');
-  if (!fs.existsSync(index)) throw new Error('site: ' + index + ' not found; run npm run site first');
-  const data = JSON.parse(/<script type="application\/json" id="site-data">([^<]*)<\/script>/.exec(fs.readFileSync(index, 'utf8'))[1]);
+  const file = path.join(dir, 'data.js');
+  if (!fs.existsSync(file)) throw new Error('site: ' + file + ' not found; run npm run site first');
+  const data = JSON.parse(/^window\.__siteData = (.*);$/m.exec(fs.readFileSync(file, 'utf8'))[1]);
   const shots = data.shots;
   const server = await serveSite(dir);
   try {
