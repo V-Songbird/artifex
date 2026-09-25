@@ -193,4 +193,4 @@ function draw(g, s) {
   caption(g, 'LIGHT PAINTING', font, 'rgba(230, 230, 255, 0.7)');
 }
 
-module.exports = { draw };
+module.exports = { name: 'light-painting', size: { w: 1000, h: 1000 }, seed: 2026, draw };

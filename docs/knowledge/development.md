@@ -26,6 +26,9 @@ Artifex has no dependency installation or source compilation step. Use the Node 
 | `npm run seeds -- drift 3 0.5 --param reach,turn` | Writes a 3-by-3 parameter grid at the piece's fixed seed. |
 | `npm run seeds -- refit 9 1 --box 405x720` | Writes a contact sheet at another box of a piece that declares `boxes`. |
 | `npm run replay -- out/readout.svg` | Reads the replay manifest of a saved SVG, PNG, MP4 film or WebM film, draws it again and prints whether the file matches, writing the full JSON report to `out/replay-<file name>.json`, or with `--json` printing it. |
+| `npm run styles` | Lists the built-in styles and the style packs installed under `~/.artifex/styles` (or `ARTIFEX_HOME`), with broken and refused folders and their reasons; `-- --json` prints the list as JSON. See [style packs](../apis/style-packs.md). |
+| `npm run styles -- trust <name>` | Verifies an installed pack's files against its `style.json`, shows them with the modules they require, and records the hash of its `style.json` as trusted. |
+| `npm run styles -- check <name>` | Checks a style: a built-in module loads as a piece of its name; a pack matches its hashes, is trusted, was proved on this version and loads confined to its files. It does not replay the sample. |
 | `npm run bench` | Measures build, draw, and vector emission costs. |
 | `npm run site` | Builds the showcase site into `out/site/` from `site/shots.js`; `-- --serve` also serves it on loopback. See [the site](site.md). |
 | `npm run site:check` | Runs the site's own tests in `site/tests/`, outside the mutation suite. |
@@ -55,6 +58,10 @@ Inline script-end text in ordinary quoted strings is escaped without changing it
 In PowerShell, use `npm.cmd` when forwarding options such as `--param`; a PowerShell npm shim may consume the `--` separator before npm sees it. For example: `npm.cmd --prefix "/path/to/artifex" run seeds -- "./piece.cjs" 3 0.5 --param width`.
 
 Parameter strips and grids use the same `--param` option and fixed-seed rules for external pieces. Run `node --test tests/external-piece.test.js tests/contact-sheet.test.js` for module loading, the `artifex/core/` import, Node and page parity, confinement refusals, nested dependencies, invocation paths, filenames, error cases and sweep contracts. Inspect the generated page and sheet in a browser to verify native rendering.
+
+## Style packs
+
+`npm run styles` lists built-in styles and installed style packs; [style packs](../apis/style-packs.md) defines the pack format, the install folder, name resolution, `trust` and `check`. Listing reads JSON only and runs no pack code. `ARTIFEX_HOME` replaces `~/.artifex`; a relative value resolves from npm's invocation directory, as `page` and `seeds` paths do. Run `node --test tests/styles.test.js` for `builtin.json` against the gallery, every `style.json` rule, broken and refused folders, the unknown-name error, trust and every `check` refusal; its tests use a temporary `ARTIFEX_HOME`, never the real one.
 
 ## Contact-sheet sweeps and metrics
 
@@ -101,10 +108,11 @@ Run `node --test tests/replay.test.js` for manifest reading, the version, piece,
 | [`core/geom.js`](../../core/geom.js), [`core/path.js`](../../core/path.js) | Geometry and path operations. |
 | [`core/num.js`](../../core/num.js), [`core/colour.js`](../../core/colour.js) | Numeric and colour operations. |
 | [`examples/index.js`](../../examples/index.js) | Examples available to the bundled tools. |
-| [`skills/artifex/styles/`](../../skills/artifex/styles/catalog.md) | Named styles: a guide and a reference module per style, drawn together by the external piece `gallery.cjs`. |
+| [`skills/artifex/styles/`](../../skills/artifex/styles/catalog.md) | Named styles: a guide and a reference module per style, each module a piece of its own, listed in `builtin.json` and drawn together by the external piece `gallery.cjs`. |
 | [`tools/build-page.js`](../../tools/build-page.js) | Browser bundle, transport, inspection interface, and exports. |
 | [`tools/piece-input.js`](../../tools/piece-input.js) | External CommonJS piece loading, one piece or a list sharing its modules, caller-directory resolution and dependency bundling. |
 | [`tools/check-browser.js`](../../tools/check-browser.js) | Installed Edge smoke checks and the owned browser/server lifecycle. |
+| [`tools/styles.js`](../../tools/styles.js) | The style registry: built-in styles from `builtin.json`, installed packs under `ARTIFEX_HOME`, `style.json` validation, trust and `check`; see [style packs](../apis/style-packs.md). |
 | [`tools/replay.js`](../../tools/replay.js) | Reading a saved file's replay manifest, drawing it again and comparing. |
 | [`tools/build-site.js`](../../tools/build-site.js), [`site/`](../../site/shots.js) | The showcase site: its builder, shot list, stage runtime, worker and tests; see [the site](site.md). |
 | [`tools/check-site.js`](../../tools/check-site.js) | The site's installed Edge check. |
@@ -159,7 +167,7 @@ Each checked frame is compared at 240 pixels wide with references drawn on the k
 
 For browser or export changes, inspect actual rendered output and saved files. Check exported video frame counts and spacing from the encoded file. Automated numerical checks do not establish composition, layering, or usability.
 
-The mutation suite copies `core/`, `examples/`, `tests/`, `tools/`, and `package.json` into temporary directories. Its control requires exit 0 and a complete, nonempty Node TAP report. A mutation is caught only when a completed exit-1 test run reports its named assertion; a completed passing run is escaped, and a different failed assertion is misnamed. Launch errors, signals, unexpected exit codes, and incomplete or inconsistent TAP are infrastructure failures, including when some failures were printed before the process stopped. The runner keeps process metadata and both output streams, reports infrastructure failures separately, and exits unsuccessfully. A control with failing tests prints each failed title with its TAP diagnostic: the assertion message, expected and actual values, and location. Misnamed and infrastructure lines print the same diagnostics for the failures they did see. Run `node --test tests/negative-runner.test.js` for bounded process and report regression checks.
+The mutation suite copies `core/`, `examples/`, `skills/`, `tests/`, `tools/`, and `package.json` into temporary directories. Its control requires exit 0 and a complete, nonempty Node TAP report. A mutation is caught only when a completed exit-1 test run reports its named assertion; a completed passing run is escaped, and a different failed assertion is misnamed. Launch errors, signals, unexpected exit codes, and incomplete or inconsistent TAP are infrastructure failures, including when some failures were printed before the process stopped. The runner keeps process metadata and both output streams, reports infrastructure failures separately, and exits unsuccessfully. A control with failing tests prints each failed title with its TAP diagnostic: the assertion message, expected and actual values, and location. Misnamed and infrastructure lines print the same diagnostics for the failures they did see. Run `node --test tests/negative-runner.test.js` for bounded process and report regression checks.
 
 Every infrastructure result, for the control or a mutation, is kept under the run's temporary root in `infrastructure/control` or `infrastructure/m<index>`: `stdout.tap` holds the captured TAP stream, `stderr.txt` the standard error, and `result.json` the exit status, signal, error, failure reason, deadline and PID. The report line names that directory. Each mutated copy is removed as soon as its verdict is printed and its evidence kept, so a run holds the control and at most one mutated copy at a time; a copy that cannot be removed is reported as an infrastructure failure that names it. Final cleanup removes the control and anything left, and removes the temporary root only when nothing was kept; the summary then names the kept `infrastructure` directory.
 

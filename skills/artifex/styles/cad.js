@@ -452,4 +452,4 @@ function draw(g) {
   cell(800, 922, 'MATERIAL', 'PAPER 120 GSM', 11);
 }
 
-module.exports = { draw };
+module.exports = { name: 'cad', size: { w: 1000, h: 1000 }, seed: 2026, draw };

@@ -240,4 +240,4 @@ function draw(g, s) {
   caption(g, 'DOODLE', font, BLUE, 128, 952, 14);
 }
 
-module.exports = { draw };
+module.exports = { name: 'doodle', size: { w: 1000, h: 1000 }, seed: 2026, draw };

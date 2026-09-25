@@ -263,4 +263,4 @@ function draw(g, s) {
   caption(g, 'SUMI-E', font, ink(0.7), 880, 950);
 }
 
-module.exports = { draw };
+module.exports = { name: 'sumi-e', size: { w: 1000, h: 1000 }, seed: 2026, draw };

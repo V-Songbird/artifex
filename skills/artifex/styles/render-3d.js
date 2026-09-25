@@ -231,4 +231,4 @@ function draw(g) {
   caption(g, '3D', font, 'rgba(70, 64, 80, 0.8)');
 }
 
-module.exports = { draw };
+module.exports = { name: 'render-3d', size: { w: 1000, h: 1000 }, seed: 2026, draw };

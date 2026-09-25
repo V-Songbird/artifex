@@ -239,4 +239,4 @@ function draw(g, s) {
   caption(g, 'PAPERCRAFT', font, 'rgba(239,230,210,0.85)');
 }
 
-module.exports = { draw };
+module.exports = { name: 'papercraft', size: { w: 1000, h: 1000 }, seed: 2026, draw };

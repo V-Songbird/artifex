@@ -202,4 +202,4 @@ function draw(g, s) {
   caption(g, 'KANDINSKY', font, 'rgba(27, 27, 31, 0.8)');
 }
 
-module.exports = { draw };
+module.exports = { name: 'kandinsky', size: { w: 1000, h: 1000 }, seed: 2026, draw };

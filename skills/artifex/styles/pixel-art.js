@@ -242,4 +242,4 @@ function draw(g, s) {
   caption(g, 'PIXEL', font, 'rgba(253, 240, 200, 0.85)', 40, 955);
 }
 
-module.exports = { draw };
+module.exports = { name: 'pixel-art', size: { w: 1000, h: 1000 }, seed: 2026, draw };
