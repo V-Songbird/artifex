@@ -8,7 +8,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { shots } = require('../../core/time.js');
 const { frameIndex, frameT } = require('../../core/piece.js');
-const { playheadAt, frameOf, readRecipe, writeRecipe, p95, lower, fit, JUDGED, PIXEL_CAP } = require('../stage.js');
+const { playheadAt, frameOf, readRecipe, writeRecipe, p95, lower, judgeDraw, fit, JUDGED, OVER, PIXEL_CAP } = require('../stage.js');
 
 test('stage: every site frame of a shot maps to a playhead in [0, 1], ends included, and back', () => {
   const film = shots([['a', 3], ['b', 2], ['c', 2]], { hz: 30, frames: 210 });
@@ -52,9 +52,11 @@ test('stage: a shot over budget lowers its scale to one device pixel per CSS pix
   const slow = Array(JUDGED).fill(40), fast = Array(JUDGED).fill(5);
   assert.equal(lower(1, 3, fast, 29), 1);
   assert.equal(lower(1, 3, slow.slice(1), 29), 1, 'too few draws to judge');
-  // One slow frame in twenty is inside the p95; two are not.
-  assert.equal(lower(1, 3, [...fast.slice(1), 40], 29), 1);
-  assert.equal(lower(1, 3, [...fast.slice(2), 40, 40], 29), 0.75);
+  // Two slow draws in twenty do not lower the scale; three do.
+  assert.equal(OVER, 3);
+  assert.equal(lower(1, 3, [...fast.slice(2), 40, 40], 29), 1);
+  assert.equal(lower(1, 3, [...fast.slice(3), 40, 40, 40], 29), 0.75);
+  assert.equal(lower(1, 3, [40, 40, 40, ...fast.slice(3)].concat(fast), 29), 1, 'only the last twenty count');
   let scale = 1;
   const seen = [];
   while (scale > 0) { seen.push(scale); scale = lower(scale, 3, slow, 29); }
@@ -62,6 +64,43 @@ test('stage: a shot over budget lowers its scale to one device pixel per CSS pix
   assert.ok(seen.every((s, i) => i === 0 || s < seen[i - 1]));
   assert.equal(lower(1, 1, slow, 29), 0, 'at DPR 1 nothing is left to lower');
   assert.equal(p95([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]), 19);
+});
+
+// Draws of one shot in one context, as the stage judges them: [ms, warm].
+function judgeAll(s, context, draws, dpr = 3) {
+  let scale = s.scale;
+  for (const [ms, warm = false] of draws) scale = judgeDraw(s, context, ms, warm, dpr, 29);
+  return scale;
+}
+
+test('stage: a cold draw is not judged: one cold draw and two spikes in twenty do not lower the scale', () => {
+  const s = { scale: 1, times: [], context: null };
+  const draws = [[600], ...Array(17).fill([5]), [45], [45], [5]];
+  assert.equal(judgeAll(s, 'a', draws), 1);
+  assert.equal(s.times.length, 20, 'the first draw in a context is left out');
+  assert.ok(!s.times.includes(600));
+  // A warm-up draw is not judged either, and takes the cold draw on itself.
+  const t = { scale: 1, times: [], context: null };
+  judgeAll(t, 'b', [[600, true], [5]]);
+  assert.deepEqual(t.times, [5]);
+});
+
+test('stage: three over-budget draws in twenty lower the scale', () => {
+  const s = { scale: 1, times: [], context: null };
+  const next = judgeAll(s, 'a', [[5], ...Array(17).fill([5]), [45], [45], [45]]);
+  assert.equal(next, 0.75);
+  assert.deepEqual(s.times, [], 'a new scale is judged afresh');
+});
+
+test('stage: the draw after a scale change is not judged', () => {
+  const s = { scale: 1, times: [], context: null };
+  s.scale = judgeAll(s, 'scale 1', [[5], ...Array(17).fill([5]), [45], [45], [45]]);
+  assert.equal(s.scale, 0.75);
+  // The stage draws the same frame again at the new scale: a new context, a cold draw.
+  assert.equal(judgeDraw(s, 'scale 0.75', 900, false, 3, 29), 0.75);
+  assert.deepEqual(s.times, []);
+  assert.equal(judgeDraw(s, 'scale 0.75', 5, false, 3, 29), 0.75);
+  assert.deepEqual(s.times, [5]);
 });
 
 test('stage: the canvas fits the design box inside the view, centred by the caller, under the pixel cap', () => {
