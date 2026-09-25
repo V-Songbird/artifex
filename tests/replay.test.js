@@ -21,7 +21,7 @@ const { callerDirectory, loadExternal } = require('../tools/piece-input.js');
 const { pngWithManifest, webmWithDuration, webmWithManifest } = require('../tools/build-page.js');
 const {
   fileType, manifestOf, pieceFor, filmPlan, filmFrames, replayVerdict, replay, parseArgs, main, FILM_FLOOR_DB,
-  soundPlan, compareSound, soundVerdict, SOUND_BLOCK, SOUND_FLOOR_DB, SOUND_GATE_DB, SOUND_BAND, SOUND_FLATNESS, SOUND_NOISE_DB, SOUND_CUT,
+  soundPlan, compareSound, soundVerdict, SOUND_BLOCK, SOUND_FLOOR_DB, SOUND_GATE_DB, SOUND_BAND, SOUND_FLATNESS, SOUND_NOISE_DB, SOUND_VOICE, SOUND_CUT,
   pngPlan, pngVerdict, webmPlan, PNG_FLOOR_DB, compareFilm, comparePng, compareWebm, sendBytes, PIECE_BYTES,
 } = require('../tools/replay.js');
 const { fakeAudio, fakeCodecs, fakeCanvas, EDGE_AVCC } = require('./fake-media.js');
@@ -237,9 +237,9 @@ const levelled = (channels, codec = 'mp4a') => { const out = channels.map((x) =>
  * compareSound as the page runs it, from its source text alone, with the page's
  * loudness meter and gain: the piece renders `rendered` and the film decodes
  * to `decoded`, or fails to decode, from a soundtrack in `codec`, its cut
- * measured by `cut`.
+ * measured by `cut`, its bands judged alone as `voice` names them.
  */
-async function soundInPage({ rendered, decoded }, codec = 'mp4a', cut = SOUND_CUT) {
+async function soundInPage({ rendered, decoded }, codec = 'mp4a', cut = SOUND_CUT, voice = SOUND_VOICE) {
   const vm = require('node:vm');
   const p = validate({ name: 'tone', size: { w: 8, h: 8 }, time: { duration: 1, hz: 10 }, sound() {}, draw() {} });
   class OfflineAudioContext {
@@ -249,7 +249,7 @@ async function soundInPage({ rendered, decoded }, codec = 'mp4a', cut = SOUND_CU
   }
   const window = { __artifex: { piece: require('../core/piece.js'), render: require('../core/render.js'), examples: { tone: p }, level: normalizeLoudness } };
   const recipe = { ...solve(p, p.seed).manifest, film: { frames: 10, hz: 10, loop: false, scale: 1 } };
-  const run = `(${compareSound})(new Uint8Array(${JSON.stringify([...Buffer.from('film')])}), ${JSON.stringify(recipe)}, ${SOUND_BLOCK}, ${JSON.stringify(codec)}, ${SOUND_BAND}, ${SOUND_FLATNESS}, ${JSON.stringify(cut)})`;
+  const run = `(${compareSound})(new Uint8Array(${JSON.stringify([...Buffer.from('film')])}), ${JSON.stringify(recipe)}, ${SOUND_BLOCK}, ${JSON.stringify(codec)}, ${SOUND_BAND}, ${SOUND_FLATNESS}, ${JSON.stringify(cut)}, ${JSON.stringify(voice)})`;
   return vm.runInNewContext(run, { window, OfflineAudioContext, atob });
 }
 
@@ -361,7 +361,7 @@ test('a noise voice replays by what a perceptual codec keeps of it, and a differ
   for (const codec of ['mp4a', 'Opus']) {
     const heard = soundVerdict(own, codec);
     assert.equal(heard.match, true, heard.detail);
-    assert.match(heard.detail, /in its noise-like bands, within 3 dB of its waveform and 18 dB of its levels \(47 blocks, worst /);
+    assert.match(heard.detail, /in its noise-like bands, within 3 dB of its waveform, together and in each band under 15 kHz within 25 dB of its block, and 18 dB of its levels \(47 blocks, worst /);
   }
   const waveOnly = own.blocks.map(([signal, error]) => 10 * Math.log10(signal / error));
   assert.ok(Math.max(...waveOnly) < 15, `every block misses the waveform floor: ${Math.max(...waveOnly).toFixed(1)} dB at best`);
@@ -428,6 +428,53 @@ test('a soundtrack is judged below the band its codec kept, measured from the fi
   }
 });
 
+test('each noise-like band and the rest of a block keep their own waveform, so a quiet voice replaced or a tone moved under loud noise still differs', async () => {
+  // The hat alone at 0.3 comes 8.3 dB under the two other noise voices.
+  const hat = (under) => ({ level: 0.3 * 10 ** ((8.3 - under) / 20) });
+  const judged = async (recipe, film, codec) => soundVerdict(await soundInPage({ rendered: noiseSoundtrack(recipe).sound, decoded: filmOfNoise(film) }, codec), codec);
+  for (const codec of ['mp4a', 'Opus']) {
+    for (const under of [8, 10, 14]) {
+      const own = await judged({ hat: hat(under) }, { hat: hat(under) }, codec);
+      assert.equal(own.match, true, `a hat ${under} dB under the other noise, ${codec}: ${own.detail}`);
+      const other = await judged({ hat: hat(under) }, { hat: { ...hat(under), seed: 9 } }, codec);
+      assert.equal(other.match, false, `a hat ${under} dB under the other noise, from another seed, ${codec}`);
+      assert.match(other.detail, /, and its noise-like band at \d+\.\d\d to \d+\.\d\d kHz follows the render's waveform at -?\d+\.\d dB, under 3 dB$/);
+    }
+    // A tone 21 dB under a hat, alone.
+    const loud = { low: null, high: null, hat: { level: 0.97 } };
+    assert.equal((await judged(loud, loud, codec)).match, true, `a tone under a loud hat, ${codec}`);
+    const moved = await judged(loud, { ...loud, toneHz: 466 }, codec);
+    assert.equal(moved.match, false, `a tone moved from 440 to 466 Hz under a hat 21 dB louder, ${codec}`);
+    // AAC's floor already names it; Opus's 15 dB passed it before the rest was judged on its own.
+    if (codec === 'Opus') assert.match(moved.detail, /, and outside its noise-like bands it follows the render's waveform at -?\d+\.\d dB, under 10 dB$/);
+  }
+});
+
+test('a noise-like band a codec may not keep is judged only with the others: 41 dB under its block, or above 15 kHz', async () => {
+  // A tone over a noise bed from 1.5 to 6 kHz, a quiet noise across 9.75 to
+  // 10.5 kHz and another across 18 to 18.75 kHz, each cut wider than those
+  // bands so they stay noise-like; the film holds each noise with another 10 dB under it.
+  const bands = new Map();
+  const band = (seed, lo, hi) => {
+    const key = [seed, lo, hi].join();
+    if (!bands.has(key)) { const w = whiteNoise(48000, seed), under = lowPass(w, lo); bands.set(key, lowPass(w, hi).map((v, i) => v - under[i])); }
+    return bands.get(key);
+  };
+  const voices = [[1, 1500, 6000, 0.5], [3, 9500, 10750, 0.02], [5, 17750, 19000, 0.15]];
+  // Voice `other` comes from another seed.
+  const mix = (coded, other = -1) => [0, 1].map((c) => Float32Array.from({ length: 48000 }, (_, i) => 0.2 * Math.sin((2 * Math.PI * (440 + 110 * c) * i) / 48000)
+    + voices.reduce((s, [seed, lo, hi, level], v) => {
+      const at = v === other ? seed + 20 : seed;
+      return s + level * (band(at * 2 + c, lo, hi)[i] + (coded ? 10 ** (-10 / 20) * band((at + 50) * 2 + c, lo, hi)[i] : 0));
+    }, 0)));
+  const rendered = mix(false), scale = 10 ** (normalizeLoudness(audio(rendered.map((x) => x.slice())), 'Opus').gain / 20);
+  for (const [what, other] of [['its own film', -1], ['the quiet noise from another seed', 1], ['the noise above 15 kHz from another seed', 2]]) {
+    const heard = soundVerdict(await soundInPage({ rendered, decoded: mix(true, other).map((x) => x.map((v) => v * scale)) }, 'Opus'), 'Opus');
+    assert.equal(heard.match, true, `${what}: ${heard.detail}`);
+    assert.match(heard.detail, /in its noise-like bands, .* \(47 blocks, /, `${what} is judged by its noise-like bands`);
+  }
+});
+
 test('a soundtrack is judged without its mean, which Opus removes', async () => {
   const rendered = tone(48000).map((x) => x.map((v, i) => (i < 24000 ? v + 0.05 : v)));
   const scale = 10 ** (normalizeLoudness(audio(rendered.map((x) => x.slice())), 'Opus').gain / 20);
@@ -438,20 +485,32 @@ test('a soundtrack is judged without its mean, which Opus removes', async () => 
 test('a block under its floor matches only where the rest keeps it and its noise-like bands keep their waveform and levels', () => {
   assert.equal(SOUND_BAND, 16);
   assert.equal(SOUND_FLATNESS, 0.4);
-  assert.deepEqual(SOUND_NOISE_DB, { waveform: 3, envelope: 18 });
+  assert.deepEqual(SOUND_NOISE_DB, { waveform: 3, envelope: 18, rest: 10 });
+  assert.deepEqual(SOUND_VOICE, { share: -25, below: 15000 });
   const at = (...blocks) => ({ rate: 48000, block: SOUND_BLOCK, channels: [2, 2], length: [SOUND_BLOCK * blocks.length, SOUND_BLOCK * blocks.length], blocks });
   // A block of energy 1 whose noise-like bands hold `noise` of it: the error
   // outside them `rest` dB under the block, and inside them `wave` dB under
-  // their energy, with their levels `level` dB from the render's.
-  const noisy = ({ noise = 0.9, rest = 30, wave = 10, level = 25 } = {}) => {
+  // their energy, with their levels `level` dB from the render's; its band 7,
+  // holding half the noise, `alone` dB under its own energy.
+  const noisy = ({ noise = 0.9, rest = 30, wave = 10, level = 25, alone = 10 } = {}) => {
     const inside = noise * 10 ** (-wave / 10);
-    return [1, 10 ** (-rest / 10) + inside, noise, inside, noise * 10 ** (-level / 10)];
+    return [1, 10 ** (-rest / 10) + inside, noise, inside, noise * 10 ** (-level / 10), 7, noise / 2, (noise / 2) * 10 ** (-alone / 10)];
   };
   const differs = 'the soundtrack differs from its recipe at 0.000 s: that block decodes 10.4 dB from the render, under the 25 dB floor for AAC';
   assert.deepEqual(soundVerdict(at(noisy()), 'mp4a'), { match: true, detail: 'the AAC soundtrack decodes to its recipe\'s 1024 samples, every block within 25 dB of the render'
-    + ' or, in its noise-like bands, within 3 dB of its waveform and 18 dB of its levels (1 blocks, worst 10.0 and 25.0 dB)' });
+    + ' or, in its noise-like bands, within 3 dB of its waveform, together and in each band under 15 kHz within 25 dB of its block, and 18 dB of its levels (1 blocks, worst 10.0, 10.0 and 25.0 dB)' });
+  assert.deepEqual(soundVerdict(at(noisy({ alone: 2.9 })), 'mp4a'),
+    { match: false, detail: `${differs}, and its noise-like band at 5.25 to 6.00 kHz follows the render's waveform at 2.9 dB, under 3 dB` }, 'each band on its own');
+  assert.match(soundVerdict(at(noisy().slice(0, 5).concat([-1, 0, 0])), 'mp4a').detail, /\(1 blocks, worst 10\.0, no band and 25\.0 dB\)$/, 'no band holds enough of its block');
+  // The rest keeps its own waveform too, unless its difference is under the gate:
+  // here it holds 1 of a block of 100, and differs from it by 0.2, 27 dB under the block.
+  const restOf = (restError) => [100, restError + 9.9, 99, 9.9, 99 * 10 ** -2.5, -1, 0, 0];
+  assert.deepEqual(soundVerdict(at(restOf(0.2)), 'mp4a'), { match: false, detail: 'the soundtrack differs from its recipe at 0.000 s: that block decodes 10.0 dB from the render,'
+    + ' under the 25 dB floor for AAC, and outside its noise-like bands it follows the render\'s waveform at 7.0 dB, under 10 dB' }, 'a rest 7 dB from its render');
+  assert.equal(soundVerdict(at(restOf(0.09)), 'mp4a').match, true, 'a rest 10.5 dB from its render');
+  assert.equal(soundVerdict(at([1, 0.101, 1, 0.1, 1e-3, -1, 0, 0]), 'mp4a').match, true, 'a rest silent in the render, with a difference under the gate');
   assert.deepEqual(soundVerdict(at(noisy({ rest: 24.9 })), 'mp4a'), { match: false, detail: differs.replace('10.4', '10.3') }, 'the rest of the block keeps the codec floor');
-  assert.equal(soundVerdict(at(noisy({ rest: 15.1 })), 'Opus').match, true, 'the Opus floor for the rest of an Opus block');
+  assert.equal(soundVerdict(at(noisy({ noise: 0.5, rest: 15.1 })), 'Opus').match, true, 'the Opus floor for the rest of an Opus block');
   assert.deepEqual(soundVerdict(at(noisy({ wave: 2.9 })), 'mp4a'),
     { match: false, detail: 'the soundtrack differs from its recipe at 0.000 s: that block decodes 3.3 dB from the render, under the 25 dB floor for AAC, and its noise-like bands follow the render\'s waveform at 2.9 dB, under 3 dB' });
   assert.deepEqual(soundVerdict(at(noisy({ level: 17.9 })), 'mp4a'),
@@ -460,7 +519,7 @@ test('a block under its floor matches only where the rest keeps it and its noise
   // All the error in noise-like bands, the rest a rounding under zero.
   assert.equal(soundVerdict(at([1, 0.09, 0.9, 0.09 * (1 + 1e-12), 0]), 'mp4a').match, true);
   const plain = [100, 0.1];
-  assert.match(soundVerdict(at(plain, noisy()), 'mp4a').detail, /every block within 25 dB of the render \(worst 30\.0 dB\) or, in its noise-like bands, .* \(1 blocks, worst 10\.0 and 25\.0 dB\)$/);
+  assert.match(soundVerdict(at(plain, noisy()), 'mp4a').detail, /every block within 25 dB of the render \(worst 30\.0 dB\) or, in its noise-like bands, .* \(1 blocks, worst 10\.0, 10\.0 and 25\.0 dB\)$/);
 });
 
 /**

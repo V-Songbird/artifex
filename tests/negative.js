@@ -3365,8 +3365,8 @@ const MUTATIONS = [
   {
     why: 'the soundtrack gate skips a block by its rendered level, so sound where the recipe is silent passes',
     file: 'tools/replay.js',
-    from: '    if (error / samples < 10 ** (SOUND_GATE_DB / 10)) continue;',
-    to: '    if (signal / samples < 10 ** (SOUND_GATE_DB / 10)) continue;',
+    from: '    if (error / samples < gate) continue;',
+    to: '    if (signal / samples < gate) continue;',
     expect: 'a soundtrack block is judged against its codec floor unless the difference is under the gate',
   },
   {
@@ -3533,8 +3533,8 @@ const MUTATIONS = [
   {
     why: "the soundtrack replay indexes the page's examples with any name, inherited or missing",
     file: 'tools/replay.js',
-    from: 'async function compareSound(bytes, recipe, block, codec, band, flatness, cut) {\n  const api = window.__artifex;\n  if (!Object.prototype.hasOwnProperty.call(api.examples, recipe.piece)) throw',
-    to: 'async function compareSound(bytes, recipe, block, codec, band, flatness, cut) {\n  const api = window.__artifex;\n  if (false) throw',
+    from: 'async function compareSound(bytes, recipe, block, codec, band, flatness, cut, voice) {\n  const api = window.__artifex;\n  if (!Object.prototype.hasOwnProperty.call(api.examples, recipe.piece)) throw',
+    to: 'async function compareSound(bytes, recipe, block, codec, band, flatness, cut, voice) {\n  const api = window.__artifex;\n  if (false) throw',
     expect: 'every page function refuses a piece name that is not its own the same way',
   },
   {
@@ -3735,15 +3735,15 @@ const MUTATIONS = [
   {
     why: 'a block under its floor matches by its noise-like bands whatever the rest of it decodes to, so a moved tone passes',
     file: 'tools/replay.js',
-    from: '    if (!(10 * Math.log10(signal / Math.max(0, error - noiseError)) >= floor)) return',
+    from: '    if (!(10 * Math.log10(signal / restError) >= floor)) return',
     to: '    if (false) return',
     expect: 'a block under its floor matches only where the rest keeps it and its noise-like bands keep their waveform and levels',
   },
   {
     why: 'rounding that takes the rest of a block under zero refuses a block whose whole difference is in its noise-like bands',
     file: 'tools/replay.js',
-    from: 'signal / Math.max(0, error - noiseError)',
-    to: 'signal / (error - noiseError)',
+    from: 'const restError = Math.max(0, error - noiseError);',
+    to: 'const restError = error - noiseError;',
     expect: 'a block under its floor matches only where the rest keeps it and its noise-like bands keep their waveform and levels',
   },
   {
@@ -3763,9 +3763,79 @@ const MUTATIONS = [
   {
     why: 'noise-like band levels are held only to 12 dB, which a voice 3 dB louder keeps',
     file: 'tools/replay.js',
-    from: 'const SOUND_NOISE_DB = { waveform: 3, envelope: 18 };',
-    to: 'const SOUND_NOISE_DB = { waveform: 3, envelope: 12 };',
+    from: 'const SOUND_NOISE_DB = { waveform: 3, envelope: 18, rest: 10 };',
+    to: 'const SOUND_NOISE_DB = { waveform: 3, envelope: 12, rest: 10 };',
     expect: 'a block under its floor matches only where the rest keeps it and its noise-like bands keep their waveform and levels',
+  },
+  {
+    why: 'the rest of a block is judged only against the whole block, so a tone moved under loud noise keeps the Opus floor',
+    file: 'tools/replay.js',
+    from: '    if (!(own >= rest) && restError / samples >= gate) return',
+    to: '    if (false) return',
+    expect: 'each noise-like band and the rest of a block keep their own waveform, so a quiet voice replaced or a tone moved under loud noise still differs',
+  },
+  {
+    why: 'the rest is measured against the whole block, noise included, so a tone moved under loud noise follows it',
+    file: 'tools/replay.js',
+    from: 'const own = 10 * Math.log10(Math.max(0, signal - noise) / restError);',
+    to: 'const own = 10 * Math.log10(signal / restError);',
+    expect: 'each noise-like band and the rest of a block keep their own waveform, so a quiet voice replaced or a tone moved under loud noise still differs',
+  },
+  {
+    why: 'the rest is held only to 5 dB of its own waveform, which a tone 3 dB quieter keeps',
+    file: 'tools/replay.js',
+    from: 'const SOUND_NOISE_DB = { waveform: 3, envelope: 18, rest: 10 };',
+    to: 'const SOUND_NOISE_DB = { waveform: 3, envelope: 18, rest: 5 };',
+    expect: 'a block under its floor matches only where the rest keeps it and its noise-like bands keep their waveform and levels',
+  },
+  {
+    why: 'a rest silent in the render is judged by its own waveform even when its difference is under the gate',
+    file: 'tools/replay.js',
+    from: '!(own >= rest) && restError / samples >= gate)',
+    to: '!(own >= rest))',
+    expect: 'a block under its floor matches only where the rest keeps it and its noise-like bands keep their waveform and levels',
+  },
+  {
+    why: 'noise-like bands are judged only together, so a quiet noise voice replaced by another passes',
+    file: 'tools/replay.js',
+    from: '    if (!(alone >= waveform)) {',
+    to: '    if (false) {',
+    expect: 'each noise-like band and the rest of a block keep their own waveform, so a quiet voice replaced or a tone moved under loud noise still differs',
+  },
+  {
+    why: 'the page names the band whose waveform the film follows best, so a replaced voice hides behind the others',
+    file: 'tools/replay.js',
+    from: 'want * worst[2] < worst[1] * diff)',
+    to: 'want * worst[2] > worst[1] * diff)',
+    expect: 'each noise-like band and the rest of a block keep their own waveform, so a quiet voice replaced or a tone moved under loud noise still differs',
+  },
+  {
+    why: 'every noise-like band is judged alone however quiet, so a band the codec keeps loosely fails its own film',
+    file: 'tools/replay.js',
+    from: ' || want < signal * 10 ** (voice.share / 10)) continue;',
+    to: ') continue;',
+    expect: 'a noise-like band a codec may not keep is judged only with the others: 41 dB under its block, or above 15 kHz',
+  },
+  {
+    why: 'bands are judged alone down to 45 dB under their block, so a band the codec keeps loosely fails',
+    file: 'tools/replay.js',
+    from: 'const SOUND_VOICE = { share: -25, below: 15000 };',
+    to: 'const SOUND_VOICE = { share: -45, below: 15000 };',
+    expect: 'a noise-like band a codec may not keep is judged only with the others: 41 dB under its block, or above 15 kHz',
+  },
+  {
+    why: 'bands above 15 kHz are judged alone, where Opus keeps waveform loosely',
+    file: 'tools/replay.js',
+    from: '(b + 1) * band * rendered.sampleRate > voice.below * block || ',
+    to: '',
+    expect: 'a noise-like band a codec may not keep is judged only with the others: 41 dB under its block, or above 15 kHz',
+  },
+  {
+    why: 'bands are judged alone up to 20 kHz, into the band Opus codes loosely',
+    file: 'tools/replay.js',
+    from: 'const SOUND_VOICE = { share: -25, below: 15000 };',
+    to: 'const SOUND_VOICE = { share: -25, below: 20000 };',
+    expect: 'a noise-like band a codec may not keep is judged only with the others: 41 dB under its block, or above 15 kHz',
   },
   {
     why: 'a band is noise-like at half the flatness, taking in more of a chord',
@@ -4026,7 +4096,7 @@ const MUTATIONS = [
     to: '',
     expect: 'a piece that declares boxes opens at the address bar\'s box, rebuilds from its sliders and records the box',
   },
-  ...['compareFilm(bytes, recipe, frames)', 'compareSound(bytes, recipe, block, codec, band, flatness, cut)', 'comparePng(bytes, recipe, heads, frames)', 'compareWebm(bytes, recipe, frames, seeks)'].map((head) => ({
+  ...['compareFilm(bytes, recipe, frames)', 'compareSound(bytes, recipe, block, codec, band, flatness, cut, voice)', 'comparePng(bytes, recipe, heads, frames)', 'compareWebm(bytes, recipe, frames, seeks)'].map((head) => ({
     why: `replay's ${head.split('(')[0]} redraws a responsive piece at its default box, whatever box the file names`,
     file: 'tools/replay.js',
     from: `async function ${head} {\n  const api = window.__artifex;\n`
