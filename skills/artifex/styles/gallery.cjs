@@ -15,6 +15,11 @@ const STYLES = [
   require('./doodle.js'),
   require('./kandinsky.js'),
   require('./impasto.js'),
+  require('./circuit-board.js'),
+  require('./watercolour.js'),
+  require('./sumi-e.js'),
+  require('./star-atlas.js'),
+  require('./light-painting.js'),
 ];
 
 module.exports = {
@@ -22,8 +27,8 @@ module.exports = {
   size: { w: 1000, h: 1000 },
   seed: 2026,
   params: {
-    style: { min: 0, max: 9, value: 0,
-      meaning: '0 papercraft, 1 3D render, 2 CAD, 3 pixel art, 4 embroidery, 5 sticker, 6 voxel, 7 doodle, 8 Kandinsky, 9 impasto' },
+    style: { min: 0, max: 14, value: 0,
+      meaning: 'the style, by its number in catalog.md: 0 papercraft to 14 light painting' },
   },
   draw(g, s) {
     STYLES[Math.max(0, Math.min(STYLES.length - 1, Math.round(s.params.style)))].draw(g, s);
