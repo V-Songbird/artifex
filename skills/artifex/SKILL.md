@@ -218,7 +218,8 @@ report the piece.
 After the review, name the default the piece fell back on, in visual terms:
 "every stroke leaves the same point and sweeps the same way, like a bouquet",
 not "it looks generic". Add it to the piece's [looks to leave out](#ask-which-looks-to-leave-out),
-then re-roll or revise before you show the next draft.
+then re-roll or revise before you show the next draft. For a film, also
+[look at a film](#look-at-a-film) at its cuts and transitions.
 
 ## Ask which looks to leave out
 
@@ -564,6 +565,86 @@ finish: {
   shows grey.
 
 `examples/cues.js` declares one: four palettes under one print.
+
+## Film art direction
+
+A film is judged as a world, not a subject on a set. Every rule here is checked
+on frames, not in code.
+
+**Plan in seconds before code.** Write a beat sheet: each scene's beats in
+seconds, the background action that runs under it, and for each transition the
+physical event that links one scene's shape to the next. Keep it in the piece's
+header comment beside its [looks to leave out](#ask-which-looks-to-leave-out),
+then turn it into one cue table in frames, as `examples/cues.js` does.
+
+**Build and review scene by scene.** Finish one scene, [look at its
+frames](#look-at-a-film), fix it, then start the next. Write a long plan or
+source in pieces, a scene at a time: one very long write can be lost to the
+output limit.
+
+### What every scene holds
+
+- **The background lives, quieter than the subject.** Give elements behind the
+  subject their own cues and their own `R` names, so each keeps its own rhythm:
+  something flickers, drifts, sways or switches on and off. Keep it smaller,
+  slower and lower in contrast than the subject, so the eye still lands there.
+- **Background motion stays readable.** Nothing crosses the frame in about half
+  a second; slow it or shorten its path.
+- **Light reaches as far as it would.** A glow or beam lights what lies around
+  it: draw it as its own pass over the layers it crosses, with a blend such as
+  `screen` or `lighter` and a falloff with distance, or tint each layer it
+  crosses. A layer's edge or clip never cuts a light off. Every lit area has a
+  source, in the frame or plainly beyond it.
+- **Everything stands on something.** An element meets what holds it with a
+  contact shadow, an overlap or a shared edge, and a far form's base runs into
+  the colour and texture of the ground under it. A gap of a few pixels reads as
+  floating.
+
+### Continuity
+
+- **Props exit when their job ends.** An element whose beat is over leaves, on
+  screen or with the cut; one kept as a reminder reads as a mistake.
+- **Nothing appears or vanishes without a cause.** An element enters and
+  leaves through an edge, an opening that exists or from behind something.
+- **A character keeps its identifying features in every view.** Draw every view
+  from one set of parts: the same silhouette, markings, colours and proportions.
+  Put its views side by side and compare.
+- **A transition is a physical event.** Something that can happen to one
+  scene's shape turns it into the next: a surface breaks, a form grows into
+  another, the view passes through an opening. Never an empty frame, and never
+  the next scene as a flat card the view moves into. `core/time.js` only cuts;
+  author the change as cues, as `cues.js` blends its scenes part by part.
+- **Gags get anticipation and a hold.** Wind up before the action, let it land,
+  then hold the result long enough to read before the next beat.
+
+### Detail and resolution
+
+- **Detail falls away from the subject**, as the
+  [focal preset](#art-direction-preset-focal-composition) says for stills:
+  broader marks and lower contrast in the background.
+- **No line work near the pixel scale.** Lines, hatching or pattern spacing of
+  one or two output pixels shimmer into moiré as they move and blur in the
+  encoded film. Keep the finest spacing several pixels wide at the delivered
+  size, and judge it on a 100% crop of a decoded frame.
+
+### Look at a film
+
+Nine seeds show one playhead; a film also needs its times. After each scene, and
+before delivery:
+
+1. List every cut, every transition's midpoint and each beat of the beat sheet.
+2. Draw each at 640 px wide or more. In the built page, set the playhead with
+   `__artifex.setT(t)` or the recipe URL's `t=`, where `t` is the frame over
+   `frames - 1` (over `frames` on a loop) and the frame is the second times
+   `hz`, then save a PNG at a scale that reaches that width. Add the frame a few
+   frames later wherever motion matters.
+3. Check each frame against the three lists above: the background moves between
+   the pair, light reaches past the layers it crosses, everything touches what
+   holds it, nothing stays past its beat or vanishes between two times, no
+   transition midpoint is empty or a flat card, and each character matches its
+   other views.
+4. Name each fault in visual terms, fix it and look again. Check fine detail
+   once more on the exported film.
 
 ## Art-direction preset: focal composition
 
