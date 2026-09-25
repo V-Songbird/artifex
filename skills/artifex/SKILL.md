@@ -529,6 +529,11 @@ solved trajectory.
   for `readout`, `settle` and `cues`. Compare a soundtrack with a wider sum by
   measurement. `npm run browser` requires two renders of each example to be
   the same bits. Engines differ further, like pixels.
+- **When replay flags a noise-like block, report it and keep the sound.**
+  `npm run replay` judges a soundtrack below the band its codec kept, and its
+  noise by level, but a hiss, a breath or a pluck's attack can still miss the
+  verdict. Report the block, its time and its measure; never delete, soften or
+  filter a sound, or change any of the art, to satisfy a checker.
 
 ## Film finish
 

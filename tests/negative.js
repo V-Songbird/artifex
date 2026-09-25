@@ -3197,8 +3197,8 @@ const MUTATIONS = [
   {
     why: "the soundtrack replay indexes the page's examples with any name, inherited or missing",
     file: 'tools/replay.js',
-    from: 'async function compareSound(bytes, recipe, block, codec, band, flatness) {\n  const api = window.__artifex;\n  if (!Object.prototype.hasOwnProperty.call(api.examples, recipe.piece)) throw',
-    to: 'async function compareSound(bytes, recipe, block, codec, band, flatness) {\n  const api = window.__artifex;\n  if (false) throw',
+    from: 'async function compareSound(bytes, recipe, block, codec, band, flatness, cut) {\n  const api = window.__artifex;\n  if (!Object.prototype.hasOwnProperty.call(api.examples, recipe.piece)) throw',
+    to: 'async function compareSound(bytes, recipe, block, codec, band, flatness, cut) {\n  const api = window.__artifex;\n  if (false) throw',
     expect: 'every page function refuses a piece name that is not its own the same way',
   },
   {
@@ -3439,11 +3439,11 @@ const MUTATIONS = [
     expect: 'a noise voice replays by what a perceptual codec keeps of it, and a different one still differs',
   },
   {
-    why: 'band energies count each mirrored bin once, so they no longer add up to the block and a codec-kept noise voice differs',
+    why: 'band energies count each mirrored bin once, so they no longer add up to the block and its difference meets the -60 dBFS gate 3 dB early',
     file: 'tools/replay.js',
-    from: 'm = (k === 0 || k === bins - 1 ? 1 : 2) / block;',
+    from: 'm = (k === bins - 1 ? 1 : 2) / block;',
     to: 'm = 1 / block;',
-    expect: 'a noise voice replays by what a perceptual codec keeps of it, and a different one still differs',
+    expect: 'a film soundtrack matches only where it decodes to its recipe, levelled as the export levels it',
   },
   {
     why: 'the envelope error takes energies for amplitudes, too small to refuse a voice 6 dB louder or quieter',
@@ -3451,6 +3451,55 @@ const MUTATIONS = [
     from: 'envelope += (Math.sqrt(got) - Math.sqrt(want)) ** 2;',
     to: 'envelope += (got - want) ** 2;',
     expect: 'a noise voice replays by what a perceptual codec keeps of it, and a different one still differs',
+  },
+  {
+    why: 'replay never takes the codec\'s cut, so a hi-hat the AAC encoder cut above its low-pass differs',
+    file: 'tools/replay.js',
+    from: '{ top = band * Math.floor((k + 1) / band); break; }',
+    to: '{ break; }',
+    expect: 'a soundtrack is judged below the band its codec kept, measured from the film, and a different one still differs',
+  },
+  {
+    why: 'blocks are still judged above the measured cut, so the band the encoder cut still differs',
+    file: 'tools/replay.js',
+    from: 'hi = Math.min(top, b === bands - 1',
+    to: 'hi = Math.min(bins, b === bands - 1',
+    expect: 'a soundtrack is judged below the band its codec kept, measured from the film, and a different one still differs',
+  },
+  {
+    why: 'a cut is taken anywhere down the spectrum, so a film low-passed at 9 kHz matches',
+    file: 'tools/replay.js',
+    from: 'lost > 0 && k >= lowest && lost',
+    to: 'lost > 0 && k >= 1 && lost',
+    expect: 'a soundtrack is judged below the band its codec kept, measured from the film, and a different one still differs',
+  },
+  {
+    why: 'a cut may fall over any width, so a gentle low-pass is taken for a codec\'s',
+    file: 'tools/replay.js',
+    from: 'lost - k <= band; k--) {',
+    to: 'lost - k <= bins; k--) {',
+    expect: 'a soundtrack is judged below the band its codec kept, measured from the film, and a different one still differs',
+  },
+  {
+    why: 'the bin under a cut need not keep the render, so a film missing its only voice above 12 kHz is taken as cut',
+    file: 'tools/replay.js',
+    from: 'if (r !== null && r >= -cut.kept) {',
+    to: 'if (r !== null) {',
+    expect: 'a soundtrack is judged below the band its codec kept, measured from the film, and a different one still differs',
+  },
+  {
+    why: 'a film that matches below its codec\'s cut no longer says where it was judged',
+    file: 'tools/replay.js',
+    from: "(s.cut ? ` and, below ${(s.cut / 1000).toFixed(2)} kHz, where its codec kept the render,` : ',')",
+    to: "','",
+    expect: 'a soundtrack is judged below the band its codec kept, measured from the film, and a different one still differs',
+  },
+  {
+    why: 'a block\'s mean is judged, so the pluck whose mean Opus removed differs',
+    file: 'tools/replay.js',
+    from: '      for (let k = 1; k < bins; k++) {',
+    to: '      for (let k = 0; k < bins; k++) {',
+    expect: 'a soundtrack is judged without its mean, which Opus removes',
   },
   {
     why: 'a piece whose size lies outside the boxes it declares validates',
@@ -3522,7 +3571,7 @@ const MUTATIONS = [
     to: '',
     expect: 'a piece that declares boxes opens at the address bar\'s box, rebuilds from its sliders and records the box',
   },
-  ...['compareFilm(bytes, recipe, frames)', 'compareSound(bytes, recipe, block, codec, band, flatness)', 'comparePng(bytes, recipe, heads, frames)', 'compareWebm(bytes, recipe, frames, seeks)'].map((head) => ({
+  ...['compareFilm(bytes, recipe, frames)', 'compareSound(bytes, recipe, block, codec, band, flatness, cut)', 'comparePng(bytes, recipe, heads, frames)', 'compareWebm(bytes, recipe, frames, seeks)'].map((head) => ({
     why: `replay's ${head.split('(')[0]} redraws a responsive piece at its default box, whatever box the file names`,
     file: 'tools/replay.js',
     from: `async function ${head} {\n  const api = window.__artifex;\n`
