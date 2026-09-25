@@ -1,0 +1,37 @@
+{
+  "recipe": {
+    "piece": "pieces/cad.cjs",
+    "seed": 1,
+    "t": 1,
+    "width": 1200,
+    "height": 800,
+    "type": "image/webp",
+    "quality": 0.82
+  },
+  "sources": {
+    "../skills/artifex/styles/kit.js": "8cf7cadfb941609fed98335a71f6efd3de7f0b72d3af6597c72a238fdfce52bc",
+    "../skills/artifex/styles/subject.js": "3899f97e0921ae9107465d9fb4a21839da16304795342b7eec36638d0e48494e",
+    "core/colour.js": "7a695b5727b6e3c78ec1a0c2a36e484a901f1996b710f0da75f659d404180f80",
+    "core/field.js": "34661a47d118e63b41671b7a77cfdb2e47f5bfbc18e4d3f191119166dcf5f35b",
+    "core/geom.js": "e91e30f1c25bbcc3482a1a6f3707e414187eb2108ea4b38ab75828a33f05e785",
+    "core/num.js": "19b90cec897a7b98bd6315f362b5cba41911b8be1e3e5dc226edaad0bd687203",
+    "core/rand.js": "67681661c602c813aa58ced7a87b8f6ff068cbadc5f260e05794cc7082d332f9",
+    "core/stroke-font.js": "c0eeccaf3ed03b72ae94b90d24cca894398e5d91489c77caaefede6bb9a5c8c8",
+    "core/time.js": "df3feda5d43c6d84e100951d2da3d01a0c20bf59a34797488576bcf6253da086",
+    "pieces/blueprint.js": "2b85a1f9b050d14074d6e1f42164e6efb53b455705dd83bb3c4ece667b76bb7b",
+    "pieces/brush.js": "455862346f2f5de3a930e06548332120f1f136793238ba7c4459c889972a9f10",
+    "pieces/cad.cjs": "203ddc897cf0b609e3e4faaa5682ad558a071b32df01a4ddd91ced6e3f690a47",
+    "pieces/cadsheet.js": "d627e8bf6b7bf7e93d4c25ae296d0d221926a8abbfd59683d4dc76d26d524c53",
+    "pieces/draft.js": "ed3d309f4ad573ec8e2cf2479d1e2ae5fd21f68ab5f6922c43405e05903a2dda",
+    "pieces/dry.js": "a56ea3d62f23a2fd5db82bc0127664cad08e53617e62aa99eb6aa6a38278d922",
+    "pieces/enter.js": "4568277b3c73db7a57ae7bb0bc318bc6a41b3c84b2aca86c81ea9986adc907dc",
+    "pieces/held.js": "daaf4c6806bbffded541d8cc7c178e1f522b68baea6193c627ca2bb3f9cababd",
+    "pieces/inversion.js": "f05f7744f6f04fa5bbe6f380b681f0200be611ee7752fe7d31a0184ad79c0d0e",
+    "pieces/kaleido.js": "fade825245ef2c612a85933e5a0695260fa4b3d255b2e38a8efb75100178e244",
+    "pieces/page.js": "8af67df095f76bb1881e2fcfe1accba227ce92c311b2c278fdcf1aa4be621907",
+    "pieces/paper.js": "b943eee6af4e88ab2d3286a7d61c87c38fa0f756acb27bd5986d535684860ef9",
+    "pieces/water.js": "36574e66a487f4323d6bd3961022e6b113addd6c2ae8bda03d5a2d6a1d056407",
+    "pieces/wordmark.js": "ad4e7e19a591c686be905069d96b4a8cda8e1eb9deff9c65ae74628ddfa46714"
+  },
+  "poster": "bfe60da891c74ba70227b6d8b61050989c15bceef9a07de6366fa1d1e2d1ec86"
+}

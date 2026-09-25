@@ -37,9 +37,9 @@ test('site: the real shot list builds, one script per shot, every module defined
   const out = temp(t);
   const result = build({ out });
   const { data } = result;
-  assert.deepEqual(data.shots.map((s) => s.name), ['intro', 'bloom', 'ink', 'crack', 'mirror', 'bend', 'portal', 'rows', 'grid', 'cells']);
-  assert.deepEqual(data.shots.map((s) => s.tier), ['frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'worker']);
-  assert.equal(data.frames, 1380);
+  assert.deepEqual(data.shots.map((s) => s.name), ['intro', 'bloom', 'ink', 'crack', 'mirror', 'bend', 'portal', 'trace', 'print', 'cad', 'fold', 'rows', 'grid', 'cells']);
+  assert.deepEqual(data.shots.map((s) => s.tier), ['frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'worker']);
+  assert.equal(data.frames, 2580);
   // A module two shots reach is in shared.js, and only there: the paper,
   // wordmark and water the art shots share, and the placeholders' lattice.
   const scripts = result.files.filter((f) => /^(shared|shot-.*)\.js$/.test(f));
@@ -54,8 +54,14 @@ test('site: the real shot list builds, one script per shot, every module defined
   assert.ok(fs.readFileSync(path.join(out, 'shared.js'), 'utf8').includes('drawTears'));
   assert.ok(fs.readFileSync(path.join(out, 'shared.js'), 'utf8').includes('drawReflections'));
   assert.ok(fs.readFileSync(path.join(out, 'shared.js'), 'utf8').includes('drawRims'));
-  assert.ok(fs.readFileSync(path.join(out, 'shot-portal.js'), 'utf8').includes('drawPage'));
-  for (const name of ['ink', 'mirror']) assert.ok(fs.existsSync(path.join(out, 'posters', name + '.webp')), name + ' has its poster');
+  // The portal's page and picture, which the shots after it begin from, and the draftsman's sheet those share.
+  assert.ok(fs.readFileSync(path.join(out, 'shared.js'), 'utf8').includes('drawPage'));
+  assert.ok(fs.readFileSync(path.join(out, 'shared.js'), 'utf8').includes('released'));
+  assert.ok(fs.readFileSync(path.join(out, 'shared.js'), 'utf8').includes('drawSheet'));
+  assert.ok(fs.readFileSync(path.join(out, 'shared.js'), 'utf8').includes('drawPlot'));
+  // A module one shot needs stays in its script: the fold's papercut.
+  assert.ok(fs.readFileSync(path.join(out, 'shot-fold.js'), 'utf8').includes('drawCut'));
+  for (const name of ['ink', 'mirror', 'cad']) assert.ok(fs.existsSync(path.join(out, 'posters', name + '.webp')), name + ' has its poster');
   // Every piece loads and validates from core.js and its own scripts, as the stage loads it.
   for (const s of data.shots) {
     const context = vm.createContext({});
@@ -69,8 +75,8 @@ test('site: the real shot list builds, one script per shot, every module defined
   assert.deepEqual(bundled.filter((id) => !id.startsWith('core/')), ['examples/index.js'], 'core.js holds no example');
   for (const s of data.shots) assert.ok(core.includes('module.exports["site-' + s.name + '"] = require(' + JSON.stringify(s.id) + ');'), s.name + ' is in the registry');
   const html = fs.readFileSync(path.join(out, 'index.html'), 'utf8');
-  assert.match(html, /<section class="shot seam" id="shot-grid" data-shot="8" aria-hidden="true">/);
-  assert.equal((html.match(/<figure class="still"/g) || []).length, 5, 'a still for each shot, none for the seam');
+  assert.match(html, /<section class="shot seam" id="shot-grid" data-shot="12" aria-hidden="true">/);
+  assert.equal((html.match(/<figure class="still"/g) || []).length, 6, 'a still for each shot, none for the seam');
   // The data is a same-origin script, not text in the page: the page has no inline script.
   assert.deepEqual(html.match(/<script[^>]*>/g), ['<script src="data.js">', '<script src="core.js">', '<script src="stage.js">']);
   assert.equal(fs.readFileSync(path.join(out, 'data.js'), 'utf8'), 'window.__siteData = ' + JSON.stringify(data) + ';\n');
