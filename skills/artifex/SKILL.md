@@ -129,7 +129,7 @@ require('./core/field.js')   // sampleGrid, gradient, curl, warp, threshold,
 require('./core/time.js')    // span, ease, tween, shots, shotAt, spring,
                              // follow
 require('./core/layer.js')   // layer
-require('./core/sound.js')   // sumInto
+require('./core/sound.js')   // sumInto, voice, room
 ```
 
 **`noise2` is value noise and `gradient2` is gradient noise.** The derivative of
@@ -584,6 +584,57 @@ solved trajectory.
   verdict. Report the block, its time and its measure; never delete, soften or
   filter a sound, or change any of the art, to satisfy a checker.
 
+### Voices, a room and a bed
+
+A bare oscillator blip sounds like a test tone. `core/sound.js` gives a voice
+in layers and a room for it to sound in; neither names an instrument, so the
+subject decides what they are.
+
+```js
+const { sumInto, voice, room } = require('./core/sound.js');
+const R = rng(state.seed);
+const v = voice(ctx, R, 'impact 3', seconds, {
+  pitch: 220,                                   // the body's first partial, in hertz
+  partials: [[1, 1], [2.76, 0.4], [5.4, 0.15]], // [ratio, level]: whole ratios ring, others clang
+  detune: 7,                                    // cents: each partial doubled that far apart, beating
+  attack: 0.005, hold: 0, decay: 1.2, damp: 0.5, // higher partials die sooner as damp grows
+  strike: { level: 0.3, length: 0.02, colour: 4000 }, // the transient: seeded noise in a band
+  tail: { level: 0.05, length: 1, colour: 440 },       // the air it leaves: seeded noise, longer
+  level: 0.4, pan: -0.2,
+  velocity: 0.7,   // 0..1: how hard it starts; softer is quieter and darker
+  vary: 0.5,       // 0..1: this voice's own seeded pitch, level and decay
+});
+const hall = room(ctx, R, 'room', { size: 1.6 });     // a convolver of seeded noise
+```
+
+- **Build each sound from its three layers.** The transient is the contact, the
+  body what rings, the tail what lingers. Most of a sound's character is in its
+  partial ratios and how fast each dies: tune them per element, and give each
+  element its own recipe rather than one voice at several pitches.
+- **Give the sounds dynamics, or they sound dead.** Events at one level read
+  as a machine. Shape a phrase: sparse and soft, building to a height, then
+  thinning, and let the picture follow the same curve. Set each event's
+  `velocity` from its cause, such as its weight, speed or nearness, so an
+  accent is both louder and brighter; give repeated events `vary` so no two
+  strike alike. A far sound is softer, darker and wetter than a near one.
+  Check `sound.limited` in the export report: past about 4 dB the limiter is
+  flattening your accents, so lower the loudest transients against the body.
+- **Name every voice by its cause**, such as `'drop 4'`: its noise is
+  `R(name, …)`, so adding a voice never changes another.
+- **Play everything in one room.** Give each voice its own send, sized by its
+  distance, sum the sends into the room with `sumInto`, and sum the room with
+  the dry mix into the output. `size` is the
+  seconds it takes to fall to -60 dB: under half a second is a small space,
+  two or more a hall. Another seed is another room of the same size.
+- **Lay a bed under the effects.** A film whose sounds all start and stop on
+  events has silence between them. Give each shot a bed: one or two voices
+  with a slow attack, a hold across the shot and detuned partials, 10 to 20 dB
+  under the events, low in pitch or a band of tail noise, so the effects sit
+  on something. Change the bed where the shot changes, overlapping the two
+  over its attack and decay rather than cutting.
+- **Every layer fades out over 80 ms** from -60 dB and stops, so a voice never
+  ends in a click.
+
 ## Film finish
 
 A film may declare `finish`: one process that touched every pixel of every
@@ -639,6 +690,15 @@ seconds, the background action that runs under it, and for each transition the
 physical event that links one scene's shape to the next. Keep it in the piece's
 header comment beside its [looks to leave out](#ask-which-looks-to-leave-out),
 then turn it into one cue table in frames, as `examples/cues.js` does.
+
+**Start the plumbing from the [film scaffold](film-scaffold.cjs).** Copy it
+beside your piece and fill its slots: the shots, a cue table where every
+element has an entry and an exit, what paints each element, the sounds with
+their causes and distances, the room, the ground drawn once and the finish. It holds
+structure only and draws nothing but a grey ground: the subject, the look,
+the voices' recipes and the finish come from you and the style guide. Its
+build refuses an element with no exit and a sound whose cause is not on
+screen at its second.
 
 **Build and review scene by scene.** Finish one scene, [look at its
 frames](#look-at-a-film), fix it, then start the next. Write a long plan or
