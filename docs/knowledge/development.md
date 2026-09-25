@@ -26,6 +26,9 @@ Artifex has no dependency installation or source compilation step. Use the Node 
 | `npm run seeds -- drift 3 0.5 --param reach,turn` | Writes a 3-by-3 parameter grid at the piece's fixed seed. |
 | `npm run replay -- out/readout.svg` | Reads the replay manifest of a saved SVG, PNG, MP4 film or WebM film, draws it again and reports whether the file matches. |
 | `npm run bench` | Measures build, draw, and vector emission costs. |
+| `npm run site` | Builds the showcase site into `out/site/` from `site/shots.js`; `-- --serve` also serves it on loopback. See [the site](site.md). |
+| `npm run site:check` | Runs the site's own tests in `site/tests/`, outside the mutation suite. |
+| `node tools/check-site.js` | Checks the built site in installed Edge: scroll, draws, reduced motion, the worker fallback, recipes and the frame budget on two references; run `npm run site` first. |
 
 Run `npm run check` after source changes. Run the mutation suite when changing a check, contract key, or invariant; it executes a full test run for each mutation and takes longer than the unit suite.
 
@@ -93,9 +96,11 @@ Run `node --test tests/replay.test.js` for manifest reading, the version, piece,
 | [`examples/index.js`](../../examples/index.js) | Examples available to the bundled tools. |
 | [`skills/artifex/styles/`](../../skills/artifex/styles/catalog.md) | Named styles: a guide and a reference module per style, drawn together by the external piece `gallery.cjs`. |
 | [`tools/build-page.js`](../../tools/build-page.js) | Browser bundle, transport, inspection interface, and exports. |
-| [`tools/piece-input.js`](../../tools/piece-input.js) | External CommonJS piece loading, caller-directory resolution and dependency bundling. |
+| [`tools/piece-input.js`](../../tools/piece-input.js) | External CommonJS piece loading, one piece or a list sharing its modules, caller-directory resolution and dependency bundling. |
 | [`tools/check-browser.js`](../../tools/check-browser.js) | Installed Edge smoke checks and the owned browser/server lifecycle. |
 | [`tools/replay.js`](../../tools/replay.js) | Reading a saved file's replay manifest, drawing it again and comparing. |
+| [`tools/build-site.js`](../../tools/build-site.js), [`site/`](../../site/shots.js) | The showcase site: its builder, shot list, stage runtime, worker and tests; see [the site](site.md). |
+| [`tools/check-site.js`](../../tools/check-site.js) | The site's installed Edge check. |
 | [`tests`](../../tests) | Contract, geometry, rendering, examples, and mutation coverage. |
 
 Core helpers must remain useful across subjects. Keep algorithms specific to an example with that example. When the public contract changes, reconcile the [piece API](../apis/piece-api.md) and [runtime skill](../../skills/artifex/SKILL.md) with `FIELDS`.
@@ -163,7 +168,7 @@ The runner's temporary root is named `artifex-neg-<runner pid>-*`. Each suite ru
 
 ## Continuous integration
 
-The [Check workflow](../../.github/workflows/check.yml) uses the Node version in `.nvmrc` on Linux and Windows. The `Mutations (<os>, <k>/8)` jobs run the mutation suite in eight shards per operating system, each with a 90-minute cap. A shard holds every eighth mutation in registry order, so its size is the registry's count divided by eight, rounded up. Hosted runners took about 34 seconds per mutation on Linux and 45 on Windows, measured when the registry held 406 mutations; at that rate a 90-minute Windows shard fits about 120 mutations, or about 960 across eight shards. Each mutation reruns the whole Node suite, so the time per mutation grows as tests are added. Add shards, in the matrix, the job name and the run step, when the longest shard job nears its cap. After them, each `Check (<os>)` job rejects tracked ignored files, runs `npm run check`, builds the standalone page and fails unless every mutation shard on both systems succeeded, so the required checks still cover the whole suite. It has a 30-minute cap; each mutation-suite subprocess also retains the finite runner deadline described above.
+The [Check workflow](../../.github/workflows/check.yml) uses the Node version in `.nvmrc` on Linux and Windows. The `Mutations (<os>, <k>/8)` jobs run the mutation suite in eight shards per operating system, each with a 90-minute cap. A shard holds every eighth mutation in registry order, so its size is the registry's count divided by eight, rounded up. Hosted runners took about 34 seconds per mutation on Linux and 45 on Windows, measured when the registry held 406 mutations; at that rate a 90-minute Windows shard fits about 120 mutations, or about 960 across eight shards. Each mutation reruns the whole Node suite, so the time per mutation grows as tests are added. Add shards, in the matrix, the job name and the run step, when the longest shard job nears its cap. After them, each `Check (<os>)` job rejects tracked ignored files, runs `npm run check`, builds the standalone page, builds the showcase site and runs `npm run site:check`, and fails unless every mutation shard on both systems succeeded, so the required checks still cover the whole suite. It has a 30-minute cap; each mutation-suite subprocess also retains the finite runner deadline described above.
 
 Submit changes through a pull request targeting `main`. The branch rules require the Linux and Windows checks, resolved review conversations, and a linear history. Deletion and force pushes are blocked.
 

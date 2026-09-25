@@ -211,3 +211,32 @@ test('external CLI commands resolve caller paths with spaces and write beside th
   assert.equal(fs.existsSync(path.join(project, 'out')), false);
   assert.equal(fs.existsSync(file), true);
 });
+
+test('external pieces loaded as a list define a shared helper once and name what each piece reaches', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'artifex-external-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const write = (name, text) => fs.writeFileSync(path.join(dir, name), text);
+  const piece = (name, needs) => needs + "\nmodule.exports = { name: '" + name + "', size: { w: 10, h: 10 }, draw(g) { g.fillRect(0, 0, 10, 10); } };";
+  write('shared.js', "module.exports = require('./deep.json');");
+  write('deep.json', '{"x": 1}');
+  write('own.js', 'module.exports = 2;');
+  write('a.cjs', piece('list-a', "require('./shared.js'); require('./own.js');"));
+  write('b.cjs', piece('list-b', "require('./shared.js'); require(" + JSON.stringify(path.join(ROOT, 'core', 'num.js')) + ');'));
+  write('c.cjs', piece('list-a', ''));
+  const external = loadExternal(['./a.cjs', './b.cjs', './a.cjs'], dir);
+  assert.equal(external.moduleCount, 5);
+  assert.deepEqual(external.names, ['list-a', 'list-b']);
+  assert.equal(external.modules.length, 5);
+  const file = (id) => path.basename(external.modules.find((m) => m.id === id).file);
+  assert.deepEqual(external.pieces.map((p) => p.modules.map(file).sort()), [
+    ['a.cjs', 'deep.json', 'own.js', 'shared.js'], ['b.cjs', 'deep.json', 'shared.js'], ['a.cjs', 'deep.json', 'own.js', 'shared.js']]);
+  assert.equal(external.pieces[0].modules[0], external.pieces[0].id, 'a piece reaches itself first');
+  // The joined source runs every piece from one registry, as bundle() takes it.
+  const context = vm.createContext({});
+  vm.runInContext(bundle(external), context);
+  assert.equal(vm.runInContext('Object.keys(__require("t")("examples/index.js")).join()', context), 'list-a,list-b');
+  assert.throws(() => loadExternal(['./a.cjs', './c.cjs'], dir), /are both named list-a/);
+  assert.throws(() => loadExternal([], dir), /at least one piece/);
+  // One path keeps the single-piece shape.
+  assert.deepEqual(Object.keys(loadExternal('./b.cjs', dir)).sort(), ['directory', 'entry', 'moduleCount', 'names', 'piece', 'source', 'stem']);
+});

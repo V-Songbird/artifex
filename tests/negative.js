@@ -2446,6 +2446,27 @@ const MUTATIONS = [
     expect: 'contact sheet: --png names the image beside the sheet, sizes it and counts the cells it waits for',
   },
   {
+    why: 'a list of pieces reports only each piece itself, so a caller splitting per piece leaves out the helpers it needs',
+    file: 'tools/piece-input.js',
+    from: '    if (!found.has(id)) { found.add(id); for (const next of requires.get(id)) reach(next, found); }',
+    to: '    if (!found.has(id)) found.add(id);',
+    expect: 'external pieces loaded as a list define a shared helper once and name what each piece reaches',
+  },
+  {
+    why: 'a helper two pieces require is defined twice, under two ids',
+    file: 'tools/piece-input.js',
+    from: '    if (ids.has(file)) return ids.get(file);',
+    to: '',
+    expect: 'external pieces loaded as a list define a shared helper once and name what each piece reaches',
+  },
+  {
+    why: 'two pieces of a list with the same name load, and the registry keeps only the second',
+    file: 'tools/piece-input.js',
+    from: '    if (named && named.entry !== entry) throw',
+    to: '    if (false) throw',
+    expect: 'external pieces loaded as a list define a shared helper once and name what each piece reaches',
+  },
+  {
     why: 'the run root takes a long name, so a nested run passes the Windows path limit',
     file: 'tests/negative.js',
     from: "const RUN_PREFIX = 'artifex-" + "neg-';",
