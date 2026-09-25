@@ -226,9 +226,28 @@ const SOUND_GATE_DB = -60;
 // or better by level in those bands, as AAC and as Opus; films whose noise voice
 // came from another seed, band or level, or was missing, named blocks at 2.5 dB
 // or less by waveform or 17.9 dB or less by level.
+// Judged together, those bands let a quiet noise voice replaced by another pass
+// under louder ones, and the block's floor lets a tone moved under loud noise
+// pass. So each noise-like band under SOUND_VOICE.below Hz that holds
+// SOUND_VOICE.share dB of its block or more must follow the render's waveform
+// within SOUND_NOISE_DB.waveform on its own too, and the rest of the block,
+// outside the noise-like bands, must follow its own waveform within
+// SOUND_NOISE_DB.rest unless its difference is under the gate: a moved or
+// missing tone comes to about -3 and 0 dB, one 6 dB quieter to 6 dB. Opus codes
+// everything from 15.6 kHz up as one band, whose waveform it keeps loosely, so
+// bands are judged alone only below 15 kHz. Measured in installed Edge on the
+// blocks under their floor in films of readout, cues, settle, the noise, drum
+// and speech fixtures, and of the noise fixture with added parts, each as AAC
+// and as Opus, noise-like bands under 15 kHz holding -25 dB of their block or
+// more decoded at 11.8 dB or better by waveform, and the rest at 15.3 dB or
+// better; above 15 kHz an Opus film's bands came to 3.6 dB. Films whose quiet
+// noise voice came from another seed named bands at 0.2 dB or less, and one
+// whose tone 30 dB under a noise moved, which Opus's floor let pass, a rest at
+// 7.1 dB.
 const SOUND_BAND = 16;
 const SOUND_FLATNESS = 0.4;
-const SOUND_NOISE_DB = { waveform: 3, envelope: 18 };
+const SOUND_NOISE_DB = { waveform: 3, envelope: 18, rest: 10 };
+const SOUND_VOICE = { share: -25, below: 15000 };
 
 // A perceptual codec also cuts the top of the spectrum, and Opus removes the
 // mean, which is not heard. So a block is judged without its first bin (0 to
@@ -272,9 +291,13 @@ function soundPlan(bytes, piece) {
 // in the bands of `band` bins where the render is noise-like (a Hann-windowed
 // spectral flatness of at least `flatness`), the rendered energy, the
 // difference's, and the envelope error: the sum of (sqrt(decoded) -
-// sqrt(rendered))^2 over those bands' energies. Energies come from an
-// unwindowed transform, so over every bin they add up to the block's.
-async function compareSound(bytes, recipe, block, codec, band, flatness, cut) {
+// sqrt(rendered))^2 over those bands' energies; last, of the noise-like bands
+// under `voice.below` Hz holding `voice.share` dB of the block's energy or
+// more, the one whose rendered to
+// difference ratio is lowest, as its index, rendered energy and difference's,
+// or -1, 0, 0. Energies come from an unwindowed transform, so over every bin
+// they add up to the block's.
+async function compareSound(bytes, recipe, block, codec, band, flatness, cut, voice) {
   const api = window.__artifex;
   if (!Object.prototype.hasOwnProperty.call(api.examples, recipe.piece)) throw new Error('replay: the page has no piece named ' + JSON.stringify(recipe.piece));
   const p = api.piece.atBox(api.piece.validate(api.examples[recipe.piece]), recipe.size);
@@ -349,6 +372,7 @@ async function compareSound(bytes, recipe, block, codec, band, flatness, cut) {
       }
     }
     let signal = 0, error = 0, noise = 0, noiseError = 0, envelope = 0;
+    const noisy = [];
     for (const [b, [want, got, diff]] of sums.entries()) {
       const lo = Math.max(1, b * band), hi = Math.min(top, b === bands - 1 ? bins : b * band + band);
       if (lo >= hi) continue;
@@ -357,8 +381,16 @@ async function compareSound(bytes, recipe, block, codec, band, flatness, cut) {
       for (let k = lo; k < hi; k++) { power += shape[k]; logs += Math.log(shape[k]); }
       if (!(Math.exp(logs / (hi - lo)) / (power / (hi - lo)) >= flatness)) continue;
       noise += want; noiseError += diff; envelope += (Math.sqrt(got) - Math.sqrt(want)) ** 2;
+      noisy.push([b, want, diff]);
     }
-    blocks.push([signal, error, noise, noiseError, envelope]);
+    // The noise-like band, of those under voice.below Hz holding voice.share dB
+    // of the block or more, whose waveform the film follows least, or -1.
+    let worst = [-1, 0, 0];
+    for (const [b, want, diff] of noisy) {
+      if ((b + 1) * band * rendered.sampleRate > voice.below * block || want < signal * 10 ** (voice.share / 10)) continue;
+      if (worst[0] < 0 || want * worst[2] < worst[1] * diff) worst = [b, want, diff];
+    }
+    blocks.push([signal, error, noise, noiseError, envelope, ...worst]);
   }
   return {
     gain, limited, rate: rendered.sampleRate, block, blocks, cut: top < bins ? (top * rendered.sampleRate) / block : null,
@@ -372,35 +404,47 @@ async function compareSound(bytes, recipe, block, codec, band, flatness, cut) {
  * length exactly, and every block must be within the codec's SOUND_FLOOR_DB of
  * the render or differ from it by less than SOUND_GATE_DB. A block under the
  * floor still matches when the rest of it keeps the floor outside its
- * noise-like bands and those bands keep SOUND_NOISE_DB. Blocks are judged
- * below `s.cut`, in Hz, when compareSound measured one.
+ * noise-like bands and its own waveform within SOUND_NOISE_DB.rest, and those
+ * bands keep SOUND_NOISE_DB, together and each band that SOUND_VOICE names.
+ * Blocks are judged below `s.cut`, in Hz, when compareSound measured one.
  */
 function soundVerdict(s, codec) {
   if (s.error) return { match: false, detail: `the soundtrack does not decode: ${s.error}` };
   if (s.channels[0] !== s.channels[1]) return { match: false, detail: `the soundtrack decodes to ${s.channels[0]} channels and its recipe renders ${s.channels[1]}` };
   if (s.length[0] !== s.length[1]) return { match: false, detail: `the soundtrack decodes to ${s.length[0]} samples and its recipe renders ${s.length[1]}` };
-  const floor = SOUND_FLOOR_DB[codec], name = codec === 'mp4a' ? 'AAC' : codec, { waveform, envelope: level } = SOUND_NOISE_DB;
-  let worst = Infinity, noisy = 0, worstWave = Infinity, worstLevel = Infinity;
-  for (const [i, [signal, error, noise, noiseError, envelope]] of s.blocks.entries()) {
+  const floor = SOUND_FLOOR_DB[codec], name = codec === 'mp4a' ? 'AAC' : codec, { waveform, envelope: level, rest } = SOUND_NOISE_DB;
+  const gate = 10 ** (SOUND_GATE_DB / 10);
+  let worst = Infinity, noisy = 0, worstWave = Infinity, worstBand = Infinity, worstLevel = Infinity;
+  for (const [i, [signal, error, noise, noiseError, envelope, band, bandNoise, bandError]] of s.blocks.entries()) {
     const samples = Math.min(s.block, s.length[1] - i * s.block) * s.channels[1];
-    if (error / samples < 10 ** (SOUND_GATE_DB / 10)) continue;
+    if (error / samples < gate) continue;
     const db = 10 * Math.log10(signal / error);
     if (db >= floor) { worst = Math.min(worst, db); continue; }
     const differs = `the soundtrack differs from its recipe at ${((i * s.block) / s.rate).toFixed(3)} s: `
       + `that block decodes ${db.toFixed(1)} dB from the render, under the ${floor} dB floor for ${name}`;
     // The difference outside the noise-like bands, which rounding can take under zero.
-    if (!(10 * Math.log10(signal / Math.max(0, error - noiseError)) >= floor)) return { match: false, detail: differs };
+    const restError = Math.max(0, error - noiseError);
+    if (!(10 * Math.log10(signal / restError) >= floor)) return { match: false, detail: differs };
+    const own = 10 * Math.log10(Math.max(0, signal - noise) / restError);
+    if (!(own >= rest) && restError / samples >= gate) return { match: false, detail: `${differs}, and outside its noise-like bands it follows the render's waveform at ${own.toFixed(1)} dB, under ${rest} dB` };
     const wave = 10 * Math.log10(noise / noiseError), kept = 10 * Math.log10(noise / envelope);
     if (!(wave >= waveform)) return { match: false, detail: `${differs}, and its noise-like bands follow the render's waveform at ${wave.toFixed(1)} dB, under ${waveform} dB` };
+    const alone = band >= 0 ? 10 * Math.log10(bandNoise / bandError) : Infinity;
+    if (!(alone >= waveform)) {
+      const khz = (k) => ((k * SOUND_BAND * s.rate) / s.block / 1000).toFixed(2);
+      return { match: false, detail: `${differs}, and its noise-like band at ${khz(band)} to ${khz(band + 1)} kHz follows the render's waveform at ${alone.toFixed(1)} dB, under ${waveform} dB` };
+    }
     if (!(kept >= level)) return { match: false, detail: `${differs}, and its noise-like bands keep the render's levels at ${kept.toFixed(1)} dB, under ${level} dB` };
     noisy++;
     worstWave = Math.min(worstWave, wave);
+    worstBand = Math.min(worstBand, alone);
     worstLevel = Math.min(worstLevel, kept);
   }
   return { match: true, detail: `the ${name} soundtrack decodes to its recipe's ${s.length[1]} samples`
     + (s.cut ? ` and, below ${(s.cut / 1000).toFixed(2)} kHz, where its codec kept the render,` : ',') + ` every block within ${floor} dB of the render`
     + (worst < Infinity ? ` (worst ${worst.toFixed(1)} dB)` : noisy ? '' : ' or differing by less than the gate')
-    + (noisy ? ` or, in its noise-like bands, within ${waveform} dB of its waveform and ${level} dB of its levels (${noisy} blocks, worst ${worstWave.toFixed(1)} and ${worstLevel.toFixed(1)} dB)` : '') };
+    + (noisy ? ` or, in its noise-like bands, within ${waveform} dB of its waveform, together and in each band under ${SOUND_VOICE.below / 1000} kHz within ${-SOUND_VOICE.share} dB of its block,`
+      + ` and ${level} dB of its levels (${noisy} blocks, worst ${worstWave.toFixed(1)}, ${worstBand < Infinity ? worstBand.toFixed(1) : 'no band'} and ${worstLevel.toFixed(1)} dB)` : '') };
 }
 
 /**
@@ -652,7 +696,7 @@ async function replay(file, options = {}) {
     let sound = null;
     if (plan && plan.codec) {
       context.phase = 'soundtrack replay';
-      sound = await evaluate(client, '(' + compareSound.toString() + ')(' + ['window.__replayBytes', recipe, SOUND_BLOCK, JSON.stringify(plan.codec), SOUND_BAND, SOUND_FLATNESS, JSON.stringify(SOUND_CUT)].join(', ') + ')');
+      sound = await evaluate(client, '(' + compareSound.toString() + ')(' + ['window.__replayBytes', recipe, SOUND_BLOCK, JSON.stringify(plan.codec), SOUND_BAND, SOUND_FLATNESS, JSON.stringify(SOUND_CUT), JSON.stringify(SOUND_VOICE)].join(', ') + ')');
     }
     if (context.errors.length) throw new Error('browser: page errors:\n' + context.errors.join('\n'));
     return { browser: context.version.Browser, rows, sound };
@@ -695,6 +739,6 @@ if (require.main === module) main().catch((error) => { console.error(error.messa
 
 module.exports = {
   fileType, manifestOf, pieceFor, replaySvg, filmPlan, filmFrames, replayVerdict, compareFilm, replay, parseArgs, main, FILM_FLOOR_DB,
-  soundPlan, compareSound, soundVerdict, SOUND_BLOCK, SOUND_FLOOR_DB, SOUND_GATE_DB, SOUND_BAND, SOUND_FLATNESS, SOUND_NOISE_DB, SOUND_CUT,
+  soundPlan, compareSound, soundVerdict, SOUND_BLOCK, SOUND_FLOOR_DB, SOUND_GATE_DB, SOUND_BAND, SOUND_FLATNESS, SOUND_NOISE_DB, SOUND_VOICE, SOUND_CUT,
   pngPlan, pngVerdict, comparePng, webmPlan, compareWebm, PNG_FLOOR_DB, sendBytes, PIECE_BYTES,
 };
