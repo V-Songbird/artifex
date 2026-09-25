@@ -14,8 +14,44 @@
 
 'use strict';
 
-const held = new WeakMap();
 const CAP = 8294400;
+
+// A shot keeps up to a dozen full-size copies. Kept for every shot, a walk
+// held 40, so they are kept for the SOLVES last drawn (the shot on screen, the
+// one warmed beside it, the one before), the oldest only under CEILING pixels.
+const SOLVES = 3;
+const CEILING = 24e6;
+const solves = new Map();
+
+// Canvases kept now, their pixels and the most pixels at once, for the site check.
+const tally = { copies: 0, pixels: 0, peak: 0 };
+globalThis.__held = tally;
+
+function counted(copy, n) {
+  tally.copies += n;
+  tally.pixels += n * copy.width * copy.height;
+  tally.peak = Math.max(tally.peak, tally.pixels);
+  return copy;
+}
+
+function drop(copy) {
+  counted(copy, -1);
+  copy.width = copy.height = 0;
+}
+
+/** Solve `s`'s copies by canvas, `held` for `keep` and `counts` for `upTo`, now the last used. */
+function recent(s) {
+  const mine = solves.get(s) || { held: new Map(), counts: new Map() };
+  solves.delete(s);
+  while (solves.size >= SOLVES || (solves.size >= 2 && tally.pixels > CEILING)) {
+    const [old, gone] = solves.entries().next().value;
+    solves.delete(old);
+    for (const copies of gone.held.values()) copies.forEach(drop);
+    for (const k of gone.counts.values()) { k.copies.forEach(drop); k.pool.forEach(drop); }
+  }
+  solves.set(s, mine);
+  return mine;
+}
 
 /**
  * Draw `paint(g, s)`, which must cover the whole canvas opaquely and read only
@@ -53,10 +89,9 @@ function keep(g, s, key, paint, prime) {
   }
   const m = g.getTransform();
   const id = [key, c.width, c.height, m.a, m.b, m.c, m.d, m.e, m.f].join(',');
-  let kept = held.get(c);
-  if (!kept) held.set(c, kept = new WeakMap());
-  let mine = kept.get(s);
-  if (!mine) kept.set(s, mine = new Map());
+  const byCanvas = recent(s).held;
+  let mine = byCanvas.get(c);
+  if (!mine) byCanvas.set(c, mine = new Map());
   let copy = mine.get(id);
   if (!copy) {
     // One copy per key: a new size or scale replaces the old one. When the
@@ -64,6 +99,7 @@ function keep(g, s, key, paint, prime) {
     let old = null;
     for (const [k, v] of mine) if (k.startsWith(key + ',')) { old = v; mine.delete(k); }
     copy = old && shrinks(old, m) ? shrink(old, c, m) : null;
+    if (old) drop(old);
     if (!copy) {
       copy = sibling(c);
       if (!copy) return null;
@@ -81,7 +117,6 @@ function keep(g, s, key, paint, prime) {
   return copy;
 }
 
-const counts = new WeakMap();
 const EVERY = 4;           // a copy at every multiple of this count is kept for good
 const KEEP = 2;            // and this many others, the least recently used given up first
 
@@ -109,16 +144,17 @@ function upTo(g, s, key, k, base, item, prime, most = 0) {
   }
   const m = g.getTransform();
   const id = [key, c.width, c.height, m.a, m.b, m.c, m.d, m.e, m.f].join(',');
-  let bySolve = counts.get(c);
-  if (!bySolve) counts.set(c, bySolve = new WeakMap());
-  let kept = bySolve.get(s);
+  const byCanvas = recent(s).counts;
+  let kept = byCanvas.get(c);
   if (kept && kept.id !== id && shrinks(kept.copies.get(0), m)) {
     // The stage lowered the scale: every kept count, shrunk from the larger copies.
     const copies = new Map();
-    for (const [n, old] of kept.copies) copies.set(n, shrink(old, c, m));
-    bySolve.set(s, kept = { id, copies, used: kept.used.slice(), pool: [] });
+    for (const [n, old] of kept.copies) { copies.set(n, shrink(old, c, m)); drop(old); }
+    kept.pool.forEach(drop);
+    byCanvas.set(c, kept = { id, copies, used: kept.used.slice(), pool: [] });
   }
   if (!kept || kept.id !== id) {
+    if (kept) { kept.copies.forEach(drop); kept.pool.forEach(drop); }
     const first = sibling(c);
     if (!first) { base(g, s); for (let i = 0; i < k; i++) item(g, s, i); return; }
     const fg = first.getContext('2d');
@@ -135,7 +171,7 @@ function upTo(g, s, key, k, base, item, prime, most = 0) {
       spare.getContext('2d').drawImage(first, 0, 0);
       pool.push(spare);
     }
-    bySolve.set(s, kept = { id, copies: new Map([[0, first]]), used: [], pool });
+    byCanvas.set(c, kept = { id, copies: new Map([[0, first]]), used: [], pool });
     if (prime) { g.save(); prime(g, s); g.restore(); }
   }
   let from = 0;
@@ -237,9 +273,9 @@ function sibling(canvas) {
     const c = canvas.ownerDocument.createElement('canvas');
     c.width = canvas.width;
     c.height = canvas.height;
-    return c;
+    return counted(c, 1);
   }
-  return typeof OffscreenCanvas === 'function' ? new OffscreenCanvas(canvas.width, canvas.height) : null;
+  return typeof OffscreenCanvas === 'function' ? counted(new OffscreenCanvas(canvas.width, canvas.height), 1) : null;
 }
 
 module.exports = { hold, keep, soft, upTo };

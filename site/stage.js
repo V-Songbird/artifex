@@ -130,7 +130,7 @@
     let mode = null, pending = 0, playing = null, visible = null, lastFrame = -1, direction = 1, lastScroll = 0;
     let px = 1, worker = null, workerOk = typeof Worker === 'function' && typeof OffscreenCanvas === 'function'
       && typeof HTMLCanvasElement.prototype.transferControlToOffscreen === 'function';
-    let urlTimer = 0, stillQueue = Promise.resolve(), observer = null, sink = null;
+    let urlTimer = 0, stillQueue = Promise.resolve(), observer = null;
 
     const shots = data.shots.map((s, i) => Object.assign({}, s, {
       index: i, cut: film[i], piece: null, loading: null, solved: null, solvedFor: null,
@@ -140,7 +140,7 @@
     // What the site check reads. `writes` names every scroll write and why.
     const stat = window.__stage = {
       ready: false, mode: null, frames: data.frames, px: 1, seed, frame: -1, shot: null, draws: 0, log: [],
-      stills: 0, writes: [], lowered: [], worker: workerOk ? 'idle' : 'unavailable',
+      stills: 0, writes: [], lowered: [], worker: workerOk ? 'idle' : 'unavailable', force,
     };
 
     // --- canvases ---------------------------------------------------------
@@ -260,9 +260,9 @@
 
     // --- drawing --------------------------------------------------------------
     function force(c) {
-      // One sink pixel forces the frame to rasterize before the clock is read,
-      // only when measuring; the drawing canvas itself is never read back.
-      if (!sink) sink = new OffscreenCanvas(1, 1).getContext('2d', { willReadFrequently: true });
+      // Measuring: a pixel read through a new 1 x 1 GPU canvas makes the frame
+      // rasterize first; a canvas kept for reading would copy it all to the CPU.
+      const sink = new OffscreenCanvas(1, 1).getContext('2d');
       sink.drawImage(c, 0, 0, 1, 1, 0, 0, 1, 1);
       sink.getImageData(0, 0, 1, 1);
     }

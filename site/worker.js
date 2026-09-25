@@ -8,7 +8,6 @@ importScripts('core.js');
 const req = __require('worker');
 const P = req('core/piece.js'), R = req('core/render.js');
 const canvases = [], loaded = new Set(), pieces = new Map(), solves = new Map();
-let sink = null;
 
 function solved(piece, d) {
   const key = d.id + '|' + d.seed + '|' + JSON.stringify(d.params);
@@ -41,7 +40,8 @@ onmessage = (event) => {
     g.setTransform(1, 0, 0, 1, 0, 0);
     R.drawFrame(g, piece, state, d.t, { scale: d.scale });
     if (d.measure) {
-      if (!sink) sink = new OffscreenCanvas(1, 1).getContext('2d', { willReadFrequently: true });
+      // As the stage's force(): one pixel through a new 1 x 1 GPU canvas.
+      const sink = new OffscreenCanvas(1, 1).getContext('2d');
       sink.drawImage(slot.canvas, 0, 0, 1, 1, 0, 0, 1, 1);
       sink.getImageData(0, 0, 1, 1);
     }

@@ -21,3 +21,17 @@ test('site check: a redraw of a frame after a scale change is counted apart, onc
   // Two lowerings on one frame allow two redraws.
   assert.deepEqual(countDraws([at(0, 4), at(0, 4, 0.75), at(0, 4, 0.563)]), { distinct: 1, redraws: 2, extra: 0 });
 });
+
+test('site check: the measuring sink must show a heavy frame\'s rasterization, or the check fails', () => {
+  const { sinkWaits } = require('../../tools/check-site.js');
+  const times = (none, forced, copied) => ({ none: [none, none + 1, none - 0.1], forced: [forced, forced + 1, forced - 0.1], copied: [copied, copied + 1, copied - 0.1] });
+  // A sink that waits: forced near the whole-frame copy, far over the calls alone.
+  assert.equal(sinkWaits(times(0.4, 43.5, 49.6)).failure, undefined);
+  assert.deepEqual(sinkWaits(times(0.4, 43.5, 49.6)), { noneMs: 0.4, forcedMs: 43.5, copiedMs: 49.6 });
+  // One that stopped waiting measures the calls alone.
+  assert.match(sinkWaits(times(0.4, 0.6, 49.6)).failure, /does not wait for rasterization/);
+  // Under half the copy fails, even when well over the calls.
+  assert.match(sinkWaits(times(0.4, 20, 49.6)).failure, /does not wait/);
+  // A frame too light to tell (forced under three times the calls) fails rather than passing.
+  assert.match(sinkWaits(times(2, 5, 6)).failure, /does not wait/);
+});
