@@ -17,6 +17,11 @@
 // part on the boundary frame at once, heard as one chord. A part turns along
 // OKLCh, so a change between complementary palettes keeps its colour on the way
 // instead of passing through grey.
+//
+// ONE FINISH OVER THE FILM. The cut edges carry the paper's material; the
+// finish carries the film's: grain that boils, a little gate weave and flicker,
+// a vignette, and one print grade that holds the four palettes in one stock.
+// It is drawn on raster frames only, so the SVG keeps the bare cut forms.
 
 'use strict';
 
@@ -68,6 +73,11 @@ module.exports = {
   params: {
     blend: { min: 0, max: 0.8, value: 0.5,
       meaning: 'seconds each scene change takes, from a hard cut at 0 to a slow turn part by part' },
+  },
+  // One print for the whole film: four palettes, one stock, one grade.
+  finish: {
+    grain: 0.35, weave: 1.2, flicker: 0.05, vignette: 0.35,
+    grade: { black: '#1d1812', white: '#f4ecdc', tone: '#9c7a52', toning: 0.15 },
   },
 
   state: () => ({ forms: {}, shift: 0, enter: 0, cues: null }),

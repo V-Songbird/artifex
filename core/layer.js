@@ -132,4 +132,4 @@ function put(g, copy, at) {
   g.restore();
 }
 
-module.exports = { layer };
+module.exports = { layer, sibling };

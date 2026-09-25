@@ -14,6 +14,7 @@
 
 const { validate, frameT, frameCount, frameDen, clockAt, solve } = require('./piece.js');
 const { VectorSurface } = require('./surface-vector.js');
+const { weave, develop } = require('./finish.js');
 
 /**
  * Draw one frame onto any Canvas2D-shaped surface.
@@ -30,13 +31,17 @@ function drawFrame(surface, piece, solved, t, opt = {}) {
   if (!Number.isFinite(scale) || scale <= 0) throw new Error('render: scale must be a positive finite number');
   const tt = frameT(piece, t);
   const clock = clockAt(piece, t);
+  // A declared finish needs pixels; a surface without a canvas gets the marks.
+  const film = !!(piece.finish && surface.canvas);
   if (surface.save) surface.save();
   if (scale !== 1 && surface.scale) surface.scale(scale, scale);
   try {
+    if (film) weave(surface, piece, solved, clock.frame);
     piece.draw(surface, solved.state, tt, clock);
   } finally {
     if (surface.restore) surface.restore();
   }
+  if (film) develop(surface, piece, solved, clock.frame, scale);
   return tt;
 }
 

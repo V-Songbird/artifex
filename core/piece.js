@@ -8,6 +8,8 @@
 
 'use strict';
 
+const finish = require('./finish.js');
+
 /**
  * A piece is a plain object. `draw` is a pure function of (state, t); `build`
  * stages are pure in the seed. Those two properties are the whole of what makes
@@ -209,6 +211,16 @@ const FIELDS = {
        + 'atBox; build stages and draw read the box they were solved for from '
        + 'state.box, so the piece recomposes to it rather than being stretched.',
   },
+
+  finish: {
+    required: false,
+    default: () => null,
+    check: finish.check,
+    doc: 'null, or a film finish drawFrame applies to every raster frame: '
+       + '{ grain, weave, flicker, vignette, grade }, each off unless declared. '
+       + 'Pure in (seed, frame), so replay reproduces it. Films only: a still '
+       + 'keeps its texture on its marks, and an SVG has no pixels to finish.',
+  },
 };
 
 const OUTPUTS = ['raster', 'vector'];
@@ -252,6 +264,10 @@ function validate(piece) {
   // A soundtrack is as long as the film, and a still has no film.
   if (out.sound && !out.time) {
     throw new PieceError('sound: a soundtrack needs a timeline; declare time: { duration, hz }');
+  }
+  // A finish models a film's process; a still keeps its texture on its marks.
+  if (out.finish && !out.time) {
+    throw new PieceError('finish: a film finish needs a timeline; a still keeps its texture on its marks');
   }
   const off = out.boxes && outside(out.boxes, out.size);
   if (off) throw new PieceError(`boxes: size ${off}`);

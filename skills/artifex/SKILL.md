@@ -228,7 +228,9 @@ the list with the defaults this skill already names, so the owner can strike or
 extend it:
 
 - one noise family at every scale ([focal composition](#art-direction-preset-focal-composition));
-- a grain pass over the finished frame instead of texture on each mark (same);
+- in a still, a grain pass over the finished frame instead of texture on each mark
+  (same); a film's [finish](#film-finish) is one declared process over every frame,
+  not this;
 - a line that fades up through `globalAlpha` instead of arriving (same);
 - a flow field around a focus that turns botanical ([traps](#traps)).
 
@@ -245,7 +247,7 @@ the notes at the top of each say what it is in the set to prove.
 | `drift.js` | organic, painterly — dabs, opacity, a flow field | 240 frames | **raster only** |
 | `specimen.js` | hard-edged, typographic — a stroke font, straight runs | a still | raster + vector |
 | `readout.js` | data-driven — a fixed dataset the seed may not touch; it sounds, the data choosing the pitch; picture and sound share one shot list | 168 frames | raster + vector + sound |
-| `cues.js` | authored motion — eased moves, bumps and a blink, and scene changes blended part by part, all written as one cue table on whole frames; each part is heard as it turns | 192 frames | raster + vector + sound |
+| `cues.js` | authored motion — eased moves, bumps and a blink, and scene changes blended part by part, all written as one cue table on whole frames; each part is heard as it turns; one film finish over all four palettes | 192 frames | raster + vector + sound + finish |
 | `partition.js` | recursive subdivision — area, not marks | a still | raster + vector |
 | `contours.js` | plotter-native — one pen, one weight, no fills | a still | raster + vector |
 | `packing.js` | closed forms grown until they touch — composition decided by refusal | a still | raster + vector |
@@ -291,7 +293,7 @@ textured cubes as voxels, dense bright fills on a dark ground as embroidery.
 validator and field documentation when changing a piece or the contract.
 
 Required: `name`, `size`, `draw`.
-Optional: `state`, `build`, `seed`, `time`, `outputs`, `params`, `sound`, `preview`, `boxes`.
+Optional: `state`, `build`, `seed`, `time`, `outputs`, `params`, `sound`, `preview`, `boxes`, `finish`.
 **Unknown keys are refused by name.** This catches misspelled or unsupported
 contract fields.
 
@@ -309,6 +311,7 @@ contract fields.
   sound: null,                    // or sound(ctx, state, timeline); needs a timeline
   preview: null,                  // optional explicit webgpu-pixels descriptor
   boxes: null,                    // or { w: [min, max], h: [min, max] }: it recomposes to its box
+  finish: null,                   // or a film's finish: grain, weave, flicker, vignette, grade
 }
 ```
 
@@ -518,6 +521,50 @@ solved trajectory.
   measurement. `npm run browser` requires two renders of each example to be
   the same bits. Engines differ further, like pixels.
 
+## Film finish
+
+A film may declare `finish`: one process that touched every pixel of every
+frame, as developing and printing touch a film. `drawFrame` draws it after
+`draw` on every raster frame, the same way on each. Read the
+[piece API](../../docs/apis/piece-api.md#film-finish) for the contract.
+
+```js
+finish: {
+  grain: 0.35,     // 0..1: seeded grain that boils, a new offset every frame
+  weave: 1.2,      // design units: the picture moving in the gate
+  flicker: 0.05,   // 0..1: how far a frame's exposure may dip
+  vignette: 0.35,  // 0..1: how dark the corners fall
+  grade: { black: '#1d1812', white: '#f4ecdc', tone: '#9c7a52', toning: 0.15 },
+}
+```
+
+- **Reach for it when a film should read as one film.** Scenes in their own
+  palettes, cutouts and parts drawn apart read as a collage of styles until one
+  process passes over all of them. Grain, weave and flicker keep the whole frame
+  alive where nothing in the picture moves.
+- **The grade unifies the palette.** `black` and `white` are where the print's
+  darkest and lightest land, so every scene shares one black and one white;
+  `tone` pulls every hue toward one colour by `toning` and keeps each pixel's
+  lightness. A warm tone greys a saturated blue quickly: keep `toning` low and
+  let the ends do most of the work.
+- **One treatment, the whole film.** It is declared once, not per shot. Scenes
+  that should feel different differ in their marks and palettes, under the same
+  print. Do not bake a different grain or tint into each sprite instead: that is
+  the film that reads as made of different styles.
+- **The marks keep their own texture.** The finish is the film's material, not a
+  substitute for the material on screen: paper keeps its cut edge, paint its
+  stroke. [Texture belongs to the material](#art-direction-preset-focal-composition)
+  still holds for every mark, and for stills, which refuse `finish`.
+- **Keep it quiet and look at full size.** Grain spends bitrate: at the export's
+  default the finest grain softens into mottling, so judge it on decoded frames
+  at 100%, not on the canvas.
+- **Nothing to schedule.** Each part is a function of the seed and the frame, so
+  scrubs, exports and replay agree. An SVG keeps the bare marks; a PNG, a film and
+  the page carry the finish. Paint an opaque ground: grain over transparency
+  shows grey.
+
+`examples/cues.js` declares one: four palettes under one print.
+
 ## Art-direction preset: focal composition
 
 Use this optional preset when a focal relationship suits the piece. A tessellation,
@@ -536,7 +583,9 @@ five scales produces recognisable algorithmic self-similarity.
 **Texture belongs to the material, not to the frame.** A global grain pass over
 a finished image treats every surface as though the same particulate process
 affected it. Variation attached to the *mark* is more informative than variation
-attached to every pixel.
+attached to every pixel. A film differs: its grain,
+weave and print did touch every pixel, so declare them once as its
+[finish](#film-finish), over marks that keep their own texture.
 
 **Inspect paint order in rendered output.** Correct invariants do not establish
 that layering and occlusion produce the intended image.
