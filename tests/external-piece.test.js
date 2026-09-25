@@ -240,3 +240,73 @@ test('external pieces loaded as a list define a shared helper once and name what
   // One path keeps the single-piece shape.
   assert.deepEqual(Object.keys(loadExternal('./b.cjs', dir)).sort(), ['directory', 'entry', 'moduleCount', 'names', 'piece', 'source', 'stem']);
 });
+
+const escape = (text) => text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+
+test('external piece requires artifex/core modules from any folder, as the page resolves them', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'artifex-external-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, 'lib'));
+  fs.writeFileSync(path.join(dir, 'lib', 'mid.js'), "module.exports = require('artifex/core/num.js').lerp(0, 10, 0.5);");
+  fs.writeFileSync(path.join(dir, 'core.cjs'), "const { rng } = require('artifex/core/rand.js'); const mid = require('./lib/mid.js');\n"
+    + "module.exports = { name: 'core-import', size: { w: 20, h: 20 }, seed: 3, draw(g, s) { g.fillRect(0, 0, mid, typeof rng); } };");
+  const external = loadExternal('./core.cjs', dir);
+  assert.deepEqual(external.piece.size, { w: 20, h: 20 });
+  assert.match(external.source, /require\("core\/rand\.js"\)/);
+  assert.match(external.source, /require\("core\/num\.js"\)/);
+  const piece = vm.runInNewContext(bundle(external) + "\n__require('')('examples/index.js')['core-import']");
+  const marks = [];
+  piece.draw({ fillRect(...args) { marks.push(args); } });
+  assert.deepEqual(marks, [[0, 0, 5, 'function']]);
+  for (const spec of ['artifex/core/nope.js', 'artifex/core/../examples/drift.js']) {
+    fs.writeFileSync(path.join(dir, 'bad.cjs'), 'require(' + JSON.stringify(spec) + ");module.exports={name:'bad',size:{w:1,h:1},draw(){}};");
+    assert.throws(() => loadExternal('./bad.cjs', dir), new RegExp('cannot resolve ' + escape(spec)), spec);
+  }
+});
+
+test('external piece runs in Node from the module table the page runs, without Node-only module globals', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'artifex-external-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // What a module sees of its surroundings, carried out through a parameter's meaning.
+  fs.writeFileSync(path.join(dir, 'probe.js'), 'module.exports = JSON.stringify([typeof __dirname, typeof __filename, this === module.exports, typeof module.id]);');
+  fs.writeFileSync(path.join(dir, 'probe.cjs'), "const probe = require('./probe.js');\n"
+    + "module.exports = { name: 'probe', size: { w: 1, h: 1 }, params: { p: { min: 0, max: 1, value: 0, meaning: probe } }, draw() {} };");
+  const external = loadExternal('./probe.cjs', dir);
+  const page = vm.runInNewContext(bundle(external) + "\n__require('')('examples/index.js').probe");
+  assert.equal(page.params.p.meaning, '["undefined","undefined",false,"undefined"]');
+  assert.equal(external.piece.params.p.meaning, page.params.p.meaning);
+  fs.writeFileSync(path.join(dir, 'dirname.cjs'), "module.exports = { name: 'dirname', size: { w: 1, h: 1 }, draw() { return __dirname; }, seed: __dirname.length };");
+  assert.throws(() => loadExternal('./dirname.cjs', dir), /invalid module.*dirname\.cjs.*__dirname is not defined/);
+});
+
+test('external piece confined to its listed files refuses every other require by name', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'artifex-external-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const pack = path.join(dir, 'pack');
+  fs.mkdirSync(path.join(pack, 'lib'), { recursive: true });
+  const write = (name, text) => fs.writeFileSync(path.join(dir, name), text);
+  const piece = (needs) => needs + "\nmodule.exports = { name: 'dots', size: { w: 10, h: 10 }, draw(g) { g.fillRect(0, 0, 10, 10); } };";
+  write('outside.js', 'module.exports = 1;');
+  write('pack/lib/data.json', '{"r": 2}');
+  write('pack/lib/dots.js', "module.exports = require('./data.json').r;");
+  write('pack/lib/unlisted.js', 'module.exports = 3;');
+  write('pack/lib/leak.js', "module.exports = require('../../outside.js');");
+  write('pack/piece.cjs', piece("require('./lib/dots.js'); require('artifex/core/rand.js');"));
+  const files = ['piece.cjs', 'lib/dots.js', 'lib/data.json', 'lib/leak.js'];
+  const load = (name) => loadExternal('./' + name, pack, { confine: { root: pack, files: files.concat(name) } });
+  assert.equal(load('piece.cjs').moduleCount, 3);
+  assert.deepEqual(loadExternal(['./piece.cjs'], pack, { confine: { root: pack, files } }).library, ['core/rand.js']);
+  for (const [name, spec, file = name] of [
+    ['absolute-core.cjs', path.join(ROOT, 'core', 'rand.js')],
+    ['library.cjs', 'artifex/examples/drift.js'],
+    ['up.cjs', '../outside.js'],
+    ['package.cjs', 'some-package'],
+    ['unlisted.cjs', './lib/unlisted.js'],
+    ['nested.cjs', '../../outside.js', 'lib/leak.js'],
+  ]) {
+    write('pack/' + name, piece(name === 'nested.cjs' ? "require('./lib/leak.js');" : 'require(' + JSON.stringify(spec) + ');'));
+    assert.throws(() => load(name), new RegExp(escape(path.join(pack, file)) + ' requires ' + escape(spec) + '.*which is not a listed file of '), name);
+  }
+  assert.throws(() => loadExternal('./lib/unlisted.js', pack, { confine: { root: pack, files } }),
+    new RegExp(escape(path.join(pack, 'lib', 'unlisted.js')) + ' is not a listed file of '));
+});

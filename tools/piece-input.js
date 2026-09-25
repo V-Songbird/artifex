@@ -2,10 +2,12 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const { createRequire, isBuiltin } = require('node:module');
 const { validate } = require('../core/piece.js');
 
 const ROOT = path.resolve(__dirname, '..');
+const CORE = fs.readdirSync(path.join(ROOT, 'core')).filter((f) => f.endsWith('.js'));
 const json = (value) => JSON.stringify(value).replace(/</g, '\\u003c');
 
 function callerDirectory(cwd = process.cwd(), env = process.env) {
@@ -112,10 +114,18 @@ function imports(source, file) {
 // so a helper two pieces require is defined once, and says which modules each
 // piece reaches, so a caller can split the definitions per piece, and which
 // library modules the pieces require, so a caller can bundle only those.
-function loadExternal(input, cwd = callerDirectory()) {
+// `require('artifex/core/<file>.js')` names a library core module from any folder.
+// `confine: { root, files }` refuses every piece and require other than those
+// files (paths relative to root, forward slashes) and artifex/core modules.
+// Node runs the pieces from the same module table and sources the page gets.
+function loadExternal(input, cwd = callerDirectory(), { confine } = {}) {
   const list = Array.isArray(input);
   if (list && !input.length) throw new Error('piece: loadExternal needs at least one piece');
-  const ids = new Map(), modules = [], requires = new Map(), library = new Set();
+  const ids = new Map(), modules = [], requires = new Map(), library = new Set(), table = new Map();
+  const root = confine && fs.realpathSync(path.resolve(cwd, confine.root));
+  const files = confine && new Set(confine.files);
+  const listed = (file) => files.has(path.relative(root, file).split(path.sep).join('/'));
+  const outside = (file, spec) => new Error('piece: ' + file + ' requires ' + spec + ', which is not a listed file of ' + root + ' or artifex/core/<file>.js');
   function visit(file) {
     const relative = path.relative(ROOT, file).replace(/\\/g, '/');
     if (/^(core|examples)\/[^/]+\.js$/.test(relative)) { library.add(relative); return relative; }
@@ -139,9 +149,18 @@ function loadExternal(input, cwd = callerDirectory()) {
       const dependencies = imports(source, file);
       for (const dependency of dependencies) {
         if (isBuiltin(dependency.spec)) throw new Error('piece: Node builtin ' + dependency.spec + ' cannot run in the browser (' + file + ')');
+        const core = /^artifex\/core\/([^/\\]+)$/.exec(dependency.spec);
         let resolved;
-        try { resolved = localRequire.resolve(dependency.spec); }
-        catch (error) { throw new Error('piece: cannot resolve ' + dependency.spec + ' from ' + file + ': ' + error.message); }
+        if (core) {
+          if (!CORE.includes(core[1])) throw new Error('piece: cannot resolve ' + dependency.spec + ' from ' + file + ': core/ has no module ' + core[1]);
+          resolved = path.join(ROOT, 'core', core[1]);
+        }
+        else {
+          if (confine && dependency.spec[0] !== '.') throw outside(file, dependency.spec);
+          try { resolved = localRequire.resolve(dependency.spec); }
+          catch (error) { throw new Error('piece: cannot resolve ' + dependency.spec + ' from ' + file + ': ' + error.message); }
+          if (confine && !listed(resolved)) throw outside(file, dependency.spec + ' (' + resolved + ')');
+        }
         dependency.id = visit(resolved);
         if (dependency.id.startsWith('external/')) requires.get(id).push(dependency.id);
       }
@@ -152,8 +171,18 @@ function loadExternal(input, cwd = callerDirectory()) {
     // A string containing an HTML end tag is legitimate piece data. Escaping
     // its slash preserves the JS string value without ending the script tag.
     source = source.replace(/<\/script/gi, (marker) => '<\\/' + marker.slice(2));
-    modules.push({ id, file, source: '__def(' + json(id) + ', function (module, exports, require) {\n' + source + '\n});' });
+    source = '__def(' + json(id) + ', function (module, exports, require) {\n' + source + '\n});';
+    modules.push({ id, file, source });
+    // The same text the page runs, compiled here so Node defines the module as the page does.
+    vm.runInThisContext('(function (__def) {' + source + '\n})', { filename: file, lineOffset: -1 })((key, fn) => table.set(key, fn));
     return id;
+  }
+  // The page's require over the same table: library modules are the files the page bundles.
+  const cache = new Map();
+  function run(id) {
+    if (!table.has(id)) return require(path.join(ROOT, id));
+    if (!cache.has(id)) { const m = { exports: {} }; cache.set(id, m); table.get(id)(m, m.exports, run); }
+    return cache.get(id).exports;
   }
   // Every module a piece reaches, itself first, each once.
   function reach(id, found = new Set()) {
@@ -165,9 +194,10 @@ function loadExternal(input, cwd = callerDirectory()) {
     let entry;
     try { entry = require.resolve(path.resolve(cwd, one)); }
     catch (error) { throw new Error('piece: cannot load ' + path.resolve(cwd, one) + ': ' + error.message); }
+    if (confine && !listed(entry)) throw new Error('piece: ' + entry + ' is not a listed file of ' + root);
     const id = visit(entry);
     let piece;
-    try { piece = validate(require(entry)); }
+    try { piece = validate(run(id)); }
     catch (error) { throw new Error('piece: invalid module ' + entry + ': ' + error.message); }
     // One registry name per piece: a second module under the same name would replace the first.
     const named = byName.get(piece.name);
