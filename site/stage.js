@@ -12,7 +12,9 @@
 // three tiers: per frame on the main thread, once per change for a still, or
 // in a Worker on an OffscreenCanvas behind its poster. A shot whose frames run
 // over budget lowers its raster scale, down to one device pixel per CSS pixel,
-// and then moves to the worker tier. Under reduced motion each shot is one
+// and then moves to the worker tier. A cold draw, the first after a load, a
+// new solve or a scale change, is not held against it: what a piece makes
+// once is not what each frame costs. Under reduced motion each shot is one
 // still, in reading order, and seams are not shown.
 //
 // The helpers above boot() are pure, and site/tests runs them in Node.
@@ -23,6 +25,7 @@
   const VIEWPORT_PER_SECOND = 0.6;      // scroll length of one second of film, in viewport heights
   const PIXEL_CAP = 8294400;            // canvas pixels, the GPU preview's cap
   const JUDGED = 20;                    // draws a scale is judged on
+  const OVER = 3;                       // of which this many over budget lower it
   const SETTLE_MS = 150;                // a main-thread fallback draws once the scroll rests this long
 
   /** Shot `cut` ({start, end}) shows playhead playheadAt(cut, f, time) at site frame f. */
@@ -71,14 +74,32 @@
 
   /**
    * The raster scale a shot should draw at next: `scale` (a share of the full
-   * device resolution) unchanged while the last JUDGED draws hold the budget,
-   * three quarters of it when they do not, never below one device pixel per
-   * CSS pixel, and 0 when nothing is left to lower: the worker tier.
+   * device resolution) unchanged while fewer than OVER of the last JUDGED
+   * draws run over the budget, three quarters of it when OVER or more do,
+   * never below one device pixel per CSS pixel, and 0 when nothing is left to
+   * lower: the worker tier.
    */
   function lower(scale, dpr, times, budget) {
-    if (times.length < JUDGED || p95(times.slice(-JUDGED)) <= budget) return scale;
+    if (times.length < JUDGED || times.slice(-JUDGED).filter((ms) => ms > budget).length < OVER) return scale;
     const floor = Math.min(1, 1 / dpr);
     return scale <= floor + 1e-9 ? 0 : Math.max(floor, scale * 0.75);
+  }
+
+  /**
+   * Judge a main-thread draw of shot `s` ({ scale, times, context }) that took
+   * `ms` in draw context `context`: the canvas, its size, the solve and the
+   * scale it drew with. The first draw in a new context, after a load, a new
+   * solve or a scale change, is cold; neither it nor a warm-up draw is judged.
+   * Returns the scale to draw at next, 0 for the worker tier.
+   */
+  function judgeDraw(s, context, ms, warm, dpr, budget) {
+    const cold = s.context !== context;
+    s.context = context;
+    if (warm || cold) return s.scale;
+    s.times.push(ms);
+    const next = lower(s.scale, dpr, s.times, budget);
+    if (next !== s.scale) s.times = [];
+    return next;
   }
 
   /** The canvas for a design box fitted inside a view: CSS scale, device scale k, and whole pixels, capped. */
@@ -89,7 +110,7 @@
     return { css, k, w: Math.max(1, Math.round(size.w * k)), h: Math.max(1, Math.round(size.h * k)) };
   }
 
-  const helpers = { playheadAt, frameOf, readRecipe, writeRecipe, p95, lower, fit, VIEWPORT_PER_SECOND, PIXEL_CAP, JUDGED };
+  const helpers = { playheadAt, frameOf, readRecipe, writeRecipe, p95, lower, judgeDraw, fit, VIEWPORT_PER_SECOND, PIXEL_CAP, JUDGED, OVER };
   if (typeof module === 'object' && module.exports) { module.exports = helpers; return; }
 
   function boot() {
@@ -113,7 +134,7 @@
 
     const shots = data.shots.map((s, i) => Object.assign({}, s, {
       index: i, cut: film[i], piece: null, loading: null, solved: null, solvedFor: null,
-      params: i === recipe.shot ? recipe.params : {}, scale: 1, times: [], stillFor: null,
+      params: i === recipe.shot ? recipe.params : {}, scale: 1, times: [], context: null, stillFor: null,
     }));
 
     // What the site check reads. `writes` names every scroll write and why.
@@ -130,7 +151,7 @@
       return c;
     }
     const slots = [0, 1].map((n) => {
-      const slot = { n, canvas: canvas(), g: null, shot: -1, key: null, fit: null, offscreen: false, busy: false, next: null, drawn: false, timer: 0 };
+      const slot = { n, gen: 0, canvas: canvas(), g: null, shot: -1, key: null, fit: null, offscreen: false, busy: false, next: null, drawn: false, timer: 0 };
       stageEl.appendChild(slot.canvas);
       return slot;
     });
@@ -142,7 +163,7 @@
       c.setAttribute('aria-label', slot.canvas.getAttribute('aria-label') || '');
       stageEl.replaceChild(c, slot.canvas);
       if (slot.offscreen && worker) worker.postMessage({ slot: slot.n, release: true });
-      Object.assign(slot, { canvas: c, g: null, offscreen: false, busy: false, next: null, key: null, fit: null });
+      Object.assign(slot, { canvas: c, gen: slot.gen + 1, g: null, offscreen: false, busy: false, next: null, key: null, fit: null });
     }
 
     function assign(slot, i) {
@@ -246,10 +267,10 @@
       sink.getImageData(0, 0, 1, 1);
     }
 
-    function record(slot, w, ms, warm, where) {
+    function record(slot, w, ms, warm, where, cold = false) {
       const s = shots[slot.shot];
       stat.draws++;
-      stat.log.push({ shot: s.index, frame: w.frame, site: w.f, seed, ms: +ms.toFixed(2), warm, where, scale: +s.scale.toFixed(3), w: slot.fit.w });
+      stat.log.push({ shot: s.index, frame: w.frame, site: w.f, seed, ms: +ms.toFixed(2), warm, cold, where, scale: +s.scale.toFixed(3), w: slot.fit.w });
       if (stat.log.length > 5000) stat.log.splice(0, 1000);
       slot.key = w.key; slot.drawn = true;
       if (visible === slot) { posterFor(slot); stat.ready = true; }
@@ -264,8 +285,9 @@
       R.drawFrame(g, s.piece, solved(s), w.t, { scale: slot.fit.k });
       if (measure) force(slot.canvas);
       const ms = performance.now() - a;
-      record(slot, w, ms, warm, 'main');
-      if (!warm) judge(s, ms);
+      const context = [slot.n, slot.gen, slot.fit.w, slot.fit.h, s.solvedFor, s.scale].join('|');
+      record(slot, w, ms, warm, 'main', s.context !== context);
+      judge(s, context, ms, warm);
     }
 
     function drawWorker(slot, w, warm) {
@@ -326,11 +348,9 @@
     }
 
     // A shot over budget lowers its scale; with nothing left to lower it moves to the worker tier.
-    function judge(s, ms) {
-      s.times.push(ms);
-      const next = lower(s.scale, devicePixelRatio || 1, s.times, budget);
+    function judge(s, context, ms, warm) {
+      const next = judgeDraw(s, context, ms, warm, devicePixelRatio || 1, budget);
       if (next === s.scale) return;
-      s.times = [];
       if (next === 0) { s.tier = 'worker'; stat.lowered.push({ shot: s.name, tier: 'worker' }); }
       else { s.scale = next; stat.lowered.push({ shot: s.name, scale: +next.toFixed(3) }); }
       request();

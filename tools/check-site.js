@@ -9,10 +9,12 @@
 // On each of the two references, desktop (1280 x 800 at DPR 1) and slow (390 x
 // 844 at DPR 3, a 1170-pixel canvas, 4x CPU throttling), native wheel events
 // scroll the whole film forward one frame at a time, and the check requires:
-// no page errors; every shot drawn; as many draws as distinct frames; at most
-// two canvases; no scroll write, no preventDefault on wheel, touch, scroll or
-// keys, and no listener for them that is not passive; and each shot's p95 draw
-// time, forced to rasterize, within its tier's budget. Then reduced motion must
+// no page errors; every shot drawn; as many draws as distinct frames, besides
+// one redraw of the same frame after each scale change; at most two canvases;
+// no scroll write, no preventDefault on wheel, touch, scroll or keys, and no
+// listener for them that is not passive; and each shot's p95 draw time, forced
+// to rasterize, within its tier's budget, over its draws after the cold one
+// that follows a load, a new solve or a scale change (reported apart). Then reduced motion must
 // show every shot as a still and draw nothing on scroll; with the canvas
 // transfer taken away, the worker-tier shot must draw on the main thread; and
 // a recipe URL must open its shot, frame and seed; and "Play as film" must
@@ -91,21 +93,41 @@ async function open(client, context, view, url) {
   await waitFor(client, context, 'document.readyState === "complete" && !!window.__stage && __stage.ready');
 }
 
+/**
+ * Draws against distinct frames: `redraws` are draws of the frame a shot
+ * drew last, at another scale, each allowed once after the scale change it
+ * follows; `extra` are any other draws of a frame already drawn.
+ */
+function countDraws(entries) {
+  const seen = new Set(), last = new Map();
+  let redraws = 0, extra = 0;
+  for (const e of entries) {
+    const key = e.shot + '|' + e.frame + '|' + e.seed, before = last.get(e.shot);
+    if (!seen.has(key)) seen.add(key);
+    else if (before && before.key === key && before.scale !== e.scale) redraws++;
+    else extra++;
+    last.set(e.shot, { key, scale: e.scale });
+  }
+  return { distinct: seen.size, redraws, extra };
+}
+
 /** The shots each draw belongs to, and what a forward walk must hold. */
 function judgeWalk(view, shots, entries, samples, probeLog) {
   const failures = [];
-  const keys = new Set(entries.map((e) => e.shot + '|' + e.frame + '|' + e.seed));
-  if (keys.size !== entries.length) failures.push(view.name + ': ' + entries.length + ' draws for ' + keys.size + ' distinct frames');
+  const count = countDraws(entries);
+  if (count.extra) failures.push(view.name + ': ' + entries.length + ' draws for ' + count.distinct + ' distinct frames and ' + count.redraws + ' redraws after a scale change');
   const perShot = shots.map((s, i) => {
     const mine = entries.filter((e) => e.shot === i);
     if (!mine.length) { failures.push(view.name + ': shot ' + s.name + ' was never drawn'); return { shot: s.name, draws: 0 }; }
     const where = [...new Set(mine.map((e) => e.where))];
     // The budget holds at the scale the shot settled on; a worker-tier shot is off the main thread.
+    // A cold draw, the first after a load, a new solve or a scale change, is reported, not judged.
     const scale = mine[mine.length - 1].scale;
-    const main = mine.filter((e) => e.where === 'main' && e.scale === scale).map((e) => e.ms);
+    const main = mine.filter((e) => e.where === 'main' && e.scale === scale && !e.cold).map((e) => e.ms);
     const limit = s.tier === 'frame' ? view.frameMs : view.changeMs;
     const out = { shot: s.name, tier: s.tier, where, draws: mine.length, warm: mine.filter((e) => e.warm).length, scale, width: mine[mine.length - 1].w,
-      p95Ms: main.length ? p95(main) : null, maxMs: Math.max(...mine.map((e) => e.ms)), budgetMs: s.tier === 'worker' ? null : limit };
+      p95Ms: main.length ? p95(main) : null, maxMs: Math.max(...mine.map((e) => e.ms)), budgetMs: s.tier === 'worker' ? null : limit,
+      cold: mine.filter((e) => e.cold).map((e) => ({ frame: e.frame, ms: e.ms, scale: e.scale, warm: e.warm })) };
     if (s.tier !== 'worker' && main.length && out.p95Ms > limit) failures.push(view.name + ': shot ' + s.name + ' p95 ' + out.p95Ms + ' ms over its ' + limit + ' ms budget');
     return out;
   });
@@ -114,7 +136,7 @@ function judgeWalk(view, shots, entries, samples, probeLog) {
   if (probeLog.writes.length) failures.push(view.name + ': the page wrote the scroll: ' + probeLog.writes.join(', '));
   if (probeLog.prevented.length) failures.push(view.name + ': preventDefault on ' + probeLog.prevented.join(', '));
   if (probeLog.active.length) failures.push(view.name + ': listeners that are not passive: ' + probeLog.active.join(', '));
-  return { failures, perShot, canvases, draws: entries.length, distinct: keys.size };
+  return { failures, perShot, canvases, draws: entries.length, distinct: count.distinct, redraws: count.redraws };
 }
 
 /** Scroll the whole film forward by native wheel, one frame of scroll per event. */
@@ -266,7 +288,8 @@ async function main(args = process.argv.slice(2)) {
   try { report = await runSiteCheck(options); } catch (error) { failure = error; report = error.report; }
   if (report) {
     console.log(JSON.stringify(report, null, 2));
-    const walks = report.walks.map((w) => w.view + ' ' + w.draws + ' draws of ' + w.distinct + ' distinct frames, p95 '
+    const walks = report.walks.map((w) => w.view + ' ' + w.draws + ' draws of ' + w.distinct + ' distinct frames'
+      + (w.redraws ? ' and ' + w.redraws + ' redraws after a scale change' : '') + ', p95 '
       + w.perShot.map((s) => s.shot + ' ' + (s.p95Ms === null ? 'in worker' : s.p95Ms + ' ms')).join(', ')).join('; ');
     console.log('site: ' + (report.failures.length ? report.failures.length + ' failed: ' + report.failures.join('; ') : 'passed') + '; ' + walks
       + (failure ? '; cleanup failed' : '; owned browser, server and profile cleaned up'));
@@ -277,4 +300,4 @@ async function main(args = process.argv.slice(2)) {
 
 if (require.main === module) main().catch((error) => { console.error(error.message); process.exitCode = 1; });
 
-module.exports = { parseArgs, judgeWalk, runSiteCheck, main, REFERENCES, probe };
+module.exports = { parseArgs, countDraws, judgeWalk, runSiteCheck, main, REFERENCES, probe };
