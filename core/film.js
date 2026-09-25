@@ -1022,14 +1022,18 @@ const OVERSAMPLE = [
 /**
  * The true-peak envelope of planar channels: at j, the largest magnitude over
  * every channel of the four phases oversampled from samples j - 11 to j, so it
- * runs 11 past the last sample while the filter rings out.
+ * runs 11 past the last sample while the filter rings out. It is written into
+ * `envelope` from its start, and each channel is copied into `padded` between
+ * 11 zeros on either side; both may be longer than that and are reused.
  */
-function peakEnvelope(channels) {
-  const envelope = new Float64Array(channels[0].length + 11);
+function peakEnvelope(channels, envelope, padded) {
+  const n = channels[0].length;
+  envelope.fill(0, 0, n + 11);
+  padded.fill(0, 0, 11);
   for (const x of channels) {
-    const padded = new Float64Array(x.length + 22);
     padded.set(x, 11);
-    for (let i = 11; i < padded.length; i++) {
+    padded.fill(0, n + 11, n + 22);
+    for (let i = 11; i < n + 22; i++) {
       let peak = envelope[i - 11];
       for (let p = 0; p < 4; p++) {
         let y = 0;
@@ -1043,48 +1047,71 @@ function peakEnvelope(channels) {
 }
 
 /**
+ * The peakEnvelope of planar channels 65536 points at a time: `each(part, a)`
+ * is given the points from a on, each worked out from the samples it reaches
+ * back to, so every point is the one peakEnvelope gives the whole, and a long
+ * soundtrack needs no envelope or padded copy of its own length.
+ */
+function peakBlocks(channels, each) {
+  const n = channels[0].length, block = 65536;
+  const envelope = new Float64Array(block + 22), padded = new Float64Array(block + 33);
+  for (let a = 0; a < n + 11; a += block) {
+    const from = Math.max(0, a - 11), end = Math.min(n + 11, a + block);
+    peakEnvelope(channels.map((x) => x.subarray(from, Math.min(n, end))), envelope, padded);
+    each(envelope.subarray(a - from, end - from), a);
+  }
+}
+
+/**
  * True peak in dBTP: the largest magnitude of the signal oversampled four
  * times, which finds the peaks that fall between samples, where a decoder's
  * reconstruction and a lossy encoder overshoot the sample peak. NaN or
  * Infinity when a sample is not a finite number.
  */
 function truePeak(channels) {
-  return 20 * Math.log10(peakEnvelope(channels).reduce((a, b) => Math.max(a, b), 0));
+  let top = 0;
+  peakBlocks(channels, (part) => { for (const v of part) top = Math.max(top, v); });
+  return 20 * Math.log10(top);
 }
 
 /**
- * The limiter's gain on each of `n` samples, so that `scale` times a signal
- * whose peakEnvelope is `envelope` stays under the linear `ceiling`. Every
- * envelope point that would pass it is brought down to it on all twelve
- * samples it was interpolated from: the gain falls linearly over the attack
- * before them, as the mean of the least need over a window, and recovers
- * exponentially over the release after. The same channels, scale and rate
- * give the same gain, bit for bit.
+ * Planar `channels` times `scale`, limited into `out` so that they stay under
+ * the linear `ceiling`, given their peakEnvelope `envelope`; returns the least
+ * gain the limiter gave a sample. Every envelope point that would pass the
+ * ceiling is brought down to it on all twelve samples it was interpolated
+ * from: the gain falls linearly over the attack before them, as the mean of
+ * the least need over a window, and recovers exponentially over the release
+ * after. The same channels, scale and rate give the same bits. `least`, as
+ * long as a channel, is written over, so the tries at several scales share it.
  */
-function limiterGain(envelope, n, scale, ceiling, rate) {
-  const attack = Math.max(1, Math.round(LOUDNESS.attack * rate)), span = attack + 12;
-  const need = new Float64Array(n + span - 1).fill(1);
-  for (let j = 0; j < Math.min(need.length, envelope.length); j++) need[j] = Math.min(1, ceiling / (scale * envelope[j]));
-  // least[q], the least need from q to q + span - 1, by a sliding minimum.
-  const least = new Float64Array(n), queue = new Int32Array(need.length);
-  for (let j = 0, head = 0, tail = 0; j < need.length; j++) {
-    while (tail > head && need[queue[tail - 1]] >= need[j]) tail--;
-    queue[tail++] = j;
+function limit(envelope, channels, scale, ceiling, rate, out, least) {
+  const n = channels[0].length, attack = Math.max(1, Math.round(LOUDNESS.attack * rate)), span = attack + 12;
+  // least[q], the least need from q to q + span - 1, by a sliding minimum over
+  // a ring of the points still in the window and their needs, each need worked
+  // out as its point enters; past the envelope's end nothing is needed.
+  const size = span + 1, queue = new Int32Array(size), needs = new Float64Array(size);
+  for (let j = 0, head = 0, tail = 0; j < n + span - 1; j++) {
+    const need = j < envelope.length ? Math.min(1, ceiling / (scale * envelope[j])) : 1;
+    while (tail > head && needs[(tail - 1) % size] >= need) tail--;
+    queue[tail % size] = j;
+    needs[tail++ % size] = need;
     const q = j - span + 1;
     if (q < 0) continue;
-    while (queue[head] < q) head++;
-    least[q] = need[queue[head]];
+    while (queue[head % size] < q) head++;
+    least[q] = needs[head % size];
   }
   // The mean of least over the attack ending at each sample is under the need
   // of every envelope point within span of it; the release only lowers it.
   // Before the first sample the window holds least[0], so a peak there is met.
-  const back = Math.exp(-1 / (LOUDNESS.release * rate)), gain = new Float64Array(n);
+  const back = Math.exp(-1 / (LOUDNESS.release * rate));
+  let deepest = 1;
   for (let k = 0, sum = attack * least[0], g = 1; k < n; k++) {
     sum += least[k] - least[Math.max(0, k - attack)];
     g = Math.min(sum / attack, 1 - (1 - g) * back);
-    gain[k] = g;
+    for (let c = 0; c < channels.length; c++) out[c][k] = channels[c][k] * scale * g;
+    deepest = Math.min(deepest, g);
   }
-  return gain;
+  return deepest;
 }
 
 /** Integrated loudness (LUFS) and true peak (dBTP) of an AudioBuffer-shaped soundtrack. */
@@ -1101,7 +1128,7 @@ const round2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
  * ceiling of -2 dBTP. A soundtrack whose peaks leave room gets one static
  * gain to -14 LUFS. One whose peaks would pass the ceiling first is limited:
  * its gain is found by the secant method, within 0.005 LU of the target in at
- * most eight tries, through limiterGain, then trimmed so its true peak meets
+ * most eight tries, through limit, then trimmed so its true peak meets
  * the ceiling; by LOUDNESS.depth dB of limiting at most, where it stops short.
  * Says what was measured and done: `measured` as rendered, the `gain` in dB,
  * `limited`, the deepest the limiter turned it down in dB, only when it did,
@@ -1128,15 +1155,16 @@ function normalizeLoudness(buffer, codec) {
   let gain = Math.min(want, room), limited = 0;
   if (want > room) {
     const channels = Array.from({ length: buffer.numberOfChannels }, (_, c) => buffer.getChannelData(c));
-    const n = channels[0].length, rate = buffer.sampleRate, envelope = peakEnvelope(channels), line = 10 ** (ceiling / 20);
-    const out = channels.map((x) => new Float32Array(x.length));
+    const n = channels[0].length, rate = buffer.sampleRate, envelope = new Float64Array(n + 11), line = 10 ** (ceiling / 20);
+    peakBlocks(channels, (part, a) => envelope.set(part, a));
+    // Made once for every try: the envelope, out and the limiter's least need.
+    const out = channels.map((x) => new Float32Array(x.length)), least = new Float64Array(n);
     // The loudness at `g` dB through the limiter, left in `out` with its depth in `limited`.
     const level = (g) => {
-      const scale = 10 ** (g / 20), curve = limiterGain(envelope, n, scale, line, rate);
-      channels.forEach((x, c) => { for (let i = 0; i < n; i++) out[c][i] = x[i] * scale * curve[i]; });
+      const deepest = limit(envelope, channels, 10 ** (g / 20), line, rate, out, least);
       const trim = 10 ** (Math.min(0, ceiling - truePeak(out)) / 20);
       if (trim < 1) for (const y of out) for (let i = 0; i < n; i++) y[i] *= trim;
-      limited = -20 * Math.log10(trim * curve.reduce((a, b) => Math.min(a, b), 1));
+      limited = -20 * Math.log10(trim * deepest);
       return integratedLoudness(out, rate);
     };
     const cap = room + LOUDNESS.depth;
