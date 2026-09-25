@@ -39,9 +39,9 @@ test('site: the real shot list builds, one script per shot, every module defined
   const out = temp(t);
   const result = build({ out });
   const { data } = result;
-  assert.deepEqual(data.shots.map((s) => s.name), ['intro', 'bloom', 'ink', 'crack', 'mirror', 'bend', 'portal', 'trace', 'print', 'cad', 'fold', 'paint', 'kandinsky', 'rows', 'grid', 'cells']);
-  assert.deepEqual(data.shots.map((s) => s.tier), ['frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'worker']);
-  assert.equal(data.frames, 3240);
+  assert.deepEqual(data.shots.map((s) => s.name), ['intro', 'bloom', 'ink', 'crack', 'mirror', 'bend', 'portal', 'trace', 'print', 'cad', 'fold', 'paint', 'kandinsky', 'wall', 'rows', 'grid', 'cells']);
+  assert.deepEqual(data.shots.map((s) => s.tier), ['frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'worker']);
+  assert.equal(data.frames, 3600);
   // Every module is defined once, and a shot's scripts define exactly the modules its piece reaches.
   const defines = (f) => [...fs.readFileSync(path.join(out, f), 'utf8').matchAll(/^__def\("(external\/\d+\.js)"/gm)].map((m) => m[1]);
   const defined = result.files.filter((f) => /^(shared-\d+|shot-.*)\.js$/.test(f)).flatMap(defines);
@@ -59,9 +59,11 @@ test('site: the real shot list builds, one script per shot, every module defined
   for (const f of ['drawPage', 'released', 'drawSheet', 'drawPlot']) assert.ok(shared('fold').includes(f), 'fold shares ' + f);
   // The papercut the paint seam begins on, and the impasto and its oil paint the Kandinsky shot scrapes.
   for (const f of ['drawCut', 'drawDabs', 'drawSmears']) assert.ok(shared('kandinsky').includes(f), 'kandinsky shares ' + f);
-  // A module one shot needs stays in its script: the Kandinsky shot's scraping.
-  assert.ok(fs.readFileSync(path.join(out, 'shot-kandinsky.js'), 'utf8').includes('drawStep'));
-  for (const name of ['ink', 'mirror', 'cad', 'kandinsky']) assert.ok(fs.existsSync(path.join(out, 'posters', name + '.webp')), name + ' has its poster');
+  // The scraping the wall begins from, shared; a module one shot needs stays in its script: the wall's hang and the style modules.
+  assert.ok(shared('wall').includes('drawStep'), 'wall shares drawStep');
+  const wall = fs.readFileSync(path.join(out, 'shot-wall.js'), 'utf8');
+  for (const f of ['drawHang', 'style-gallery', 'light-painting']) assert.ok(f === 'style-gallery' ? !wall.includes(f) : wall.includes(f), 'shot-wall.js ' + f);
+  for (const name of ['ink', 'mirror', 'cad', 'kandinsky', 'wall']) assert.ok(fs.existsSync(path.join(out, 'posters', name + '.webp')), name + ' has its poster');
   // Every piece loads and validates from core.js and its own scripts, as the stage loads it.
   for (const s of data.shots) {
     const context = vm.createContext({});
@@ -75,8 +77,8 @@ test('site: the real shot list builds, one script per shot, every module defined
   assert.deepEqual(bundled.filter((id) => !id.startsWith('core/')), ['examples/index.js'], 'core.js holds no example');
   for (const s of data.shots) assert.ok(core.includes('module.exports["site-' + s.name + '"] = require(' + JSON.stringify(s.id) + ');'), s.name + ' is in the registry');
   const html = fs.readFileSync(path.join(out, 'index.html'), 'utf8');
-  assert.match(html, /<section class="shot seam" id="shot-grid" data-shot="14" aria-hidden="true">/);
-  assert.equal((html.match(/<figure class="still"/g) || []).length, 7, 'a still for each shot, none for the seam');
+  assert.match(html, /<section class="shot seam" id="shot-grid" data-shot="15" aria-hidden="true">/);
+  assert.equal((html.match(/<figure class="still"/g) || []).length, 8, 'a still for each shot, none for the seam');
   // The data is a same-origin script, not text in the page: the page has no inline script.
   assert.deepEqual(html.match(/<script[^>]*>/g), ['<script src="data.js">', '<script src="core.js">', '<script src="stage.js">']);
   assert.equal(fs.readFileSync(path.join(out, 'data.js'), 'utf8'), 'window.__siteData = ' + JSON.stringify(data) + ';\n');

@@ -16,7 +16,7 @@
     "core/rand.js": "67681661c602c813aa58ced7a87b8f6ff068cbadc5f260e05794cc7082d332f9",
     "core/stroke-font.js": "c0eeccaf3ed03b72ae94b90d24cca894398e5d91489c77caaefede6bb9a5c8c8",
     "pieces/brush.js": "455862346f2f5de3a930e06548332120f1f136793238ba7c4459c889972a9f10",
-    "pieces/held.js": "daaf4c6806bbffded541d8cc7c178e1f522b68baea6193c627ca2bb3f9cababd",
+    "pieces/held.js": "817b747ab690b9d0ecb74d825df4be7c35ff3a66d19c024459805f5ffb8d0972",
     "pieces/ink.cjs": "c9f8540b3670b2b9f259cf80e7e16c087b964344f25014e8fa767c34b5ff7819",
     "pieces/paper.js": "b943eee6af4e88ab2d3286a7d61c87c38fa0f756acb27bd5986d535684860ef9",
     "pieces/water.js": "36574e66a487f4323d6bd3961022e6b113addd6c2ae8bda03d5a2d6a1d056407",

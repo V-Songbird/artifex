@@ -117,6 +117,30 @@ function keep(g, s, key, paint, prime) {
   return copy;
 }
 
+/**
+ * A canvas of `w` by `h` pixels painted once by `paint(cg, s)`, kept per solve
+ * and key and given up with the solve's other copies; one at least as large
+ * stands in for it. Null on a surface with no canvas. `ahead` makes it before
+ * it is needed: for a solve still kept, without making it the last used.
+ */
+function sized(g, s, key, w, h, paint, ahead = false) {
+  const c = g.canvas;
+  if (!c || typeof c.width !== 'number' || typeof g.drawImage !== 'function') return null;
+  const kept = ahead ? solves.get(s) : recent(s);
+  if (!kept) return null;
+  const byCanvas = kept.held;
+  let mine = byCanvas.get(sized);
+  if (!mine) byCanvas.set(sized, mine = new Map());
+  let copy = mine.get(key);
+  if (copy && copy.width >= w && copy.height >= h) return copy;
+  if (copy) drop(copy);
+  copy = sibling({ width: w, height: h, ownerDocument: c.ownerDocument });
+  if (!copy) return null;
+  paint(copy.getContext('2d'), s);
+  mine.set(key, copy);
+  return copy;
+}
+
 const EVERY = 4;           // a copy at every multiple of this count is kept for good
 const KEEP = 2;            // and this many others, the least recently used given up first
 
@@ -278,4 +302,4 @@ function sibling(canvas) {
   return typeof OffscreenCanvas === 'function' ? counted(new OffscreenCanvas(canvas.width, canvas.height), 1) : null;
 }
 
-module.exports = { hold, keep, soft, upTo };
+module.exports = { hold, keep, sized, soft, upTo };
