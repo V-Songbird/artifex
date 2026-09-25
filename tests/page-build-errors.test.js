@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const zlib = require('node:zlib');
 const { pngWithManifest, pngManifest } = require('../tools/build-page.js');
 const { fakeAudio, fakeCodecs, fakePage } = require('./fake-media.js');
-const { measureLoudness, loudnessGain } = require('../core/film.js');
+const { measureLoudness, normalizeLoudness } = require('../core/film.js');
 
 // A real PNG, one opaque pixel, built with Node's own zlib and CRC-32 so the
 // page's CRC is checked against an implementation it does not share.
@@ -851,24 +851,27 @@ test('an unanswered H.264 question blocks nothing, and a late answer stays with 
   assert.equal(elements.get('mp4').hidden, false);
 });
 
-test('the page exposes the film loudness meter and gain that replay reads, as core/film.js gives them', () => {
+test('the page exposes the film loudness meter and levelling that replay reads, as core/film.js gives them', () => {
   // Replay measures a decoded film with these in Edge; only this test reads them in Node.
   const { api } = openPage();
   assert.equal(typeof api.loudness, 'function', 'the page exposes loudness');
-  assert.equal(typeof api.loudnessGain, 'function', 'the page exposes loudnessGain');
+  assert.equal(typeof api.level, 'function', 'the page exposes level');
   const rate = 48000;
   const buffer = (...channels) => ({ numberOfChannels: channels.length, sampleRate: rate, length: channels[0].length, getChannelData: (c) => channels[c] });
   const tone = (amp, hz) => Float32Array.from({ length: rate }, (_, i) => amp * Math.sin((2 * Math.PI * hz * i) / rate));
   const silence = new Float32Array(rate);
+  const clicks = () => buffer(...[0, 1].map(() => tone(0.03, 440).map((v, i) => (i % 12000 === 6000 ? 0.8 : v))));
   for (const [name, b] of [['silence', buffer(silence, silence)], ['a quiet tone', buffer(tone(0.05, 440), tone(0.05, 440))],
-    ['a loud tone', buffer(tone(0.9, 1000), tone(0.9, 1000))], ['one channel', buffer(tone(0.3, 220))]]) {
+    ['a loud tone', buffer(tone(0.9, 1000), tone(0.9, 1000))], ['one channel', buffer(tone(0.3, 220))], ['clicks over a quiet tone', clicks()]]) {
     const measured = measureLoudness(b);
     // Spread into this realm: the page's objects come from the sandbox's Object.
     assert.deepEqual({ ...api.loudness(b) }, measured, name + ': the page measures as core/film.js does');
-    for (const codec of ['mp4a', 'Opus']) assert.equal(api.loudnessGain(measured, codec), loudnessGain(measured, codec), name + ': and sets the same gain for ' + codec);
+    for (const codec of ['mp4a', 'Opus']) {
+      const copy = () => buffer(...Array.from({ length: b.numberOfChannels }, (_, c) => b.getChannelData(c).slice()));
+      const [page, core] = [copy(), copy()];
+      assert.deepEqual(JSON.parse(JSON.stringify(api.level(page, codec))), normalizeLoudness(core, codec), name + ': and levels as core/film.js does for ' + codec);
+      for (let c = 0; c < b.numberOfChannels; c++) assert.deepEqual(page.getChannelData(c), core.getChannelData(c), name + ': to the same samples for ' + codec);
+    }
   }
-  assert.equal(api.loudnessGain(measureLoudness(buffer(silence)), 'mp4a'), 0, 'silence keeps its level');
-  for (const measured of [{ lufs: -20, dbtp: -10 }, { lufs: -8, dbtp: -3 }, { lufs: -30, dbtp: 0 }]) {
-    for (const codec of ['mp4a', 'Opus']) assert.equal(api.loudnessGain(measured, codec), loudnessGain(measured, codec), JSON.stringify(measured) + ' ' + codec);
-  }
+  assert.ok(normalizeLoudness(clicks(), 'mp4a').limited > 0, 'the clicks are limited');
 });

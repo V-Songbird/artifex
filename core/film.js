@@ -919,18 +919,25 @@ const limited709 = (space) => !!space && space.primaries === 'bt709' && space.ma
 // Loudness: ITU-R BS.1770-4
 // ---------------------------------------------------------------------------
 
-// A FILM IS AS LOUD AS WHAT PLAYS BESIDE IT, UNLESS ITS OWN PEAKS STOP IT.
+// A FILM IS AS LOUD AS WHAT PLAYS BESIDE IT, AND ITS PEAKS ARE LIMITED TO GET THERE.
 // Platforms that play films turn a loud upload down to about -14 LUFS and
 // barely raise a quiet one, so a film mixed quiet stays quiet beside everything
-// else. Each soundtrack is measured as rendered and given one static gain: up
-// to -14 LUFS integrated, unless its true peak would pass its codec's ceiling
-// first. The ceiling is measured before encoding, and a codec moves the peak:
-// in installed Edge AAC moved it by 0.03 dB at most and Opus by -0.10 to +0.14
-// dB, so an Opus soundtrack stops 0.2 dB lower, which keeps it under -1 dBTP
-// once decoded. No compressor or limiter touches it, so the piece's own
-// dynamics are kept. A soundtrack whose peaks stop it more than `short` LU
-// under the target says how far, so its author can tame the peaks.
-const LOUDNESS = { target: -14, ceiling: { mp4a: -1, Opus: -1.2 }, short: 3 };
+// else. Each soundtrack is measured as rendered and given one gain to -14 LUFS
+// integrated. Where that gain would take its true peak past its codec's
+// ceiling, a look-ahead limiter turns the peaks down to the ceiling, by
+// `depth` dB at most, and the gain is raised until the limited soundtrack
+// reaches the target: the export then changes the dynamics of a mix whose
+// peaks stand far above its body, as a drum's or a voice's do. The limiter
+// sees a peak coming and turns down over the `attack` seconds before it, then
+// recovers with a time constant of `release` seconds. The ceiling is measured
+// before encoding, and a codec moves the peak, most where limiting has put
+// many peaks at the ceiling: in installed Edge, limited drums and speech-like
+// bursts decoded 0.14 to 0.71 dB above it, AAC and Opus alike, and unlimited
+// soundtracks -0.10 to +0.14 dB. So the ceiling is -2 dBTP for both, which
+// keeps a soundtrack under -1 dBTP once decoded. A soundtrack whose peaks
+// would need more than `depth` dB of limiting stops short, and one that ends
+// more than `short` LU under the target says how far.
+const LOUDNESS = { target: -14, ceiling: { mp4a: -2, Opus: -2 }, short: 3, depth: 12, attack: 0.005, release: 0.05 };
 
 /**
  * The two K-weighting stages for a sample rate, as { b: [b0, b1, b2], a: [a1,
@@ -1013,25 +1020,71 @@ const OVERSAMPLE = [
 ];
 
 /**
+ * The true-peak envelope of planar channels: at j, the largest magnitude over
+ * every channel of the four phases oversampled from samples j - 11 to j, so it
+ * runs 11 past the last sample while the filter rings out.
+ */
+function peakEnvelope(channels) {
+  const envelope = new Float64Array(channels[0].length + 11);
+  for (const x of channels) {
+    const padded = new Float64Array(x.length + 22);
+    padded.set(x, 11);
+    for (let i = 11; i < padded.length; i++) {
+      let peak = envelope[i - 11];
+      for (let p = 0; p < 4; p++) {
+        let y = 0;
+        for (let m = 0; m < 12; m++) y += OVERSAMPLE[p + 4 * m] * padded[i - m];
+        peak = Math.max(peak, Math.abs(y));
+      }
+      envelope[i - 11] = peak;
+    }
+  }
+  return envelope;
+}
+
+/**
  * True peak in dBTP: the largest magnitude of the signal oversampled four
  * times, which finds the peaks that fall between samples, where a decoder's
  * reconstruction and a lossy encoder overshoot the sample peak. NaN or
  * Infinity when a sample is not a finite number.
  */
 function truePeak(channels) {
-  let peak = 0;
-  for (const x of channels) {
-    const padded = new Float64Array(x.length + 22);
-    padded.set(x, 11);
-    for (let i = 11; i < padded.length; i++) {
-      for (let p = 0; p < 4; p++) {
-        let y = 0;
-        for (let m = 0; m < 12; m++) y += OVERSAMPLE[p + 4 * m] * padded[i - m];
-        peak = Math.max(peak, Math.abs(y));
-      }
-    }
+  return 20 * Math.log10(peakEnvelope(channels).reduce((a, b) => Math.max(a, b), 0));
+}
+
+/**
+ * The limiter's gain on each of `n` samples, so that `scale` times a signal
+ * whose peakEnvelope is `envelope` stays under the linear `ceiling`. Every
+ * envelope point that would pass it is brought down to it on all twelve
+ * samples it was interpolated from: the gain falls linearly over the attack
+ * before them, as the mean of the least need over a window, and recovers
+ * exponentially over the release after. The same channels, scale and rate
+ * give the same gain, bit for bit.
+ */
+function limiterGain(envelope, n, scale, ceiling, rate) {
+  const attack = Math.max(1, Math.round(LOUDNESS.attack * rate)), span = attack + 12;
+  const need = new Float64Array(n + span - 1).fill(1);
+  for (let j = 0; j < Math.min(need.length, envelope.length); j++) need[j] = Math.min(1, ceiling / (scale * envelope[j]));
+  // least[q], the least need from q to q + span - 1, by a sliding minimum.
+  const least = new Float64Array(n), queue = new Int32Array(need.length);
+  for (let j = 0, head = 0, tail = 0; j < need.length; j++) {
+    while (tail > head && need[queue[tail - 1]] >= need[j]) tail--;
+    queue[tail++] = j;
+    const q = j - span + 1;
+    if (q < 0) continue;
+    while (queue[head] < q) head++;
+    least[q] = need[queue[head]];
   }
-  return 20 * Math.log10(peak);
+  // The mean of least over the attack ending at each sample is under the need
+  // of every envelope point within span of it; the release only lowers it.
+  // Before the first sample the window holds least[0], so a peak there is met.
+  const back = Math.exp(-1 / (LOUDNESS.release * rate)), gain = new Float64Array(n);
+  for (let k = 0, sum = attack * least[0], g = 1; k < n; k++) {
+    sum += least[k] - least[Math.max(0, k - attack)];
+    g = Math.min(sum / attack, 1 - (1 - g) * back);
+    gain[k] = g;
+  }
+  return gain;
 }
 
 /** Integrated loudness (LUFS) and true peak (dBTP) of an AudioBuffer-shaped soundtrack. */
@@ -1040,32 +1093,28 @@ function measureLoudness(buffer) {
   return { lufs: integratedLoudness(channels, buffer.sampleRate), dbtp: truePeak(channels) };
 }
 
-/**
- * The gain in dB that brings a soundtrack measured as `measured`, by
- * measureLoudness, to LOUDNESS: to -14 LUFS, or where its peaks come first to
- * the ceiling of `codec`, the sample entry it is encoded in: -1 dBTP for
- * 'mp4a', AAC, and -1.2 dBTP for 'Opus'. A soundtrack with no block above the
- * -70 LUFS gate keeps its level.
- */
-function loudnessGain(measured, codec) {
-  const ceiling = LOUDNESS.ceiling[codec];
-  if (typeof ceiling !== 'number') throw new Error(`film: a soundtrack is levelled for AAC ('mp4a') or 'Opus', not ${JSON.stringify(codec)}`);
-  return measured.lufs === -Infinity ? 0 : Math.min(LOUDNESS.target - measured.lufs, ceiling - measured.dbtp);
-}
-
 const round2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 
 /**
- * Bring a rendered soundtrack to LOUDNESS in place with one static gain, for
- * encoding in `codec` as loudnessGain takes it, and say what was measured and
- * done: `measured` as rendered, the `gain` in dB, and the `lufs` and `dbtp` it
- * is encoded at, and `short`, how many LU it ends under the target, where that
- * is more than LOUDNESS.short. A soundtrack with no block above
- * the -70 LUFS gate has no loudness to set and keeps its level, reported as
- * null. A sample that is not a finite number, which no player can play, is
- * refused.
+ * Bring a rendered soundtrack to LOUDNESS in place, for encoding in `codec`,
+ * the sample entry it is encoded in: 'mp4a', AAC, or 'Opus', each with a
+ * ceiling of -2 dBTP. A soundtrack whose peaks leave room gets one static
+ * gain to -14 LUFS. One whose peaks would pass the ceiling first is limited:
+ * its gain is found by the secant method, within 0.005 LU of the target in at
+ * most eight tries, through limiterGain, then trimmed so its true peak meets
+ * the ceiling; by LOUDNESS.depth dB of limiting at most, where it stops short.
+ * Says what was measured and done: `measured` as rendered, the `gain` in dB,
+ * `limited`, the deepest the limiter turned it down in dB, only when it did,
+ * the `lufs` and `dbtp` it is encoded at, and `short`, how many LU it ends
+ * under the target, where that is more than LOUDNESS.short. A soundtrack with
+ * no block above the -70 LUFS gate has no loudness to set and keeps its level,
+ * reported as null. A sample that is not a finite number, which no player can
+ * play, is refused. The same soundtrack and codec come out the same bits, so
+ * replay levels its render as the export did.
  */
 function normalizeLoudness(buffer, codec) {
+  const ceiling = LOUDNESS.ceiling[codec];
+  if (typeof ceiling !== 'number') throw new Error(`film: a soundtrack is levelled for AAC ('mp4a') or 'Opus', not ${JSON.stringify(codec)}`);
   // Checked before measuring: an infinite sample becomes NaN in the K-weighting
   // filter, which the -70 LUFS gate drops, so the meter alone would pass it.
   for (let c = 0; c < buffer.numberOfChannels; c++) {
@@ -1074,18 +1123,47 @@ function normalizeLoudness(buffer, codec) {
     }
   }
   const measured = measureLoudness(buffer);
-  const gain = loudnessGain(measured, codec);
   if (measured.lufs === -Infinity) return { measured: { lufs: null, dbtp: round2(measured.dbtp) }, gain: 0, lufs: null, dbtp: round2(measured.dbtp) };
-  const scale = 10 ** (gain / 20);
-  for (let c = 0; c < buffer.numberOfChannels; c++) {
-    const x = buffer.getChannelData(c);
-    for (let i = 0; i < x.length; i++) x[i] *= scale;
+  const want = LOUDNESS.target - measured.lufs, room = ceiling - measured.dbtp;
+  let gain = Math.min(want, room), limited = 0;
+  if (want > room) {
+    const channels = Array.from({ length: buffer.numberOfChannels }, (_, c) => buffer.getChannelData(c));
+    const n = channels[0].length, rate = buffer.sampleRate, envelope = peakEnvelope(channels), line = 10 ** (ceiling / 20);
+    const out = channels.map((x) => new Float32Array(x.length));
+    // The loudness at `g` dB through the limiter, left in `out` with its depth in `limited`.
+    const level = (g) => {
+      const scale = 10 ** (g / 20), curve = limiterGain(envelope, n, scale, line, rate);
+      channels.forEach((x, c) => { for (let i = 0; i < n; i++) out[c][i] = x[i] * scale * curve[i]; });
+      const trim = 10 ** (Math.min(0, ceiling - truePeak(out)) / 20);
+      if (trim < 1) for (const y of out) for (let i = 0; i < n; i++) y[i] *= trim;
+      limited = -20 * Math.log10(trim * curve.reduce((a, b) => Math.min(a, b), 1));
+      return integratedLoudness(out, rate);
+    };
+    const cap = room + LOUDNESS.depth;
+    let [g0, l0] = [room, measured.lufs + room];
+    gain = Math.min(want, cap);
+    let l1 = level(gain);
+    for (let k = 0; k < 8; k++) {
+      const miss = LOUDNESS.target - l1;
+      if (Math.abs(miss) <= 0.005 || (gain === cap && miss > 0) || l1 === l0) break;
+      const g = Math.min(cap, Math.max(room, gain + (miss * (gain - g0)) / (l1 - l0)));
+      [g0, l0] = [gain, l1];
+      gain = g;
+      l1 = level(gain);
+    }
+    channels.forEach((x, c) => x.set(out[c]));
+  } else {
+    const scale = 10 ** (gain / 20);
+    for (let c = 0; c < buffer.numberOfChannels; c++) {
+      const x = buffer.getChannelData(c);
+      for (let i = 0; i < x.length; i++) x[i] *= scale;
+    }
   }
   const result = measureLoudness(buffer);
   const short = LOUDNESS.target - result.lufs;
   return {
     measured: { lufs: round2(measured.lufs), dbtp: round2(measured.dbtp) },
-    gain: round2(gain), lufs: round2(result.lufs), dbtp: round2(result.dbtp),
+    gain: round2(gain), ...(limited > 0 && { limited: round2(limited) }), lufs: round2(result.lufs), dbtp: round2(result.dbtp),
     ...(short > LOUDNESS.short && { short: round2(short) }),
   };
 }
@@ -1478,5 +1556,5 @@ async function exportFilm(piece, solved, env, opt = {}) {
 
 module.exports = {
   exportFilm, filmConfig, filmScale, soundConfig, muxMp4, readMp4, filmCheck, avcCodecs, aacConfig, rgbaToNV12,
-  kWeighting, measureLoudness, loudnessGain, normalizeLoudness,
+  kWeighting, measureLoudness, normalizeLoudness,
 };

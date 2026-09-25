@@ -512,14 +512,16 @@ solved trajectory.
   `state`; never re-derive them in `sound` from different constants.
 - **Noise comes from the seed.** Fill buffers from `rng(seed)`; an unseeded
   generator makes the soundtrack a function of when it was rendered.
-- **Mix the balance; the film sets the level.** The MP4 export gives every
-  soundtrack one gain, up to -14 LUFS unless its true peak reaches -1 dBTP
-  first (-1.2 dBTP for an Opus soundtrack, whose encoding lifts peaks more),
-  and applies no compression. Set voices against each other, not the
-  overall level. Peaks far above the body of the mix stop the gain early, so
-  such a film plays quieter than -14 LUFS. More than 3 LU under it, the
-  export report's `sound.short` says by how many LU; `npm run browser`
-  reports each decoded film's loudness and true peak.
+- **Mix the balance; the film sets the level.** The MP4 export brings every
+  soundtrack to -14 LUFS. Where its true peak would pass -2 dBTP first, a
+  look-ahead limiter turns the peaks down, by 12 dB at most, so drums and
+  voices reach the target too; the export report's `sound.limited` says how
+  deep it cut. Set voices against each other, not the overall level. Peaks
+  that would need more than 12 dB stop the gain, so such a film plays
+  quieter than -14 LUFS; more than 3 LU under it, `sound.short` says by how
+  many LU. To keep a mix's own transients, soften attacks or tame the peaks
+  in the piece. `npm run browser` reports each decoded film's loudness,
+  true peak and limiting.
 - **Sum voices two at a time.** Installed Edge adds up three or more
   connections into one input in an order that changes from render to render,
   so such a graph renders other last bits each time, and its film other audio

@@ -10,7 +10,7 @@ const assert = require('node:assert/strict');
 const { validate, solve, VERSION } = require('../core/piece.js');
 const { playheads } = require('../core/render.js');
 const {
-  exportFilm, filmConfig, filmScale, muxMp4, readMp4, filmCheck, avcCodecs, aacConfig, rgbaToNV12, kWeighting, measureLoudness, loudnessGain,
+  exportFilm, filmConfig, filmScale, muxMp4, readMp4, filmCheck, avcCodecs, aacConfig, rgbaToNV12, kWeighting, measureLoudness, normalizeLoudness,
 } = require('../core/film.js');
 const { nullSurface } = require('../tools/bench.js');
 const { fakeAudio, fakeCodecs, fakeCanvas, opusHead, EDGE_AVCC } = require('./fake-media.js');
@@ -1044,6 +1044,41 @@ function tone(parts, hz = 997, phase = 0) {
 
 const stereo = (x) => planar([x, Float32Array.from(x)]);
 
+/** Seeded noise in [-1, 1), the same every run. */
+const noise = (seed) => () => ((seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) / 2 ** 31) - 1;
+
+// The first kick of drums(), in samples.
+const DRUM_START = 12000;
+
+/**
+ * A drum-like soundtrack: from `start` a kick every half second, a sine
+ * falling from 150 to 50 Hz under a 2 ms click of noise, with a noise snare
+ * between kicks, over a quiet bass.
+ */
+function drums(seconds, start = DRUM_START) {
+  const x = new Float32Array(Math.round(seconds * RATE)), rnd = noise(7);
+  for (let i = 0; i < x.length; i++) x[i] = 0.02 * Math.sin((2 * Math.PI * 55 * i) / RATE);
+  for (let at = start; at < x.length; at += RATE / 2) {
+    for (let i = 0, phase = 0; i < 0.4 * RATE && at + i < x.length; i++) {
+      phase += (2 * Math.PI * (50 + 100 * Math.exp(-i / RATE / 0.03))) / RATE;
+      x[at + i] += 0.8 * Math.exp(-i / RATE / 0.05) * Math.sin(phase) + 0.7 * Math.exp(-i / RATE / 0.002) * rnd();
+    }
+    for (let i = 0, s = at + RATE / 4; i < 0.2 * RATE && s + i < x.length; i++) x[s + i] += 0.4 * Math.exp(-i / RATE / 0.02) * rnd();
+  }
+  return x;
+}
+
+/** Speech-like: every 0.3 s a plosive's click and a voiced syllable, over a quiet bed. */
+function bursts(seconds) {
+  const x = new Float32Array(Math.round(seconds * RATE)), rnd = noise(11);
+  for (let i = 0; i < x.length; i++) x[i] = 0.01 * rnd() + 0.01 * Math.sin((2 * Math.PI * 100 * i) / RATE);
+  for (let at = 0.2 * RATE; at + 0.15 * RATE < x.length; at += 0.3 * RATE) {
+    for (let i = 0; i < 0.01 * RATE; i++) x[at + i] += 0.3 * Math.exp(-i / RATE / 0.003) * rnd();
+    for (let i = 0; i < 0.15 * RATE; i++) x[at + i] += 0.1 * Math.sin((Math.PI * i) / (0.15 * RATE)) * Math.sin((2 * Math.PI * 140 * i) / RATE);
+  }
+  return x;
+}
+
 test('loudness follows BS.1770-4: K-weighting, 400 ms blocks, and gates of power at -70 LUFS and 10 LU down', () => {
   // The standard tabulates both K-weighting stages at 48 kHz.
   const [shelf, pass] = kWeighting(RATE);
@@ -1081,7 +1116,7 @@ test('true peak finds the peaks between samples, oversampled four times as BS.17
   assert.ok(Number.isNaN(measureLoudness(stereo(broken)).dbtp), 'a sample that is not a number has no true peak');
 });
 
-test('every film soundtrack reaches -14 LUFS with one static gain, or stops at its codec ceiling, -1 dBTP for AAC and -1.2 for Opus', async () => {
+test('every film soundtrack reaches -14 LUFS, its peaks limited under -2 dBTP, AAC and Opus alike, by 12 dB at most', async () => {
   // Contexts that render a known soundtrack, and an encoder that keeps what it
   // is given, so the film's own samples are measured, not the report's word.
   const exported = async (fill, codecs = {}) => {
@@ -1125,12 +1160,13 @@ test('every film soundtrack reaches -14 LUFS with one static gain, or stops at i
   }));
   assert.ok(spread < 1e-5, `one gain for every sample, and some differ from it by ${spread}`);
 
-  // A quiet tone with loud clicks would pass -1 dBTP long before -14 LUFS: the
-  // gain stops at the ceiling.
+  // A quiet tone with loud one-sample clicks would pass -2 dBTP long before
+  // -14 LUFS, and more than LOUDNESS.depth, 12 dB, of limiting would be needed:
+  // the clicks are turned down by 12 dB, and the gain stops there, short.
   const peaky = await exported((x) => { x.set(tone([[2, -40]])); for (let i = 0; i < x.length; i += 12000) x[i] = 0.9; });
-  const { measured, gain, lufs, dbtp } = peaky.report.sound;
-  assert.ok(Math.abs(gain - (-1 - measured.dbtp)) <= 0.011, `the gain ${gain} is the room left under -1 dBTP`);
-  assert.ok(Math.abs(measureLoudness(planar(peaky.encoded)).dbtp + 1) < 0.01 && Math.abs(dbtp + 1) < 0.005, 'and the soundtrack peaks at -1 dBTP');
+  const { measured, gain, lufs, dbtp, limited } = peaky.report.sound;
+  assert.ok(Math.abs(gain - (-2 - measured.dbtp + 12)) <= 0.011 && limited === 12, `the gain ${gain} is the room left under -2 dBTP and 12 dB of limiting, which is ${limited} dB`);
+  assert.ok(Math.abs(measureLoudness(planar(peaky.encoded)).dbtp + 2) < 0.01 && Math.abs(dbtp + 2) < 0.005, 'and the soundtrack peaks at -2 dBTP');
   assert.ok(lufs < -14, `short of -14 LUFS at ${lufs}`);
 
   // More than 3 LU under the target, the report says by how many; a soundtrack
@@ -1138,23 +1174,53 @@ test('every film soundtrack reaches -14 LUFS with one static gain, or stops at i
   assert.ok(lufs < -17 && peaky.report.sound.short === Math.round((-14 - lufs) * 100) / 100,
     `${lufs} LUFS is ${-14 - lufs} LU short, and the report says ${peaky.report.sound.short}`);
   assert.equal(quiet.report.sound.short, undefined, 'a soundtrack at -14 LUFS reports no shortfall');
-  const near = (await exported((x) => { x.set(tone([[2, -30]])); for (let i = 0; i < x.length; i += 12000) x[i] = 0.18; })).report.sound;
-  assert.ok(near.lufs < -14 && near.lufs > -17 && near.short === undefined, `${near.lufs} LUFS reports a shortfall of ${near.short}`);
+  assert.equal(quiet.report.sound.limited, undefined, 'nor any limiting, where its peaks leave room');
+  const near = (await exported((x) => { x.set(tone([[2, -30]])); for (let i = 0; i < x.length; i += 12000) x[i] = 0.55; })).report.sound;
+  assert.ok(near.limited === 12 && near.lufs < -14 && near.lufs > -17 && near.short === undefined, `${near.lufs} LUFS reports a shortfall of ${near.short}`);
 
-  // Opus raises true peak more than AAC once encoded, so the same clicks stop
-  // an Opus soundtrack 0.2 dB lower. Its body still aims at -14 LUFS, and its
-  // shortfall is still measured from -14 LUFS.
+  // Kicks and a snare over a quiet bass would stop one gain about 4 LU short.
+  // The limiter turns each hit down ahead of it and the soundtrack reaches -14
+  // LUFS under the ceiling. Before the first kick's look-ahead every sample has the one
+  // static gain, and at the kick less.
+  const beat = await exported((x) => x.set(drums(2)));
+  const hit = beat.report.sound;
+  const alone = (sound) => -14 - (sound.measured.lufs - 2 - sound.measured.dbtp);
+  assert.ok(alone(hit) > 3, `one gain alone would stop the drums ${alone(hit)} LU short`);
+  assert.ok(Math.abs(hit.lufs + 14) <= 0.01 && hit.dbtp === -2 && hit.short === undefined, `the drums reach ${hit.lufs} LUFS at ${hit.dbtp} dBTP`);
+  assert.ok(Math.abs(measureLoudness(planar(beat.encoded)).lufs + 14) < 0.01 && measureLoudness(planar(beat.encoded)).dbtp <= -2 + 1e-4, 'as the encoded soundtrack measures');
+  assert.ok(hit.limited > 3 && hit.limited < 12 && hit.gain > -2 - hit.measured.dbtp + 3, `by ${hit.limited} dB of limiting, which lets the gain ${hit.gain} dB past the ${(-2 - hit.measured.dbtp).toFixed(2)} its peaks leave`);
+  const curve = (i) => beat.encoded[0][i] / beat.rendered[0][i];
+  const ahead = DRUM_START - Math.round(0.005 * RATE) - 12;
+  let flat = 0;
+  for (let i = 100; i < ahead; i++) if (Math.abs(beat.rendered[0][i]) > 1e-3) flat = Math.max(flat, Math.abs(curve(i) / curve(100) - 1));
+  assert.ok(flat < 1e-5 && Math.abs(20 * Math.log10(curve(100)) - hit.gain) < 0.02, `one gain, ${20 * Math.log10(curve(100))} dB, before the look-ahead, and some differ from it by ${flat}`);
+  let least = Infinity;
+  for (let i = DRUM_START; i < DRUM_START + 480; i++) if (Math.abs(beat.rendered[0][i]) > 1e-2) least = Math.min(least, curve(i) / curve(100));
+  assert.ok(20 * Math.log10(least) < -3, `the kick is turned down, by ${-20 * Math.log10(least)} dB`);
+  // The deepest cut is what the loudest peak needs: nothing trimmed the whole
+  // soundtrack after the limiter for a peak it missed.
+  assert.ok(Math.abs(hit.limited - (hit.measured.dbtp + hit.gain + 2)) <= 0.02, `the deepest cut, ${hit.limited} dB, is what the loudest peak needs`);
+
+  // Speech-like bursts over a quiet bed, about 7 LU short with one gain, reach
+  // the target as well.
+  const said = (await exported((x) => x.set(bursts(2)))).report.sound;
+  assert.ok(alone(said) > 5, `where one gain alone would stop them ${alone(said)} LU short`);
+  assert.ok(Math.abs(said.lufs + 14) <= 0.01 && said.dbtp === -2 && said.limited > 3 && said.short === undefined, `the bursts reach ${said.lufs} LUFS by ${said.limited} dB of limiting`);
+
+  // An Opus soundtrack is levelled as an AAC one: the same clicks stop it at the
+  // same gain and -2 dBTP, as short of -14 LUFS.
   const opus = await exported((x) => { x.set(tone([[2, -40]])); for (let i = 0; i < x.length; i += 12000) x[i] = 0.9; }, { aac: false });
   const heard = opus.report.sound;
   assert.equal(heard.codec, 'Opus');
-  assert.ok(Math.abs(heard.gain - (-1.2 - heard.measured.dbtp)) <= 0.011 && Math.abs(heard.gain - (gain - 0.2)) <= 0.011,
-    `the gain ${heard.gain} is the room left under -1.2 dBTP, 0.2 dB under AAC's ${gain}`);
-  assert.ok(Math.abs(measureLoudness(planar(opus.encoded)).dbtp + 1.2) < 0.01 && Math.abs(heard.dbtp + 1.2) < 0.005, 'and the soundtrack peaks at -1.2 dBTP');
-  assert.ok(heard.short === Math.round((-14 - heard.lufs) * 100) / 100 && Math.abs(heard.short - (peaky.report.sound.short + 0.2)) <= 0.011,
+  assert.ok(heard.gain === gain && heard.limited === 12, `the gain ${heard.gain} is AAC's ${gain}`);
+  assert.ok(Math.abs(measureLoudness(planar(opus.encoded)).dbtp + 2) < 0.01 && Math.abs(heard.dbtp + 2) < 0.005, 'and the soundtrack peaks at -2 dBTP');
+  assert.ok(heard.short === Math.round((-14 - heard.lufs) * 100) / 100 && heard.short === peaky.report.sound.short,
     `${heard.lufs} LUFS is ${-14 - heard.lufs} LU short, and the report says ${heard.short}`);
   const steady = (await exported((x) => x.set(tone([[2, -30]])), { aac: false })).report.sound;
   assert.deepEqual([steady.gain, steady.lufs, steady.short], [16, -14, undefined], 'a soundtrack its peaks do not stop reaches -14 LUFS as Opus too');
-  assert.throws(() => loudnessGain({ lufs: -20, dbtp: -10 }, 'opus'), /levelled for AAC \('mp4a'\) or 'Opus', not "opus"/, 'a codec by another name is refused');
+  const drumsOpus = (await exported((x) => x.set(drums(2)), { aac: false })).report.sound;
+  assert.ok(Math.abs(drumsOpus.lufs + 14) <= 0.01 && drumsOpus.dbtp === -2, `Opus drums reach ${drumsOpus.lufs} LUFS at ${drumsOpus.dbtp} dBTP`);
+  assert.throws(() => normalizeLoudness(stereo(tone([[1, -20]])), 'opus'), /levelled for AAC \('mp4a'\) or 'Opus', not "opus"/, 'a codec by another name is refused');
 
   // Silence has no loudness to set, nor any shortfall. A sample that is not a
   // finite number is refused wherever it falls: an infinite one early would
@@ -1167,4 +1233,41 @@ test('every film soundtrack reaches -14 LUFS with one static gain, or stops at i
       await assert.rejects(exported((x) => { x.set(tone([[2, -30]])); x[at] = bad; }), /not finite numbers/, `${bad} at sample ${at}`);
     }
   }
+});
+
+test('the limiter meets every peak on both channels from the first sample, ahead of it, and lets go over 50 ms', () => {
+  // The deepest cut is what the loudest peak needs, so nothing trimmed the
+  // whole soundtrack after the limiter for a peak it missed: a kick on the
+  // first sample, and kicks on the left between kicks on the right.
+  const copy = (channels) => planar(channels.map((x) => x.slice()));
+  for (const [what, channels] of [['a kick on the first sample', [drums(2, 0), drums(2, 0)]], ['kicks on the left and later ones on the right', [drums(2), drums(2, 3000)]]]) {
+    const levelled = copy(channels), r = normalizeLoudness(levelled, 'mp4a');
+    assert.ok(r.limited > 3 && Math.abs(r.limited - (r.measured.dbtp + r.gain + 2)) <= 0.02 && r.dbtp === -2 && Math.abs(r.lufs + 14) <= 0.01,
+      `${what}: the deepest cut, ${r.limited} dB, is what its loudest peak needs, at ${r.lufs} LUFS`);
+    // Each channel alone, so the meter reads every channel whatever it does with two.
+    for (let c = 0; c < 2; c++) {
+      const peak = measureLoudness(planar([levelled.getChannelData(c)])).dbtp;
+      assert.ok(peak <= -2 + 1e-4, `${what}: channel ${c} peaks at ${peak} dBTP`);
+    }
+  }
+  // One click over a steady tone: every sample keeps one gain until 5 ms and
+  // 12 samples before the click, the click is cut 12 dB, and 50 ms after its
+  // filter's reach the gain has come back 1 - 1/e of the way.
+  const at = 24000, x = tone([[1, -30]]);
+  x[at] = 0.9;
+  const out = x.slice(), r = normalizeLoudness(planar([out]), 'mp4a');
+  const curve = (i) => out[i] / x[i] / (out[1000] / x[1000]);
+  const ahead = at - Math.round(0.005 * RATE) - 12;
+  assert.equal(r.limited, 12, 'the click is cut by the full depth');
+  assert.ok(Math.abs(curve(ahead - 1) - 1) < 1e-6 && curve(ahead + 20) < 1 - 1e-3, `one gain until ${ahead}, ${curve(ahead - 1)}, and less after, ${curve(ahead + 20)}`);
+  assert.ok(Math.abs(20 * Math.log10(out[at] / x[at] / (out[1000] / x[1000])) + 12) < 0.02, 'the click itself is cut 12 dB');
+  const deepest = 10 ** (-12 / 20), back = (i) => (1 - curve(i)) / (1 - deepest);
+  const later = at + 11 + Math.round(0.05 * RATE);
+  const i = Math.abs(x[later]) > 1e-3 ? later : later + 1;
+  assert.ok(Math.abs(back(i) - Math.exp(-1)) < 0.02, `50 ms on, ${back(i)} of the cut remains`);
+  assert.ok(Math.abs(curve(at + 0.4 * RATE) - 1) < 1e-3, 'and 400 ms on, next to none');
+  // The same soundtrack is levelled to the same bits every time.
+  const again = x.slice();
+  normalizeLoudness(planar([again]), 'mp4a');
+  assert.deepEqual(new Uint32Array(again.buffer), new Uint32Array(out.buffer), 'two levellings are the same bits');
 });

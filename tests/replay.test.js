@@ -223,13 +223,15 @@ test('a film matches only where every compared frame is within the floor of its 
 // ---- the soundtrack -------------------------------------------------------
 
 const { validate } = require('../core/piece.js');
-const { measureLoudness, loudnessGain, normalizeLoudness } = require('../core/film.js');
+const { normalizeLoudness } = require('../core/film.js');
 
 /** An AudioBuffer stand-in at 48 kHz holding `channels`, Float32Arrays. */
 const audio = (channels) => ({ numberOfChannels: channels.length, length: channels[0].length, sampleRate: 48000, duration: channels[0].length / 48000, getChannelData: (c) => channels[c] });
 /** Two channels of `n` samples, each `f(i, c)`. */
 const signal = (n, f) => [0, 1].map((c) => Float32Array.from({ length: n }, (_, i) => f(i, c)));
 const tone = (n, level = 0.2) => signal(n, (i, c) => level * Math.sin((2 * Math.PI * (440 + 110 * c) * i) / 48000));
+/** `channels` levelled as the export levels them for `codec`, gain and limiter, in a copy. */
+const levelled = (channels, codec = 'mp4a') => { const out = channels.map((x) => x.slice()); normalizeLoudness(audio(out), codec); return out; };
 
 /**
  * compareSound as the page runs it, from its source text alone, with the page's
@@ -245,7 +247,7 @@ async function soundInPage({ rendered, decoded }, codec = 'mp4a', cut = SOUND_CU
     startRendering() { return Promise.resolve(audio(rendered.map((x) => x.slice()))); }
     decodeAudioData() { return decoded ? Promise.resolve(audio(decoded)) : Promise.reject(new Error('Unable to decode audio data')); }
   }
-  const window = { __artifex: { piece: require('../core/piece.js'), render: require('../core/render.js'), examples: { tone: p }, loudness: measureLoudness, loudnessGain } };
+  const window = { __artifex: { piece: require('../core/piece.js'), render: require('../core/render.js'), examples: { tone: p }, level: normalizeLoudness } };
   const recipe = { ...solve(p, p.seed).manifest, film: { frames: 10, hz: 10, loop: false, scale: 1 } };
   const run = `(${compareSound})(new Uint8Array(${JSON.stringify([...Buffer.from('film')])}), ${JSON.stringify(recipe)}, ${SOUND_BLOCK}, ${JSON.stringify(codec)}, ${SOUND_BAND}, ${SOUND_FLATNESS}, ${JSON.stringify(cut)})`;
   return vm.runInNewContext(run, { window, OfflineAudioContext, atob });
@@ -253,23 +255,30 @@ async function soundInPage({ rendered, decoded }, codec = 'mp4a', cut = SOUND_CU
 
 const comparedInPage = async (films) => soundVerdict(await soundInPage(films), 'mp4a');
 
-test('replay levels a soundtrack with the gain the export applies', async () => {
+test('replay levels a soundtrack with the gain and limiter the export applies', async () => {
   const click = signal(48000, (i) => (i === 24000 ? 0.9 : 0.001 * Math.sin(i / 7)));
-  for (const [what, rendered] of [['a steady tone reaches -14 LUFS', tone(48000)], ['a click stops at its codec ceiling', click], ['silence keeps its level', signal(48000, () => 0)]]) {
+  const beats = signal(48000, (i) => 0.02 * Math.sin(i / 20) + (i % 12000 < 400 ? 0.6 * Math.exp(-(i % 12000) / 100) * Math.sin(i / 3) : 0));
+  for (const [what, rendered] of [['a steady tone reaches -14 LUFS', tone(48000)], ['a click stops at 12 dB of limiting under its codec ceiling', click],
+    ['beats are limited to -14 LUFS', beats], ['silence keeps its level', signal(48000, () => 0)]]) {
     for (const codec of ['mp4a', 'Opus']) {
-      const { gain } = await soundInPage({ rendered, decoded: rendered }, codec);
-      assert.equal(Math.round(gain * 100) / 100, normalizeLoudness(audio(rendered.map((x) => x.slice())), codec).gain, `${what}, ${codec}`);
+      const { gain, limited } = await soundInPage({ rendered, decoded: rendered }, codec);
+      const want = normalizeLoudness(audio(rendered.map((x) => x.slice())), codec);
+      assert.deepEqual([gain, limited], [want.gain, want.limited], `${what}, ${codec}`);
     }
   }
-  // Opus stops a click 0.2 dB under AAC, so replay must level for the film's codec.
+  const beat = soundVerdict(await soundInPage({ rendered: beats, decoded: levelled(beats) }), 'mp4a');
+  assert.equal(beat.match, true, 'limited beats match their render levelled as the export levels it: ' + beat.detail);
+  const scale = 10 ** (normalizeLoudness(audio(beats.map((x) => x.slice())), 'mp4a').gain / 20);
+  const once = soundVerdict(await soundInPage({ rendered: beats, decoded: beats.map((x) => x.map((v) => v * scale)) }), 'mp4a');
+  assert.equal(once.match, false, 'and differ from it at one gain, unlimited: ' + once.detail);
+  // AAC and Opus share the -2 dBTP ceiling, so a click is levelled the same for either.
   const [aac, opus] = await Promise.all(['mp4a', 'Opus'].map((codec) => soundInPage({ rendered: click, decoded: click }, codec)));
-  assert.ok(Math.abs(aac.gain - opus.gain - 0.2) < 1e-9, `AAC ${aac.gain} dB and Opus ${opus.gain} dB`);
+  assert.deepEqual([aac.gain, aac.limited], [opus.gain, opus.limited], `AAC ${aac.gain} dB and Opus ${opus.gain} dB`);
 });
 
 test('a film soundtrack matches only where it decodes to its recipe, levelled as the export levels it', async () => {
   const rendered = tone(48000);
-  const scale = 10 ** (loudnessGain(measureLoudness(audio(rendered)), 'mp4a') / 20);
-  const heard = rendered.map((x) => x.map((v) => v * scale));
+  const heard = levelled(rendered);
   const measured = await soundInPage({ rendered, decoded: heard });
   // Energies come from the spectrum, and add up to the levelled render's.
   const energy = heard.reduce((e, x) => x.reduce((a, v) => a + v * v, e), 0), summed = measured.blocks.reduce((e, b) => e + b[0], 0);
@@ -330,7 +339,7 @@ function noiseSoundtrack({ toneHz = 440, low = {}, high = {}, hat = null } = {})
 
 function filmOfNoise({ cut, ...options } = {}) {
   const { sound, coded } = noiseSoundtrack(options);
-  const scale = 10 ** (loudnessGain(measureLoudness(audio(sound)), 'mp4a') / 20);
+  const scale = 10 ** (normalizeLoudness(audio(sound.map((x) => x.slice())), 'mp4a').gain / 20);
   return coded.map((x) => (cut ? lowPass(x, cut) : x).map((v) => v * scale));
 }
 
@@ -421,7 +430,7 @@ test('a soundtrack is judged below the band its codec kept, measured from the fi
 
 test('a soundtrack is judged without its mean, which Opus removes', async () => {
   const rendered = tone(48000).map((x) => x.map((v, i) => (i < 24000 ? v + 0.05 : v)));
-  const scale = 10 ** (loudnessGain(measureLoudness(audio(rendered)), 'Opus') / 20);
+  const scale = 10 ** (normalizeLoudness(audio(rendered.map((x) => x.slice())), 'Opus').gain / 20);
   const heard = soundVerdict(await soundInPage({ rendered, decoded: tone(48000).map((x) => x.map((v) => v * scale)) }, 'Opus'), 'Opus');
   assert.equal(heard.match, true, heard.detail);
 });

@@ -299,24 +299,24 @@ function soundMatch(a, b) {
 }
 
 // Serialized into the page and pinned in Node. The export levels every
-// soundtrack to -14 LUFS, or where its peaks come first to its codec's ceiling,
-// -1 dBTP for AAC and -1.2 dBTP for Opus, and the decoded film has to measure
-// so, codec and all. Opus moved the examples' true peak by -0.10 to +0.14 dB in
-// installed Edge, so it is held within 0.15 dB of its ceiling, AAC within 0.1.
-// The lower ceiling is there to keep an Opus soundtrack under -1 dBTP once
-// decoded, and settle's stops within 0.1 LU of -14 LUFS, where the rule above
-// would pass it at any peak. `heard` is the decoded soundtrack's { lufs, dbtp };
+// soundtrack to -14 LUFS, limiting its peaks under -2 dBTP, or where 12 dB of
+// limiting stops it first, with its peaks at that ceiling, and the decoded film
+// has to measure so, codec and all. A codec lowered the examples' true peak by
+// up to 0.10 dB in installed Edge, Opus, so a quieter soundtrack's decoded peak
+// is held no more than 0.15 dB under the ceiling for Opus and 0.1 for AAC, and
+// raised limited peaks by up to 0.71 dB, so it is held under -1 dBTP whatever
+// the codec. `heard` is the decoded soundtrack's { lufs, dbtp };
 // `sound` is the export's report, whose `short` must be there exactly when the
 // `lufs` it encoded at is more than 3 LU under -14 LUFS. That `lufs` is rounded
 // to two decimals and `short` is measured before rounding, so at exactly -17
 // LUFS either is right. Returns why the soundtrack does not match, or null.
 function loudnessMatch(heard, sound) {
   const opus = sound.codec === 'Opus';
-  const [ceiling, within] = opus ? [-1.2, 0.15] : [-1, 0.1];
-  if (!(Math.abs(heard.lufs + 14) <= 0.1 || (Math.abs(heard.dbtp - ceiling) <= within && heard.lufs < -14))) {
+  const ceiling = -2, within = opus ? 0.15 : 0.1;
+  if (!(Math.abs(heard.lufs + 14) <= 0.1 || (heard.dbtp >= ceiling - within && heard.lufs < -14))) {
     return 'the decoded soundtrack measures ' + heard.lufs.toFixed(2) + ' LUFS and ' + heard.dbtp.toFixed(2) + ' dBTP, neither -14 LUFS nor ' + ceiling + ' dBTP';
   }
-  if (opus && !(heard.dbtp < -1)) return 'the decoded Opus soundtrack peaks at ' + heard.dbtp.toFixed(2) + ' dBTP, not under -1 dBTP';
+  if (!(heard.dbtp < -1)) return 'the decoded ' + (opus ? 'Opus' : 'AAC') + ' soundtrack peaks at ' + heard.dbtp.toFixed(2) + ' dBTP, not under -1 dBTP';
   const under = -14 - sound.lufs;
   if (under !== 3 && (sound.short !== undefined) !== under > 3) {
     return 'the export encoded the soundtrack at ' + sound.lufs + ' LUFS and reports '
@@ -481,20 +481,25 @@ async function inspectFilm(name, force, retry) {
       await api.render.renderSound(p, solved, { OfflineAudioContext })];
     const apart = soundMatch(a, b);
     if (apart) throw new Error(name + ': two renders of the soundtrack ' + apart);
+    // A fresh render levelled in the page, gain and limiter, must level as the
+    // export reported, which replay relies on.
+    const level = api.level(b, report.sound.codec);
+    const keys = ['measured', 'gain', 'limited', 'lufs', 'dbtp', 'short'];
+    const [fresh, said] = [level, report.sound].map((s) => JSON.stringify(keys.map((k) => s[k])));
+    if (fresh !== said) throw new Error(name + ': a fresh render levels to ' + fresh + ' and the export reported ' + said + ', as ' + keys.join(', '));
     // A codec's priming can swallow or shift the start of a soundtrack: from its
-    // first sound, 1024 decoded samples must follow a fresh render at the gain
-    // the export applied. In installed Edge the examples decode 29 to 52 dB from
-    // their render there, AAC and Opus; settle's AAC soundtrack without its
-    // silent lead decoded 6.4 dB from it.
+    // first sound, 1024 decoded samples must follow that levelled render. In
+    // installed Edge the examples decode 29 to 52 dB from their render there,
+    // AAC and Opus; settle's AAC soundtrack without its silent lead decoded
+    // 6.4 dB from it.
     const START_DB = 10;
-    const gain = 10 ** (report.sound.gain / 20);
-    const sounds = (i) => { for (let c = 0; c < a.numberOfChannels; c++) if (Math.abs(gain * a.getChannelData(c)[i]) > 1e-3) return true; return false; };
+    const sounds = (i) => { for (let c = 0; c < b.numberOfChannels; c++) if (Math.abs(b.getChannelData(c)[i]) > 1e-3) return true; return false; };
     let onset = 0;
-    while (onset < a.length && !sounds(onset)) onset++;
+    while (onset < b.length && !sounds(onset)) onset++;
     let rendered = 0, error = 0;
-    for (let c = 0; c < a.numberOfChannels; c++) {
-      const x = a.getChannelData(c), y = decoded.getChannelData(c);
-      for (let i = onset; i < Math.min(onset + 1024, x.length); i++) { rendered += (gain * x[i]) ** 2; error += (gain * x[i] - y[i]) ** 2; }
+    for (let c = 0; c < b.numberOfChannels; c++) {
+      const x = b.getChannelData(c), y = decoded.getChannelData(c);
+      for (let i = onset; i < Math.min(onset + 1024, x.length); i++) { rendered += x[i] ** 2; error += (x[i] - y[i]) ** 2; }
     }
     const startDb = 10 * Math.log10(rendered / error);
     if (!(startDb >= START_DB)) {
@@ -506,7 +511,7 @@ async function inspectFilm(name, force, retry) {
     if (loud) throw new Error(name + ': ' + loud);
     sound = {
       seconds: +decoded.duration.toFixed(3), samples: decoded.length, peak: +peak.toFixed(3),
-      gain: report.sound.gain, lufs: +heard.lufs.toFixed(2), dbtp: +heard.dbtp.toFixed(2), short: report.sound.short,
+      gain: report.sound.gain, limited: report.sound.limited, lufs: +heard.lufs.toFixed(2), dbtp: +heard.dbtp.toFixed(2), short: report.sound.short,
       onset, startDb: +startDb.toFixed(1),
     };
   }
