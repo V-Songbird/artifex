@@ -127,7 +127,7 @@ Run `node --test tests/replay.test.js` for manifest reading, the version, piece,
 | [`core/rand.js`](../../core/rand.js) | Addressed randomness and noise fields. |
 | [`core/field.js`](../../core/field.js) | Grid sampling, derivatives and composition, isolines and streamlines; see the [field API](../apis/fields.md). |
 | [`core/time.js`](../../core/time.js) | Spans, named rate curves, tweens, shot lists cut on whole frames, damped springs and followers; see [authored time](../apis/piece-api.md#authored-time). |
-| [`core/sound.js`](../../core/sound.js) | Summing many voices into one input two at a time, so one browser renders a soundtrack to the same bytes every time; see the [soundtrack](../apis/piece-api.md#soundtrack). |
+| [`core/sound.js`](../../core/sound.js) | Layered voices and a seeded room for any subject, and summing many voices into one input two at a time, so one browser renders a soundtrack to the same bytes every time; see the [soundtrack](../apis/piece-api.md#soundtrack). |
 | [`core/finish.js`](../../core/finish.js) | A declared film finish: seeded grain, gate weave, flicker, vignette and a print grade, drawn by `drawFrame` on raster frames; see the [film finish](../apis/piece-api.md#film-finish). |
 | [`core/layer.js`](../../core/layer.js) | Static layers, copied per canvas and device scale on raster surfaces and drawn directly on others; see [static layers](../apis/piece-api.md#static-layers). |
 | [`core/stroke-font.js`](../../core/stroke-font.js) | Shared polyline stroke font; [`examples/stroke-font.js`](../../examples/stroke-font.js) remains a compatibility entry point. |
