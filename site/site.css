@@ -1,0 +1,27 @@
+/* Without the stage (no script, or reduced motion) the text reads in order;
+   html.film lays it over the scrolled film. */
+:root { --ground: #efeae0; --ink: #23201c; --card: rgba(239, 234, 224, 0.9); --focus: #1a5fb4; }
+html { background: var(--ground); color: var(--ink); font: 17px/1.5 Georgia, 'Times New Roman', serif; }
+body { margin: 0; }
+main { position: relative; }
+.intro, .shot { padding: 1.5em 5vw; }
+.intro h1 { margin: 0 0 0.2em; font-size: 2.2em; font-weight: normal; }
+.card { display: inline-block; max-width: 26em; background: var(--card); padding: 0.7em 1em; border-radius: 3px; }
+.card h2 { margin: 0 0 0.3em; font-size: 1.5em; font-weight: normal; }
+.card p { margin: 0; }
+.shot.seam { display: none; }
+.still:empty { min-height: 1px; }
+.still { margin: 1em 0 0; }
+.still img { display: block; max-width: 100%; height: auto; }
+#stage canvas, #poster { position: fixed; display: block; }
+#stage canvas[hidden], #poster[hidden], #stage:empty { display: none; }
+html:not(.film) #stage, html:not(.film) #poster, html:not(.film) #spacer { display: none; }
+html.film .shot, html.film .intro { position: absolute; left: 0; right: 0; pointer-events: none; }
+html.film .intro { top: 0; }
+html.film .shot.seam { display: block; }
+html.film .still { display: none; }
+#bar { position: fixed; right: 12px; bottom: 10px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
+#bar button { font: 14px Georgia, serif; min-width: 24px; min-height: 24px; padding: 4px 10px; }
+#bar button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+#status { font: 12px/1.3 Consolas, monospace; background: rgba(20, 16, 12, 0.78); color: #fff; padding: 5px 8px; border-radius: 3px; }
+#status:empty { display: none; }

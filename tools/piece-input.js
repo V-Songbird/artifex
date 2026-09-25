@@ -108,11 +108,13 @@ function imports(source, file) {
   return found;
 }
 
+// `input` is one piece path, or a list of them. A list shares one module table,
+// so a helper two pieces require is defined once, and says which modules each
+// piece reaches, so a caller can split the definitions per piece.
 function loadExternal(input, cwd = callerDirectory()) {
-  let entry;
-  try { entry = require.resolve(path.resolve(cwd, input)); }
-  catch (error) { throw new Error('piece: cannot load ' + path.resolve(cwd, input) + ': ' + error.message); }
-  const ids = new Map(), definitions = [];
+  const list = Array.isArray(input);
+  if (list && !input.length) throw new Error('piece: loadExternal needs at least one piece');
+  const ids = new Map(), modules = [], requires = new Map();
   function visit(file) {
     const relative = path.relative(ROOT, file).replace(/\\/g, '/');
     if (/^(core|examples)\/[^/]+\.js$/.test(relative)) return relative;
@@ -122,6 +124,7 @@ function loadExternal(input, cwd = callerDirectory()) {
     const id = 'external/' + ids.size + '.js';
     ids.set(file, id);
     let source = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '').replace(/^#![^\n]*/, '');
+    requires.set(id, []);
     if (extension === '.json') {
       let data;
       try { data = JSON.parse(source); }
@@ -139,6 +142,7 @@ function loadExternal(input, cwd = callerDirectory()) {
         try { resolved = localRequire.resolve(dependency.spec); }
         catch (error) { throw new Error('piece: cannot resolve ' + dependency.spec + ' from ' + file + ': ' + error.message); }
         dependency.id = visit(resolved);
+        if (dependency.id.startsWith('external/')) requires.get(id).push(dependency.id);
       }
       for (const dependency of dependencies.reverse()) {
         source = source.slice(0, dependency.start) + 'require(' + json(dependency.id) + ')' + source.slice(dependency.end);
@@ -147,17 +151,38 @@ function loadExternal(input, cwd = callerDirectory()) {
     // A string containing an HTML end tag is legitimate piece data. Escaping
     // its slash preserves the JS string value without ending the script tag.
     source = source.replace(/<\/script/gi, (marker) => '<\\/' + marker.slice(2));
-    definitions.push('__def(' + json(id) + ', function (module, exports, require) {\n' + source + '\n});');
+    modules.push({ id, file, source: '__def(' + json(id) + ', function (module, exports, require) {\n' + source + '\n});' });
     return id;
   }
-  const id = visit(entry);
-  let piece;
-  try { piece = validate(require(entry)); }
-  catch (error) { throw new Error('piece: invalid module ' + entry + ': ' + error.message); }
-  definitions.push("__def('examples/index.js', function (module, exports, require) {\n"
-    + 'module.exports = Object.create(null);\nmodule.exports[' + json(piece.name) + '] = require(' + json(id) + ');\n});');
-  return { entry, piece, names: [piece.name], source: definitions.join('\n'), moduleCount: ids.size,
-    stem: outputStem(entry), directory: path.dirname(entry) };
+  // Every module a piece reaches, itself first, each once.
+  function reach(id, found = new Set()) {
+    if (!found.has(id)) { found.add(id); for (const next of requires.get(id)) reach(next, found); }
+    return found;
+  }
+  const pieces = [], byName = new Map();
+  for (const one of list ? input : [input]) {
+    let entry;
+    try { entry = require.resolve(path.resolve(cwd, one)); }
+    catch (error) { throw new Error('piece: cannot load ' + path.resolve(cwd, one) + ': ' + error.message); }
+    const id = visit(entry);
+    let piece;
+    try { piece = validate(require(entry)); }
+    catch (error) { throw new Error('piece: invalid module ' + entry + ': ' + error.message); }
+    // One registry name per piece: a second module under the same name would replace the first.
+    const named = byName.get(piece.name);
+    if (named && named.entry !== entry) throw new Error('piece: ' + named.entry + ' and ' + entry + ' are both named ' + piece.name);
+    byName.set(piece.name, { entry, id });
+    pieces.push({ entry, id, piece, modules: [...reach(id)] });
+  }
+  const names = [...byName.keys()];
+  const registry = "__def('examples/index.js', function (module, exports, require) {\n"
+    + 'module.exports = Object.create(null);\n'
+    + names.map((name) => 'module.exports[' + json(name) + '] = require(' + json(byName.get(name).id) + ');\n').join('')
+    + '});';
+  const source = modules.map((m) => m.source).concat(registry).join('\n');
+  if (list) return { pieces, names, source, moduleCount: ids.size, modules };
+  const [{ entry, piece }] = pieces;
+  return { entry, piece, names, source, moduleCount: ids.size, stem: outputStem(entry), directory: path.dirname(entry) };
 }
 
 module.exports = { callerDirectory, isPiecePath, outputStem, loadExternal };

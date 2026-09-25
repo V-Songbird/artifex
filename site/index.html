@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob:">
+<title>Artifex</title>
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<div id="stage"></div>
+<img id="poster" alt="" hidden>
+<main>
+<header class="intro"><div class="card">
+<h1>Artifex</h1>
+<p>A film you scroll: every frame is drawn live, in your browser, from a seed and a playhead.</p>
+</div></header>
+<!-- shots -->
+<div id="spacer"></div>
+</main>
+<div id="bar">
+<button id="play" type="button" aria-pressed="false">Play as film</button>
+<button id="reroll" type="button">Re-roll seed</button>
+<button id="copy" type="button">Copy link</button>
+<span id="status" role="status"></span>
+</div>
+<!-- data -->
+<script src="core.js"></script>
+<script src="stage.js"></script>
+</body>
+</html>

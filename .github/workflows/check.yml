@@ -69,6 +69,11 @@ jobs:
         run: npm run check
       - name: Build the standalone page
         run: npm run page
+      # Builds out/site/ and tests the site's builder and stage helpers; deploys nothing.
+      - name: Build the showcase site
+        run: npm run site
+      - name: Run the site checks
+        run: npm run site:check
       - name: Require every mutation shard
         env:
           RESULT: ${{ needs.mutations.result }}
