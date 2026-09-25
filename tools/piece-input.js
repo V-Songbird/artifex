@@ -110,14 +110,15 @@ function imports(source, file) {
 
 // `input` is one piece path, or a list of them. A list shares one module table,
 // so a helper two pieces require is defined once, and says which modules each
-// piece reaches, so a caller can split the definitions per piece.
+// piece reaches, so a caller can split the definitions per piece, and which
+// library modules the pieces require, so a caller can bundle only those.
 function loadExternal(input, cwd = callerDirectory()) {
   const list = Array.isArray(input);
   if (list && !input.length) throw new Error('piece: loadExternal needs at least one piece');
-  const ids = new Map(), modules = [], requires = new Map();
+  const ids = new Map(), modules = [], requires = new Map(), library = new Set();
   function visit(file) {
     const relative = path.relative(ROOT, file).replace(/\\/g, '/');
-    if (/^(core|examples)\/[^/]+\.js$/.test(relative)) return relative;
+    if (/^(core|examples)\/[^/]+\.js$/.test(relative)) { library.add(relative); return relative; }
     if (ids.has(file)) return ids.get(file);
     const extension = path.extname(file).toLowerCase();
     if (!['.js', '.cjs', '.json'].includes(extension)) throw new Error('piece: browser bundles support CommonJS .js/.cjs and .json, not ' + file);
@@ -180,7 +181,7 @@ function loadExternal(input, cwd = callerDirectory()) {
     + names.map((name) => 'module.exports[' + json(name) + '] = require(' + json(byName.get(name).id) + ');\n').join('')
     + '});';
   const source = modules.map((m) => m.source).concat(registry).join('\n');
-  if (list) return { pieces, names, source, moduleCount: ids.size, modules };
+  if (list) return { pieces, names, source, moduleCount: ids.size, modules, library: [...library], registry };
   const [{ entry, piece }] = pieces;
   return { entry, piece, names, source, moduleCount: ids.size, stem: outputStem(entry), directory: path.dirname(entry) };
 }

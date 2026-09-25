@@ -1740,6 +1740,23 @@ test('the page builder refuses to write a bundle with a hole in it', () => {
   assert.match(e.message, /core\/rand\.js, which is not bundled/);
 });
 
+test('a bundle of a module list holds what the list reaches, and refuses a list with a hole by name', () => {
+  // The site bundles only the library modules its shots require; the page, every one.
+  const { bundle, reach, MODULES } = require('../tools/build-page.js');
+  const defined = (source) => [...source.matchAll(/^__def\("([^"]+)"/gm)].map((m) => m[1]);
+  assert.deepEqual(defined(bundle()), MODULES, 'the default bundle is the whole library, in order');
+  assert.equal(bundle(), bundle(null, MODULES));
+  assert.deepEqual(reach(MODULES), MODULES);
+
+  const render = reach(['core/render.js']);
+  assert.ok(render.length > 1 && render.every((id) => id.startsWith('core/')), 'render reaches core modules and no example');
+  assert.deepEqual(defined(bundle(null, render)), render);
+  const left = render.find((id) => id !== 'core/render.js');
+  const e = grab(() => bundle(null, render.filter((id) => id !== left)));
+  assert.match(e.message, new RegExp(left.replace(/[./]/g, '\\$&') + ', which is not bundled'));
+  assert.match(grab(() => bundle(null, reach(['core/nope.js']))).message, /core\/nope\.js is asked for, but it is not a module/);
+});
+
 test('the page builder refuses to write a page that does not parse', () => {
   // checkResolvable proves the MODULES can find each other and looks at nothing
   // else. The page body around them is one template literal in build-page.js,
