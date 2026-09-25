@@ -459,7 +459,7 @@ establish those claims. Shader arithmetic may differ across devices.
 |---|---|
 | an interactive page | pass a real `CanvasRenderingContext2D` to `drawFrame` |
 | a print-resolution still | same, at `scale: 8` or higher. **Not capped.** |
-| a film | walk `playheads(piece)`; the frames are a property of the piece, never of how fast the machine is. The built page does it: **MP4**, with the long edge at 1920 px or more, or **MP4 1x** for a draft, frame-exact at any drawing speed and carrying the declared soundtrack, or `__artifex.film({ scale, bitrate })`, which saves nothing and returns the report read from the file. The default bitrate is 0.45 bit per pixel per frame, about 22 Mbit/s at 1080p24, measured to keep fine hatching over replay's 30 dB floor; pass `bitrate` in bit/s to spend more. Only where the browser cannot encode that MP4 does the page offer **WebM video**, which records in real time, so it needs frames cheaper than their budget and has no sound |
+| a film | walk `playheads(piece)`; the frames are a property of the piece, never of how fast the machine is. The built page does it: **MP4**, with the long edge at 1920 px or more, or **MP4 1x** for a draft, frame-exact at any drawing speed and carrying the declared soundtrack, or `__artifex.film({ scale, bitrate })`, which saves nothing and returns the report read from the file. From a shell, `npm run film -- ./my-piece.cjs` saves that same export beside the piece as `my-piece.mp4`, with its report as `my-piece.mp4.json`, and takes `--out`, `--scale` and `--bitrate`; do not write your own browser driver. The default bitrate is 0.45 bit per pixel per frame, about 22 Mbit/s at 1080p24, measured to keep fine hatching over replay's 30 dB floor; pass `bitrate` in bit/s to spend more. Only where the browser cannot encode that MP4 does the page offer **WebM video**, which records in real time, so it needs frames cheaper than their budget and has no sound |
 | a plotter / print SVG | `renderVector(piece)` — declare `outputs: ['raster','vector']` first |
 
 **Chain your segments before you draw them.** A plotter lifts its pen between
@@ -680,22 +680,36 @@ output limit.
 
 ### Look at a film
 
-Nine seeds show one playhead; a film also needs its times. After each scene, and
-before delivery:
+Nine seeds show one playhead; a film also needs its times. A time strip draws
+them from the command line, at the piece's seed, 640 px wide per frame, each
+with its draw time:
+
+```shell
+npm --prefix "<library root>" run seeds -- "./my-piece.cjs" --frames 9 --png
+npm --prefix "<library root>" run seeds -- "./my-piece.cjs" --at 1.5,1.75,4,6.25 --png
+npm --prefix "<library root>" run seeds -- "./my-piece.cjs" --at 4,6.25 --loupe 480,300 --png
+```
+
+The first spreads nine frames from the first to the last, the second shows the
+frames holding those seconds, and the third adds under each a 100% crop of the
+film at its export size around that design point (the centre without one), for
+fine detail. Each writes `my-piece-frames.html` and `my-piece-frames.png`.
+After each scene, and before delivery:
 
 1. List every cut, every transition's midpoint and each beat of the beat sheet.
-2. Draw each at 640 px wide or more. In the built page, set the playhead with
-   `__artifex.setT(t)` or the recipe URL's `t=`, where `t` is the frame over
-   `frames - 1` (over `frames` on a loop) and the frame is the second times
-   `hz`, then save a PNG at a scale that reaches that width. Add the frame a few
-   frames later wherever motion matters.
+2. Draw each in a strip with `--at`. Add the time a few frames later wherever
+   motion matters. Open the image and look at every frame.
 3. Check each frame against the three lists above: the background moves between
    the pair, light reaches past the layers it crosses, everything touches what
    holds it, nothing stays past its beat or vanishes between two times, no
    transition midpoint is empty or a flat card, and each character matches its
    other views.
 4. Name each fault in visual terms, fix it and look again. Check fine detail
-   once more on the exported film.
+   with `--loupe`, then once more on the exported film.
+5. Save the film with `npm run film` and check it with
+   `npm --prefix "<library root>" run replay -- "./my-piece.mp4" --piece "./my-piece.cjs"`.
+   For a page that plays the piece without controls, open the built page
+   with `?player=1`; do not build a player of your own.
 
 ## Art-direction preset: focal composition
 

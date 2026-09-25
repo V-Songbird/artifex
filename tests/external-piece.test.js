@@ -184,6 +184,7 @@ test('external piece paths use the npm caller only for this library page/seeds s
   const env = { npm_lifecycle_event: 'page', npm_package_json: path.join(ROOT, 'package.json'), INIT_CWD: initial };
   assert.equal(callerDirectory(cwd, env), initial);
   assert.equal(callerDirectory(cwd, { ...env, npm_lifecycle_event: 'seeds' }), initial);
+  assert.equal(callerDirectory(cwd, { ...env, npm_lifecycle_event: 'film' }), initial);
   assert.equal(callerDirectory(cwd, { ...env, npm_lifecycle_event: 'test' }), cwd);
   assert.equal(callerDirectory(cwd, { INIT_CWD: initial }), cwd);
   assert.equal(callerDirectory(cwd, { ...env, npm_package_json: path.join(initial, 'package.json') }), cwd);
