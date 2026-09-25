@@ -158,8 +158,10 @@ function reflect(g, cs, absorb, tex, smooth = false, hole = -1, through = 0) {
         const u = fx | 0, v = fy | 0, du = fx - u, dv = fy - v, o = v * tw + u;
         const c00 = data[o], c10 = data[o + 1], c01 = data[o + tw], c11 = data[o + tw + 1];
         const w00 = (1 - du) * (1 - dv), w10 = du * (1 - dv), w01 = (1 - du) * dv, w11 = du * dv;
-        const ch = (sh) => (((c00 >>> sh) & 255) * w00 + ((c10 >>> sh) & 255) * w10 + ((c01 >>> sh) & 255) * w01 + ((c11 >>> sh) & 255) * w11) | 0;
-        col = 0xff000000 | (ch(16) << 16) | (ch(8) << 8) | ch(0);
+        const cb = (((c00 >>> 16) & 255) * w00 + ((c10 >>> 16) & 255) * w10 + ((c01 >>> 16) & 255) * w01 + ((c11 >>> 16) & 255) * w11) | 0;
+        const cg = (((c00 >>> 8) & 255) * w00 + ((c10 >>> 8) & 255) * w10 + ((c01 >>> 8) & 255) * w01 + ((c11 >>> 8) & 255) * w11) | 0;
+        const cr = ((c00 & 255) * w00 + (c10 & 255) * w10 + (c01 & 255) * w01 + (c11 & 255) * w11) | 0;
+        col = 0xff000000 | (cb << 16) | (cg << 8) | cr;
       } else {
         let u = (X * 0.5) | 0, v = (Y * 0.5) | 0;
         if (u < 0) u = 0; else if (u >= tw) u = tw - 1;
