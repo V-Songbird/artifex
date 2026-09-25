@@ -17,6 +17,7 @@
 //   npm run seeds -- drift 3 --param reach,turn  a three-by-three grid
 //   npm run seeds -- drift 9 0.5 --png            also a PNG of the sheet, from installed Edge
 //   npm run seeds -- refit 9 1 --box 405x720      at another box the piece declares
+//   npm run seeds -- --style impasto 9 0.5        a built-in style or a trusted pack, by name
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -26,6 +27,7 @@ const { bundle, checkParses } = require('./build-page.js');
 const EXAMPLES = require('../examples/index.js');
 const { validate, atBox } = require('../core/piece.js');
 const { isPiecePath, loadExternal } = require('./piece-input.js');
+const { load: loadStyle } = require('./styles.js');
 
 function planSheet(p, count, paramNames = []) {
   if (!Number.isSafeInteger(count) || count < (paramNames.length ? 2 : 1)) {
@@ -261,10 +263,15 @@ ${measureFrame.toString()}
 function parseArgs(args) {
   const positional = [];
   let paramNames = [];
-  let seenParam = false, png = false, box = null;
+  let seenParam = false, png = false, box = null, style = null;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--png') png = true;
+    else if (arg === '--style') {
+      if (style) throw new Error('seeds: use --style only once');
+      style = args[++i];
+      if (!style || style.startsWith('--')) throw new Error('seeds: --style needs a style name; npm run styles lists them');
+    }
     else if (arg === '--box') {
       if (box) throw new Error('seeds: use --box only once');
       const m = /^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)$/.exec(args[++i] || '');
@@ -283,18 +290,18 @@ function parseArgs(args) {
     } else if (arg.startsWith('--')) throw new Error(`seeds: unknown option ${arg}`);
     else positional.push(arg);
   }
-  if (positional.length > 3) throw new Error('usage: seeds [piece] [count] [playhead] [--param a[,b]] [--box WxH] [--png]');
-  const [which, n, t] = positional;
-  if (paramNames.length && !which) throw new Error('seeds: name one piece when using --param');
-  if (box && !which) throw new Error('seeds: name one piece when using --box');
-  const names = which ? [which] : Object.keys(EXAMPLES);
+  if (positional.length > (style ? 2 : 3)) throw new Error('usage: seeds [piece | --style <name>] [count] [playhead] [--param a[,b]] [--box WxH] [--png]');
+  const [which, n, t] = style ? [null, ...positional] : positional;
+  if (paramNames.length && !which && !style) throw new Error('seeds: name one piece when using --param');
+  if (box && !which && !style) throw new Error('seeds: name one piece when using --box');
+  const names = style ? [] : which ? [which] : Object.keys(EXAMPLES);
   const count = n === undefined ? (paramNames.length ? 3 : 9) : Number(n);
   if (!Number.isSafeInteger(count) || count < (paramNames.length ? 2 : 1)) {
     throw new Error(`seeds: count must be an integer >= ${paramNames.length ? 2 : 1}, got ${n}`);
   }
   const at = t === undefined ? 1 : Number(t);
   if (!Number.isFinite(at)) throw new Error(`seeds: playhead must be a number, got ${t}`);
-  return { names, count, at, paramNames, png, box };
+  return { names, count, at, paramNames, png, box, style };
 }
 
 /** The sheet's file, without extension: under out/, or beside an external piece. */
@@ -314,7 +321,8 @@ function sheetWidth(count, paramNames) {
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const { count, at, paramNames, box } = args;
-  const external = args.names.length === 1 && isPiecePath(args.names[0]) ? loadExternal(args.names[0]) : null;
+  const external = args.style ? loadStyle(args.style)
+    : args.names.length === 1 && isPiecePath(args.names[0]) ? loadExternal(args.names[0]) : null;
   const names = external ? external.names : args.names;
   const html = page(names, count, at, paramNames, external, box);
   checkParses(html);
@@ -336,7 +344,7 @@ function main() {
 }
 
 if (require.main === module) {
-  Promise.resolve(main()).catch((error) => { console.error(error.message); process.exitCode = 1; });
+  Promise.resolve().then(main).catch((error) => { console.error(error.message); process.exitCode = 1; });
 }
 
 module.exports = { page, parseArgs, planSheet, pixelBounds, measureFrame, sheetPlans, sheetStem, sheetWidth };

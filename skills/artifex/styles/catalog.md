@@ -1,7 +1,7 @@
 ---
 type: knowledge
 summary: "Lists the named styles Artifex can draw, with each style's look, technique, guide and runnable reference; read when someone asks which styles exist or names one."
-related_files: ["skills/artifex/styles/gallery.cjs", "skills/artifex/styles/kit.js", "skills/artifex/styles/subject.js", "skills/artifex/SKILL.md"]
+related_files: ["skills/artifex/styles/gallery.cjs", "skills/artifex/styles/kit.js", "skills/artifex/styles/subject.js", "skills/artifex/SKILL.md", "tools/styles.js"]
 ---
 
 # Style catalog
@@ -29,7 +29,20 @@ subject, a small songbird, in that style.
 | <img src="images/star-atlas.png" width="120" alt="Star chart with the bird as a constellation"> | 13 | Star atlas | a printed celestial chart | projected grid, stars by magnitude, constellation, legend | [star-atlas.md](star-atlas.md) |
 | <img src="images/light-painting.png" width="120" alt="Bird traced in glowing light trails at night with sparks and an orb"> | 14 | Light painting | a long exposure of lights moved at night | additive trails with white cores, sparks, rippled reflection | [light-painting.md](light-painting.md) |
 
+## Installed style packs
+
+Style packs add styles beyond this table, installed in `~/.artifex/styles/`
+(or under `ARTIFEX_HOME`). `npm run styles` lists every style by name, built in
+and installed, with each pack's version and whether it is trusted; see
+[style packs](../../../docs/apis/style-packs.md). A pack's guide and piece take
+the place of the guide and module here.
+
 ## See them
+
+`npm run page -- --style impasto` writes `out/style-impasto-page.html`, and
+`npm run seeds -- --style impasto 9 0.5` writes `out/style-impasto-seeds.html`,
+for any name `npm run styles` lists. An installed pack draws only once it is
+trusted.
 
 From the library root, this writes `skills/artifex/styles/gallery-param-style.html`,
 one cell per style:

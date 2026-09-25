@@ -201,29 +201,41 @@ function trust(name, env = process.env, log = console.log) {
 }
 
 /**
- * A built-in style's module must load as a piece of its name. A pack must
- * match its hashes, be trusted as it is, be proved on this version, and load
- * confined to its listed files. The sample is not replayed.
+ * The piece a style names, loaded as `page` and `seeds` load an external
+ * piece, with `style` and an output stem `style-<name>` under the library's
+ * out/. A pack must match its hashes and be trusted as it is before any of its
+ * code runs, and then loads confined to its listed files; `unproved` hears
+ * when its sample was proved on another version.
  */
-function check(name, env = process.env, log = console.log) {
+function load(name, env = process.env, unproved = console.warn) {
   const style = resolve(name, env);
-  if (style.source === 'builtin') {
-    const { piece } = loadExternal(style.piece, STYLES);
-    if (piece.name !== style.name) throw new Error('style: ' + style.piece + ' is named ' + piece.name + ', not ' + style.name);
-    if (!fs.existsSync(style.guide)) throw new Error('style: ' + style.name + ' has no guide at ' + style.guide);
-    log('check ' + style.name + ': built in; its module loads as the piece ' + piece.name + ' and its guide is present');
-    return;
-  }
+  const named = { style, stem: 'style-' + style.name, directory: path.resolve(__dirname, '..', 'out') };
+  if (style.source === 'builtin') return { ...loadExternal(style.piece, STYLES), ...named };
   verify(style);
   if (!style.trusted) {
     const before = readTrust(env).packs[style.name];
     throw new Error('style: ' + style.name + (before ? ' changed since it was trusted as version ' + before.version : ' is not trusted')
       + '. Read its files, then run: ' + trustCommand(style.name));
   }
-  if (!style.proved) throw new Error('style: ' + style.name + ' is not proved on this version: its sample was proved with Artifex ' + style.artifex + ', this is ' + VERSION);
+  if (!style.proved) unproved('style: ' + style.name + ' is not proved on this version: its sample was proved with Artifex ' + style.artifex + ', this is ' + VERSION);
   const files = Object.keys(style.manifest.files);
-  loadExternal(style.piece, style.folder, { confine: { root: style.folder, files } });
-  log('check ' + style.name + ': ' + files.length + ' files match style.json, trusted, proved with ' + style.artifex
+  return { ...loadExternal(style.piece, style.folder, { confine: { root: style.folder, files } }), ...named };
+}
+
+/**
+ * A built-in style's module must load as a piece of its name. A pack must
+ * load as `load` loads it and be proved on this version. The sample is not
+ * replayed.
+ */
+function check(name, env = process.env, log = console.log) {
+  const { style, piece } = load(name, env, (message) => { throw new Error(message); });
+  if (style.source === 'builtin') {
+    if (piece.name !== style.name) throw new Error('style: ' + style.piece + ' is named ' + piece.name + ', not ' + style.name);
+    if (!fs.existsSync(style.guide)) throw new Error('style: ' + style.name + ' has no guide at ' + style.guide);
+    log('check ' + style.name + ': built in; its module loads as the piece ' + piece.name + ' and its guide is present');
+    return;
+  }
+  log('check ' + style.name + ': ' + Object.keys(style.manifest.files).length + ' files match style.json, trusted, proved with ' + style.artifex
     + ', and its piece loads within its own files; the sample was not replayed');
 }
 
@@ -257,4 +269,4 @@ if (require.main === module) {
   try { main(); } catch (error) { console.error(error.message); process.exitCode = 1; }
 }
 
-module.exports = { home, builtins, pathProblem, validateManifest, scan, resolve, verify, trust, check, list, main, STYLES };
+module.exports = { home, builtins, pathProblem, validateManifest, scan, resolve, verify, trust, load, check, list, main, STYLES };

@@ -1709,8 +1709,10 @@ function checkParses(page) {
 
 function main() {
   const args = process.argv.slice(2);
-  if (args.length > 1 || (args[0] && args[0].startsWith('--'))) throw new Error('usage: page [path/to/piece.cjs]');
-  const external = args.length ? loadExternal(args[0]) : null;
+  const style = args[0] === '--style' && args.length === 2;
+  if (!style && (args.length > 1 || (args[0] && args[0].startsWith('--')))) throw new Error('usage: page [path/to/piece.cjs | --style <name>]');
+  // Required when used: tools/styles.js requires tools/replay.js, which requires this module.
+  const external = style ? require('./styles.js').load(args[1]) : args.length ? loadExternal(args[0]) : null;
   const page = html(bundle(external), external ? { count: 1 } : {});
   checkParses(page);
   const out = external ? external.directory : path.join(ROOT, 'out');
@@ -1719,10 +1721,6 @@ function main() {
   fs.writeFileSync(file, page);
   console.log(`${external ? file : path.relative(ROOT, file)}  ${(Buffer.byteLength(page) / 1024).toFixed(1)} kB  ${MODULES.length + (external ? external.moduleCount : 0)} modules, no dependencies`);
 }
-
-// Requirable, so the resolution check can be tested. Without this the only
-// check the delivery tool has would itself be unchecked.
-if (require.main === module) main();
 
 /**
  * The module runtime plus the library modules `ids`, every one by default, for
@@ -1735,3 +1733,11 @@ function bundle(external = null, ids = MODULES) {
 }
 
 module.exports = { modules, checkResolvable, reach, checkParses, bundle, html, ebmlHead, ebmlResize, webmBlockTimes, webmWithDuration, webmWithManifest, webmManifest, pngWithManifest, pngManifest, filmNote, filmVerdict, MODULES };
+
+// Requirable, so the resolution check can be tested. Without this the only
+// check the delivery tool has would itself be unchecked. It runs after the
+// exports are set, since --style reaches this module back through
+// tools/styles.js and tools/replay.js.
+if (require.main === module) {
+  try { main(); } catch (error) { console.error(error.message); process.exitCode = 1; }
+}

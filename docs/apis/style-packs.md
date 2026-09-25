@@ -1,7 +1,7 @@
 ---
 type: api_spec
-summary: "Defines style packs: the folder and style.json format, where packs are installed, how a style name resolves, and the npm run styles list, trust and check commands; read before installing, sharing or checking a style pack."
-related_files: ["tools/styles.js", "skills/artifex/styles/builtin.json", "skills/artifex/styles/catalog.md", "tools/piece-input.js", "tests/styles.test.js", "docs/security.md"]
+summary: "Defines style packs: the folder and style.json format, where packs are installed, how a style name resolves, the npm run styles list, trust and check commands, and drawing a style by name with --style; read before installing, sharing or checking a style pack."
+related_files: ["tools/styles.js", "skills/artifex/styles/builtin.json", "skills/artifex/styles/catalog.md", "tools/piece-input.js", "tools/build-page.js", "tools/contact-sheet.js", "tests/styles.test.js", "docs/security.md"]
 ---
 
 # Style packs
@@ -124,6 +124,12 @@ On an installed pack, it runs these steps in order and stops at the first failur
 
 Only step 4 runs pack code. `check` does not replay the sample; to do that, run `npm run replay -- <pack>/sample.svg --piece <pack>/piece.cjs` (see [replaying a saved file](../knowledge/development.md#replaying-a-saved-file)).
 
+## Draw a style by name
+
+`npm run page -- --style <name>` and `npm run seeds -- --style <name> [count] [playhead]` draw the style's piece: a built-in style's module, or a pack's piece. `seeds` takes `--param`, `--box` and `--png` as it does for any piece. They write `out/style-<name>-page.html` and `out/style-<name>-seeds.html` (or `-param-<names>`) in the library, never in the pack folder, which must stay as it was hashed.
+
+A pack goes through steps 1, 2 and 4 of `check` first, so an untrusted or changed pack is refused with the command that trusts it, and nothing is written. A pack proved with another Artifex version still draws, after a warning on standard error that its sample is not proved on this version. An unknown name fails with every available name, as above.
+
 ## Checks
 
-`node --test tests/styles.test.js` checks `builtin.json` against the gallery and the modules, each `style.json` rule, the scan and its broken and refused folders, the unknown-name error, trust records, every refusal of `check` and `trust`, links, and the command line, all under a temporary `ARTIFEX_HOME`.
+`node --test tests/styles.test.js` checks `builtin.json` against the gallery and the modules, each `style.json` rule, the scan and its broken and refused folders, the unknown-name error, trust records, every refusal of `check` and `trust`, links, the command line, and `--style` in `page` and `seeds`: loading, refusals, the version warning and output names, all under a temporary `ARTIFEX_HOME`.
