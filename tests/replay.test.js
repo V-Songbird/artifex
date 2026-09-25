@@ -21,7 +21,7 @@ const { callerDirectory, loadExternal } = require('../tools/piece-input.js');
 const { pngWithManifest, webmWithDuration, webmWithManifest } = require('../tools/build-page.js');
 const {
   fileType, manifestOf, pieceFor, filmPlan, filmFrames, replayVerdict, replay, parseArgs, main, FILM_FLOOR_DB,
-  soundPlan, compareSound, soundVerdict, SOUND_BLOCK, SOUND_FLOOR_DB, SOUND_GATE_DB, SOUND_BAND, SOUND_FLATNESS, SOUND_NOISE_DB,
+  soundPlan, compareSound, soundVerdict, SOUND_BLOCK, SOUND_FLOOR_DB, SOUND_GATE_DB, SOUND_BAND, SOUND_FLATNESS, SOUND_NOISE_DB, SOUND_CUT,
   pngPlan, pngVerdict, webmPlan, PNG_FLOOR_DB, compareFilm, comparePng, compareWebm, sendBytes, PIECE_BYTES,
 } = require('../tools/replay.js');
 const { fakeAudio, fakeCodecs, fakeCanvas, EDGE_AVCC } = require('./fake-media.js');
@@ -234,9 +234,10 @@ const tone = (n, level = 0.2) => signal(n, (i, c) => level * Math.sin((2 * Math.
 /**
  * compareSound as the page runs it, from its source text alone, with the page's
  * loudness meter and gain: the piece renders `rendered` and the film decodes
- * to `decoded`, or fails to decode, from a soundtrack in `codec`.
+ * to `decoded`, or fails to decode, from a soundtrack in `codec`, its cut
+ * measured by `cut`.
  */
-async function soundInPage({ rendered, decoded }, codec = 'mp4a') {
+async function soundInPage({ rendered, decoded }, codec = 'mp4a', cut = SOUND_CUT) {
   const vm = require('node:vm');
   const p = validate({ name: 'tone', size: { w: 8, h: 8 }, time: { duration: 1, hz: 10 }, sound() {}, draw() {} });
   class OfflineAudioContext {
@@ -246,7 +247,7 @@ async function soundInPage({ rendered, decoded }, codec = 'mp4a') {
   }
   const window = { __artifex: { piece: require('../core/piece.js'), render: require('../core/render.js'), examples: { tone: p }, loudness: measureLoudness, loudnessGain } };
   const recipe = { ...solve(p, p.seed).manifest, film: { frames: 10, hz: 10, loop: false, scale: 1 } };
-  const run = `(${compareSound})(new Uint8Array(${JSON.stringify([...Buffer.from('film')])}), ${JSON.stringify(recipe)}, ${SOUND_BLOCK}, ${JSON.stringify(codec)}, ${SOUND_BAND}, ${SOUND_FLATNESS})`;
+  const run = `(${compareSound})(new Uint8Array(${JSON.stringify([...Buffer.from('film')])}), ${JSON.stringify(recipe)}, ${SOUND_BLOCK}, ${JSON.stringify(codec)}, ${SOUND_BAND}, ${SOUND_FLATNESS}, ${JSON.stringify(cut)})`;
   return vm.runInNewContext(run, { window, OfflineAudioContext, atob });
 }
 
@@ -269,7 +270,11 @@ test('a film soundtrack matches only where it decodes to its recipe, levelled as
   const rendered = tone(48000);
   const scale = 10 ** (loudnessGain(measureLoudness(audio(rendered)), 'mp4a') / 20);
   const heard = rendered.map((x) => x.map((v) => v * scale));
-  const same = await comparedInPage({ rendered, decoded: heard });
+  const measured = await soundInPage({ rendered, decoded: heard });
+  // Energies come from the spectrum, and add up to the levelled render's.
+  const energy = heard.reduce((e, x) => x.reduce((a, v) => a + v * v, e), 0), summed = measured.blocks.reduce((e, b) => e + b[0], 0);
+  assert.ok(Math.abs(summed / energy - 1) < 1e-3, `${summed} of ${energy}`);
+  const same = soundVerdict(measured, 'mp4a');
   assert.equal(same.match, true, same.detail);
   assert.match(same.detail, /^the AAC soundtrack decodes to its recipe's 48000 samples, every block within 25 dB of the render/);
   assert.equal((await comparedInPage({ rendered, decoded: rendered })).match, false, 'a soundtrack the export never levelled differs');
@@ -303,14 +308,17 @@ function bandPass(x, hz, q) {
 
 /**
  * One second of a tone under two noise voices, `low` band-passed at 2 kHz and
- * `high` at 8 kHz, each { seed, hz, level }, or null for a missing voice; each
- * channel draws its own noise. `filmOfNoise` is that soundtrack as the export
- * levels it and a perceptual codec keeps it: each voice's waveform only 10 dB
- * under it, as another noise in the same band adds, and its level nearly whole.
+ * `high` at 8 kHz, and a `hat` band-passed broadly at 12 kHz, reaching past
+ * 20 kHz, each { seed, hz, level }, or null for a missing voice; the hat is
+ * missing unless given. Each channel draws its own noise. `filmOfNoise` is that
+ * soundtrack as the export levels it and a perceptual codec keeps it: each
+ * voice's waveform only 10 dB under it, as another noise in the same band adds,
+ * and its level nearly whole; then, given `cut` in Hz, low-passed there.
  */
-function noiseSoundtrack({ toneHz = 440, low = {}, high = {} } = {}) {
-  const voices = [low && { seed: 1, hz: 2000, level: 1, ...low }, high && { seed: 3, hz: 8000, level: 1, ...high }].filter(Boolean);
-  const voice = (v, c, seed = v.seed) => bandPass(whiteNoise(48000, seed * 2 + c), v.hz, 1.5).map((x) => v.level * x);
+function noiseSoundtrack({ toneHz = 440, low = {}, high = {}, hat = null } = {}) {
+  const voices = [low && { seed: 1, hz: 2000, level: 1, q: 1.5, ...low }, high && { seed: 3, hz: 8000, level: 1, q: 1.5, ...high },
+    hat && { seed: 5, hz: 12000, level: 0.3, q: 0.5, ...hat }].filter(Boolean);
+  const voice = (v, c, seed = v.seed) => bandPass(whiteNoise(48000, seed * 2 + c), v.hz, v.q).map((x) => v.level * x);
   const sound = (coded) => [0, 1].map((c) => {
     const noise = voices.map((v) => voice(v, c));
     const error = coded ? voices.map((v) => voice(v, c, v.seed + 50).map((x) => x * 10 ** (-10 / 20))) : [];
@@ -320,10 +328,20 @@ function noiseSoundtrack({ toneHz = 440, low = {}, high = {} } = {}) {
   return { sound: sound(false), coded: sound(true) };
 }
 
-function filmOfNoise(options) {
+function filmOfNoise({ cut, ...options } = {}) {
   const { sound, coded } = noiseSoundtrack(options);
   const scale = 10 ** (loudnessGain(measureLoudness(audio(sound)), 'mp4a') / 20);
-  return coded.map((x) => x.map((v) => v * scale));
+  return coded.map((x) => (cut ? lowPass(x, cut) : x).map((v) => v * scale));
+}
+
+/** `x` through a linear-phase low-pass at `hz`: a 511-tap Blackman-windowed sinc, as steep as a codec's cut. */
+function lowPass(x, hz) {
+  const M = 255, w = (2 * hz) / 48000;
+  const h = Array.from({ length: 2 * M + 1 }, (_, j) => {
+    const t = j - M, blackman = 0.42 - 0.5 * Math.cos((Math.PI * j) / M) + 0.08 * Math.cos((2 * Math.PI * j) / M);
+    return (t ? Math.sin(Math.PI * w * t) / (Math.PI * t) : w) * blackman;
+  });
+  return x.map((_, i) => { let y = 0; for (let j = 0; j <= 2 * M; j++) { const k = i + j - M; if (k >= 0 && k < x.length) y += h[j] * x[k]; } return y; });
 }
 
 test('a noise voice replays by what a perceptual codec keeps of it, and a different one still differs', async () => {
@@ -354,6 +372,58 @@ test('a noise voice replays by what a perceptual codec keeps of it, and a differ
       assert.match(heard.detail, /^the soundtrack differs from its recipe at \d+\.\d{3} s: /);
     }
   }
+});
+
+test('a soundtrack is judged below the band its codec kept, measured from the film, and a different one still differs', async () => {
+  assert.deepEqual(SOUND_CUT, { kept: 2, lost: 10, quiet: 60, above: 12000 });
+  // A hi-hat reaching past 20 kHz, and a film whose codec cut it at 18.6 kHz.
+  const rendered = noiseSoundtrack({ hat: {} }).sound;
+  const own = await soundInPage({ rendered, decoded: filmOfNoise({ hat: {}, cut: 18600 }) });
+  assert.equal(own.cut, 18000, 'judged up to the band edge under the cut');
+  for (const codec of ['mp4a', 'Opus']) {
+    const heard = soundVerdict(own, codec);
+    assert.equal(heard.match, true, heard.detail);
+    assert.match(heard.detail, /decodes to its recipe's 48000 samples and, below 18\.00 kHz, where its codec kept the render, every block within /);
+  }
+  // Judged over the whole band, the same film differs: the cut is the cause.
+  const whole = soundVerdict(await soundInPage({ rendered, decoded: filmOfNoise({ hat: {}, cut: 18600 }) }, 'mp4a', { ...SOUND_CUT, above: 24000 }), 'mp4a');
+  assert.equal(whole.match, false, whole.detail);
+  assert.equal((await soundInPage({ rendered, decoded: filmOfNoise({ hat: {} }) })).cut, null, 'a film that kept every band has no cut');
+
+  // A cut under SOUND_CUT.above, one with no kept band under it, or one that
+  // falls over more than a band, is no codec's.
+  const gentle = (x) => {
+    const w = (2 * Math.PI * 16000) / 48000, alpha = Math.sin(w) / Math.SQRT2, a0 = 1 + alpha, b = (1 - Math.cos(w)) / 2;
+    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    return x.map((v) => { const y = (b * v + 2 * b * x1 + b * x2 + 2 * Math.cos(w) * y1 - (1 - alpha) * y2) / a0; [x2, x1, y2, y1] = [x1, v, y1, y]; return y; });
+  };
+  for (const [what, film] of [['a cut at 9 kHz', filmOfNoise({ hat: {}, cut: 9000 })], ['a missing hat', filmOfNoise({ hat: { level: 0 }, cut: 18600 })],
+    ['a gentle low-pass at 16 kHz', filmOfNoise({ hat: {} }).map(gentle)]]) {
+    const s = await soundInPage({ rendered, decoded: film });
+    assert.equal(s.cut, null, what);
+    assert.equal(soundVerdict(s, 'mp4a').match, false, what);
+  }
+
+  // 159's refusals under a cut, then the hat's own, where it leads the noise.
+  const loud = noiseSoundtrack({ hat: { level: 1 } }).sound;
+  for (const [what, options, recipe = rendered] of [['a tone moved from 440 to 466 Hz', { toneHz: 466 }], ['another noise', { low: { seed: 7 } }], ['a missing voice', { low: null }],
+    ['a voice in another band', { high: { hz: 5000 } }], ['a voice 6 dB louder', { high: { level: 2 } }], ['a voice 6 dB quieter', { high: { level: 0.5 } }],
+    ['another hat', { hat: { seed: 9, level: 1 } }, loud], ['a hat 6 dB louder', { hat: { level: 2 } }, loud], ['a hat 6 dB quieter', { hat: { level: 0.5 } }, loud]]) {
+    for (const codec of ['mp4a', 'Opus']) {
+      const s = await soundInPage({ rendered: recipe, decoded: filmOfNoise({ hat: {}, ...options, cut: 18600 }) }, codec);
+      assert.equal(s.cut, 18000, `${what}, ${codec}: judged under the cut`);
+      const heard = soundVerdict(s, codec);
+      assert.equal(heard.match, false, `${what}, ${codec}: ${heard.detail}`);
+      assert.match(heard.detail, /^the soundtrack differs from its recipe at \d+\.\d{3} s: /);
+    }
+  }
+});
+
+test('a soundtrack is judged without its mean, which Opus removes', async () => {
+  const rendered = tone(48000).map((x) => x.map((v, i) => (i < 24000 ? v + 0.05 : v)));
+  const scale = 10 ** (loudnessGain(measureLoudness(audio(rendered)), 'Opus') / 20);
+  const heard = soundVerdict(await soundInPage({ rendered, decoded: tone(48000).map((x) => x.map((v) => v * scale)) }, 'Opus'), 'Opus');
+  assert.equal(heard.match, true, heard.detail);
 });
 
 test('a block under its floor matches only where the rest keeps it and its noise-like bands keep their waveform and levels', () => {
