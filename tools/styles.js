@@ -196,13 +196,19 @@ function trust(name, env = process.env, log = console.log) {
       log('    requires: ' + (specs.length ? specs.join(', ') : 'nothing'));
     }
   }
+  setTrust(style.name, { version: m.version, sha256: style.hash }, env);
+  log('Trusted ' + style.name + ' ' + m.version + ' (style.json sha256 ' + style.hash + ') in ' + trustFile(env) + '.');
+}
+
+/** Record `entry` as the trust of pack `name`, or remove its trust when `entry` is undefined. */
+function setTrust(name, entry, env) {
   const record = readTrust(env);
-  record.packs[style.name] = { version: m.version, sha256: style.hash };
+  if (entry) record.packs[name] = entry;
+  else delete record.packs[name];
   fs.mkdirSync(home(env), { recursive: true });
   const temporary = trustFile(env) + '.' + process.pid + '.tmp';
   fs.writeFileSync(temporary, JSON.stringify(record, null, 2) + '\n');
   fs.renameSync(temporary, trustFile(env));
-  log('Trusted ' + style.name + ' ' + m.version + ' (style.json sha256 ' + style.hash + ') in ' + trustFile(env) + '.');
 }
 
 /**
@@ -438,14 +444,33 @@ async function pack(options, env = process.env, log = console.log, browser = {})
     fs.writeFileSync(path.join(stage, 'style.json'), JSON.stringify(m, null, 2) + '\n');
     const proof = await prove(stage, m, browser);
     if (!proof.match) throw new Error('pack: ' + name + ': ' + sample.file + ' does not replay from a clean copy of the pack, so nothing was installed: ' + proof.detail);
-    if (existing) fs.rmSync(dest, { recursive: true });
+    // The pack being replaced waits beside the build folder, where the scan
+    // never looks, until the new one is installed and trusted, and goes back
+    // with its trust if either step fails.
+    const old = existing && path.join(home(env), '.old-' + path.basename(stage).slice('.pack-'.length));
+    const trusted = readTrust(env).packs[name];
     fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.renameSync(stage, dest);
-    log('pack ' + name + ': ' + Object.keys(files).length + ' files in ' + dest + '; ' + sample.file + ' replays from a clean copy: ' + proof.detail);
+    if (old) fs.renameSync(dest, old);
+    try {
+      fs.renameSync(stage, dest);
+      log('pack ' + name + ': ' + Object.keys(files).length + ' files in ' + dest + '; ' + sample.file + ' replays from a clean copy: ' + proof.detail);
+      trust(name, env, log);
+    } catch (error) {
+      try {
+        fs.rmSync(dest, { recursive: true, force: true });
+        if (old) fs.renameSync(old, dest);
+        if (JSON.stringify(readTrust(env).packs[name]) !== JSON.stringify(trusted)) setTrust(name, trusted, env);
+      } catch (restore) {
+        throw new Error('pack: ' + name + ' was not installed (' + error.message + '), and restoring '
+          + (old ? 'the pack it replaces failed: ' + restore.message + '; that pack is kept in ' + old : 'the install folder failed: ' + restore.message), { cause: error });
+      }
+      throw error;
+    }
+    try { if (old) fs.rmSync(old, { recursive: true, force: true }); }
+    catch (error) { log('pack ' + name + ': installed, but the pack it replaced could not be removed from ' + old + ': ' + error.message); }
   } finally {
     fs.rmSync(stage, { recursive: true, force: true });
   }
-  trust(name, env, log);
 }
 
 function list(env = process.env, json = false, log = console.log) {
