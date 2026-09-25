@@ -7,7 +7,7 @@ const { createHash } = require('node:crypto');
 const os = require('node:os');
 const path = require('node:path');
 const {
-  page, parseArgs, planSheet, pixelBounds, measureFrame, sheetPlans, sheetStem, sheetWidth,
+  page, parseArgs, planSheet, planStrip, pixelBounds, measureFrame, sheetPlans, sheetStem, sheetWidth,
 } = require('../tools/contact-sheet.js');
 const { validate, solve } = require('../core/piece.js');
 const EXAMPLES = require('../examples/index.js');
@@ -179,4 +179,56 @@ test('contact sheet: --style draws a style by name and names the sheet after it 
   const html = page(style.names, 2, 1, [], style);
   assert.match(html, /var NAMES = \["impasto"\];/);
   assert.doesNotThrow(() => new vm.Script([...html.matchAll(/<script>([\s\S]*?)<\/script>/g)][0][1]));
+});
+
+test('contact sheet: --frames spreads a time strip from the first frame to the last at the piece seed, 640 px wide', () => {
+  const args = parseArgs(['readout', '--frames', '9', '--png']);
+  assert.deepEqual(args.strip, { frames: 9, at: null, scale: null, loupe: null });
+  assert.deepEqual([args.names, args.count, args.png], [['readout'], 9, true]);
+  const p = validate(EXAMPLES.readout);
+  const strip = planStrip(p, args.strip);
+  assert.deepEqual(strip.cells.map((cell) => cell.frame), [0, 21, 42, 63, 84, 104, 125, 146, 167]);
+  assert.ok(strip.cells.every((cell) => cell.seed === p.seed && cell.t === cell.frame / 167 && cell.seconds === cell.frame / 24));
+  assert.deepEqual([strip.frames, strip.hz, strip.width, strip.height, strip.columns, strip.loupe], [168, 24, 640, 427, 3, null]);
+  assert.equal(planStrip(p, { frames: 3, scale: 0.25 }).width, 240, '--scale replaces the 640 px default');
+  assert.equal(planStrip(p, { frames: 9, scale: 2 }).columns, 1, 'a wide cell takes a row of its own');
+  assert.equal(sheetWidth(9, [], strip), 48 + 3 * 642 + 2 * 14, 'the image holds every column at one pixel per canvas pixel');
+  assert.equal(sheetStem(['readout'], [], null, null, args.strip), path.join(__dirname, '..', 'out', 'readout-frames'));
+  assert.deepEqual(sheetPlans(['readout'], 9, [], null, null, args.strip), [strip.cells]);
+  assert.throws(() => planStrip(p, { frames: 169 }), /--frames 169 asks for more than readout's 168 frames/);
+  assert.throws(() => planStrip(validate(EXAMPLES.specimen), { frames: 3 }), /specimen is a still/);
+});
+
+test('contact sheet: --at shows the frame each second falls in and refuses a second outside the film', () => {
+  const p = validate(EXAMPLES.readout);
+  assert.deepEqual(parseArgs(['readout', '--at', '0,0.5,6.99']).strip.at, [0, 0.5, 6.99]);
+  assert.deepEqual(planStrip(p, { at: [0, 0.5, 1.99, 6.99] }).cells.map((cell) => cell.frame), [0, 12, 47, 167]);
+  assert.deepEqual(planStrip({ ...validate(EXAMPLES.readout), time: { ...p.time, hz: 100 } }, { at: [0.29] }).cells.map((cell) => cell.frame), [29],
+    'a second a hair under a whole frame in floating point stays in that frame');
+  for (const at of [[7], [-0.01]]) assert.throws(() => planStrip(p, { at }), /is outside readout's 7 s/, String(at));
+});
+
+test('contact sheet: --loupe crops a cell of the film at 100% of its default export scale', () => {
+  const p = validate(EXAMPLES.readout);
+  assert.equal(parseArgs(['readout', '--frames', '3', '--loupe']).strip.loupe, true);
+  assert.deepEqual(parseArgs(['readout', '--frames', '3', '--loupe', '100,50.5']).strip.loupe, { x: 100, y: 50.5 });
+  assert.deepEqual(planStrip(p, { frames: 3, loupe: true }).loupe, { x: 480, y: 320, scale: 2, W: 1920, H: 1280, w: 640, h: 427, sx: 640, sy: 427 });
+  assert.deepEqual(planStrip(p, { frames: 3, loupe: { x: 960, y: 640 } }).loupe, { x: 960, y: 640, scale: 2, W: 1920, H: 1280, w: 640, h: 427, sx: 1280, sy: 853 },
+    'a crop at the edge stays inside the frame');
+  assert.throws(() => planStrip(p, { frames: 3, loupe: { x: 961, y: 0 } }), /--loupe 961,0 is outside readout's 960 x 640 box/);
+  const html = page(['readout'], 3, 1, [], null, null, { frames: 3, loupe: true });
+  assert.match(html, /var STRIP = \{"frames":168,"hz":24,"scale":0\.6666666666666666,"width":640,"height":427,"columns":3,"loupe":\{/);
+  assert.match(html, /result\.drawMs = /);
+  assert.doesNotThrow(() => new vm.Script([...html.matchAll(/<script>([\s\S]*?)<\/script>/g)][0][1]));
+});
+
+test('contact sheet: a time strip takes one piece and --frames or --at, and --scale and --loupe need one', () => {
+  for (const args of [
+    ['readout', '--frames', '1'], ['readout', '--frames', '2.5'], ['readout', '--frames', '3', '--frames', '4'],
+    ['readout', '--frames', '9', '--at', '1'], ['--frames', '9'], ['readout', '9', '--frames', '3'],
+    ['readout', '--frames', '3', '--param', 'lead'], ['readout', '--at', '1,,2'], ['readout', '--at'],
+    ['readout', '--scale', '2'], ['readout', '--loupe'], ['readout', '--frames', '3', '--scale', '0'],
+  ]) assert.throws(() => parseArgs(args), /seeds/, args.join(' '));
+  assert.equal(parseArgs(['--style', 'impasto', '--frames', '3']).strip.frames, 3);
+  assert.equal(parseArgs(['drift', '9']).strip, undefined, 'a seed sheet is unchanged');
 });

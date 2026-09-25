@@ -13,6 +13,7 @@
     "browser": "node tools/check-browser.js",
     "seeds": "node tools/contact-sheet.js",
     "replay": "node tools/replay.js",
+    "film": "node tools/film-cli.js",
     "styles": "node tools/styles.js",
     "examples": "node tools/render-examples.js",
     "bench": "node tools/bench.js",
