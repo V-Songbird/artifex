@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const { createHash } = require('node:crypto');
+const os = require('node:os');
 const path = require('node:path');
 const {
   page, parseArgs, planSheet, pixelBounds, measureFrame, sheetPlans, sheetStem, sheetWidth,
@@ -11,12 +12,13 @@ const {
 const { validate, solve } = require('../core/piece.js');
 const EXAMPLES = require('../examples/index.js');
 const { nullSurface } = require('../tools/bench.js');
+const { load: loadStyle } = require('../tools/styles.js');
 const { fakeCanvas } = require('./fake-media.js');
 const stateDigest = (state) => createHash('sha256').update(JSON.stringify(state)).digest('hex');
 
 test('contact sheet: seed-only arguments and seeds retain their existing meaning', () => {
   assert.deepEqual(parseArgs(['drift', '16', '0.5']), {
-    names: ['drift'], count: 16, at: 0.5, paramNames: [], png: false, box: null,
+    names: ['drift'], count: 16, at: 0.5, paramNames: [], png: false, box: null, style: null,
   });
   assert.equal(parseArgs([]).count, 9);
   assert.equal(parseArgs([]).names.length, Object.keys(EXAMPLES).length);
@@ -27,10 +29,10 @@ test('contact sheet: seed-only arguments and seeds retain their existing meaning
 
 test('contact sheet: parameter arguments support strips and grids without consuming positional inputs', () => {
   assert.deepEqual(parseArgs(['drift', '--param', 'reach,turn']), {
-    names: ['drift'], count: 3, at: 1, paramNames: ['reach', 'turn'], png: false, box: null,
+    names: ['drift'], count: 3, at: 1, paramNames: ['reach', 'turn'], png: false, box: null, style: null,
   });
   assert.deepEqual(parseArgs(['--param=reach', 'drift', '5', '0.5']), {
-    names: ['drift'], count: 5, at: 0.5, paramNames: ['reach'], png: false, box: null,
+    names: ['drift'], count: 5, at: 0.5, paramNames: ['reach'], png: false, box: null, style: null,
   });
   for (const args of [
     ['--param', 'reach'], ['drift', '--param'], ['drift', '--param='],
@@ -158,5 +160,23 @@ test('contact sheet: --box draws one piece at a box it declares, names the sheet
   assert.throws(() => sheetPlans(['drift'], 3, [], null, { w: 405, h: 720 }), /drift declares no boxes/);
   const html = page(['refit'], 2, 1, [], null, { w: 405, h: 720 });
   assert.match(html, /var BOX = \{"w":405,"h":720\};/);
+  assert.doesNotThrow(() => new vm.Script([...html.matchAll(/<script>([\s\S]*?)<\/script>/g)][0][1]));
+});
+
+test('contact sheet: --style draws a style by name and names the sheet after it under out/', () => {
+  assert.deepEqual(parseArgs(['--style', 'impasto', '9', '0.5']), {
+    names: [], count: 9, at: 0.5, paramNames: [], png: false, box: null, style: 'impasto',
+  });
+  assert.equal(parseArgs(['--png', '--style', 'impasto']).count, 9);
+  assert.deepEqual(parseArgs(['--style', 'impasto', '--param', 'grain']).paramNames, ['grain']);
+  for (const args of [['--style'], ['--style', '--png'], ['--style', 'a', '--style', 'b'], ['--style', 'impasto', '9', '0.5', 'extra']]) {
+    assert.throws(() => parseArgs(args), /seeds/, args.join(' '));
+  }
+  const style = loadStyle('impasto', { ARTIFEX_HOME: path.join(os.tmpdir(), 'artifex-styles-absent') });
+  const out = path.join(__dirname, '..', 'out');
+  assert.equal(sheetStem(style.names, [], style), path.join(out, 'style-impasto-seeds'));
+  assert.equal(sheetStem(style.names, ['grain'], style), path.join(out, 'style-impasto-param-grain'));
+  const html = page(style.names, 2, 1, [], style);
+  assert.match(html, /var NAMES = \["impasto"\];/);
   assert.doesNotThrow(() => new vm.Script([...html.matchAll(/<script>([\s\S]*?)<\/script>/g)][0][1]));
 });

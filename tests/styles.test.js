@@ -15,6 +15,7 @@ const { VERSION, validate } = require('../core/piece.js');
 const { renderVector } = require('../core/render.js');
 const { imports, loadExternal } = require('../tools/piece-input.js');
 const styles = require('../tools/styles.js');
+const { checkParses } = require('../tools/build-page.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const sha = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
@@ -302,4 +303,61 @@ test('npm run styles resolves ARTIFEX_HOME from the caller and lists, prints JSO
   for (const args of [['check'], ['trust', 'a', 'b'], ['list', '--all'], ['remove', 'pointillism']]) {
     assert.match(run(...args).stderr, /styles: usage: /, args.join(' '));
   }
+});
+
+test('a style loads by name for page and seeds: a built-in module, or a trusted pack before its code runs', (t) => {
+  const { dir, env } = tempHome(t);
+  const out = path.join(ROOT, 'out');
+  const unproved = [];
+  const builtin = styles.load('Impasto', env, (message) => unproved.push(message));
+  assert.deepEqual([builtin.piece.name, builtin.style.source, builtin.stem, builtin.directory], ['impasto', 'builtin', 'style-impasto', out]);
+  const pack = makePack(dir);
+  // Pack code that ran would throw; an untrusted or changed pack is refused before it runs.
+  rewrite(pack, 'piece.cjs', "throw new Error('pack code ran');\n");
+  assert.throws(() => styles.load('pointillism', env), /^Error: style: pointillism is not trusted\. Read its files, then run: npm run styles -- trust pointillism$/);
+  styles.trust('pointillism', env, quiet);
+  assert.throws(() => styles.load('pointillism', env), /pack code ran/);
+  rewrite(pack, 'piece.cjs', PIECE);
+  assert.throws(() => styles.load('pointillism', env), /pointillism changed since it was trusted as version 1\.0\.0\. Read its files, then run: npm run styles -- trust pointillism/);
+  styles.trust('pointillism', env, quiet);
+  const loaded = styles.load('pointillism', env, (message) => unproved.push(message));
+  assert.deepEqual([loaded.piece.name, loaded.names, loaded.style.source, loaded.stem, loaded.directory], ['dotted', ['dotted'], 'installed', 'style-pointillism', out]);
+  assert.deepEqual(unproved, []);
+
+  // A pack proved on another version still loads, with a warning.
+  const svg = fs.readFileSync(path.join(pack.folder, 'sample.svg'), 'utf8');
+  const manifest = JSON.parse(/<metadata id="artifex-manifest">([^<]*)</.exec(svg)[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
+  rewrite(pack, 'sample.svg', withManifest(svg, { ...manifest, artifex: '0.0.1' }));
+  pack.manifest.artifex = '0.0.1';
+  pack.write('style.json', JSON.stringify(pack.manifest));
+  styles.trust('pointillism', env, quiet);
+  assert.equal(styles.load('pointillism', env, (message) => unproved.push(message)).piece.name, 'dotted');
+  assert.deepEqual(unproved, ['style: pointillism is not proved on this version: its sample was proved with Artifex 0.0.1, this is ' + VERSION]);
+});
+
+test('npm run page and seeds take --style, write out/style-<name>-page.html and -seeds.html, and refuse by exit code', (t) => {
+  const { dir, env } = tempHome(t);
+  // A name of this run's own, so parallel runs never share an output file.
+  const name = 'pointillism-' + process.pid;
+  makePack(dir, name);
+  const files = ['page', 'seeds'].map((kind) => path.join(ROOT, 'out', 'style-' + name + '-' + kind + '.html'));
+  t.after(() => { for (const file of files) fs.rmSync(file, { force: true }); });
+  const run = (tool, ...args) => spawnSync(process.execPath, [path.join(ROOT, 'tools', tool), ...args],
+    { cwd: ROOT, encoding: 'utf8', env: { ...process.env, ARTIFEX_HOME: dir }, timeout: 120000 });
+  for (const [tool, args] of [['build-page.js', []], ['contact-sheet.js', ['2', '0.5']]]) {
+    const untrusted = run(tool, '--style', name, ...args);
+    assert.equal(untrusted.status, 1, tool);
+    assert.equal(untrusted.stderr, 'style: ' + name + ' is not trusted. Read its files, then run: npm run styles -- trust ' + name + '\n', tool);
+    const unknown = run(tool, '--style', 'puntillismo', ...args);
+    assert.equal(unknown.status, 1, tool);
+    assert.match(unknown.stderr, new RegExp('^style: no style named "puntillismo"\\. Available: cad, circuit-board, .* \\(built in\\); ' + name + ' \\(installed\\)\\. Packs are installed in '), tool);
+  }
+  assert.deepEqual(files.filter((file) => fs.existsSync(file)), [], 'a refused style writes nothing');
+  styles.trust(name, env, quiet);
+  const built = run('build-page.js', '--style', name.toUpperCase());
+  assert.equal(built.status, 0, built.stderr);
+  assert.equal(checkParses(fs.readFileSync(files[0], 'utf8')), true);
+  const sheet = run('contact-sheet.js', '--style', name, '2', '0.5');
+  assert.equal(sheet.status, 0, sheet.stderr);
+  assert.match(fs.readFileSync(files[1], 'utf8'), /var NAMES = \["dotted"\];/);
 });

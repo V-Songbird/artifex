@@ -29,6 +29,8 @@ Artifex has no dependency installation or source compilation step. Use the Node 
 | `npm run styles` | Lists the built-in styles and the style packs installed under `~/.artifex/styles` (or `ARTIFEX_HOME`), with broken and refused folders and their reasons; `-- --json` prints the list as JSON. See [style packs](../apis/style-packs.md). |
 | `npm run styles -- trust <name>` | Verifies an installed pack's files against its `style.json`, shows them with the modules they require, and records the hash of its `style.json` as trusted. |
 | `npm run styles -- check <name>` | Checks a style: a built-in module loads as a piece of its name; a pack matches its hashes, is trusted, was proved on this version and loads confined to its files. It does not replay the sample. |
+| `npm run page -- --style impasto` | Builds the page of a built-in style or a trusted pack by name, as `out/style-<name>-page.html`. |
+| `npm run seeds -- --style impasto 9 0.5` | Writes a contact sheet of a style by name, as `out/style-<name>-seeds.html`; takes `--param`, `--box` and `--png` as for any piece. |
 | `npm run bench` | Measures build, draw, and vector emission costs. |
 | `npm run site` | Builds the showcase site into `out/site/` from `site/shots.js`; `-- --serve` also serves it on loopback. See [the site](site.md). |
 | `npm run site:check` | Runs the site's own tests in `site/tests/`, outside the mutation suite. |
@@ -61,7 +63,9 @@ Parameter strips and grids use the same `--param` option and fixed-seed rules fo
 
 ## Style packs
 
-`npm run styles` lists built-in styles and installed style packs; [style packs](../apis/style-packs.md) defines the pack format, the install folder, name resolution, `trust` and `check`. Listing reads JSON only and runs no pack code. `ARTIFEX_HOME` replaces `~/.artifex`; a relative value resolves from npm's invocation directory, as `page` and `seeds` paths do. Run `node --test tests/styles.test.js` for `builtin.json` against the gallery, every `style.json` rule, broken and refused folders, the unknown-name error, trust and every `check` refusal; its tests use a temporary `ARTIFEX_HOME`, never the real one.
+`npm run styles` lists built-in styles and installed style packs; [style packs](../apis/style-packs.md) defines the pack format, the install folder, name resolution, `trust` and `check`. Listing reads JSON only and runs no pack code. `ARTIFEX_HOME` replaces `~/.artifex`; a relative value resolves from npm's invocation directory, as `page` and `seeds` paths do. `npm run page -- --style <name>` and `npm run seeds -- --style <name> [count] [playhead]` resolve the name through [`tools/styles.js`](../../tools/styles.js) and draw the style's piece, a built-in module or a pack's piece, writing `out/style-<name>-page.html` and `out/style-<name>-seeds.html` in the library. A pack is checked against its hashes and its trust before its code runs, as `check` does, and then loads confined to its files; a refused pack writes nothing and names the command that trusts it. A pack proved with another Artifex version draws after a warning on standard error.
+
+Run `node --test tests/styles.test.js` for `builtin.json` against the gallery, every `style.json` rule, broken and refused folders, the unknown-name error, trust, every `check` refusal, and `--style` loading, refusals, warning and output names in `page` and `seeds`; its tests use a temporary `ARTIFEX_HOME`, never the real one. `tests/contact-sheet.test.js` checks the `--style` arguments and sheet names.
 
 ## Contact-sheet sweeps and metrics
 
