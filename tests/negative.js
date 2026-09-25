@@ -2749,8 +2749,8 @@ const MUTATIONS = [
   {
     why: 'a soundtrack block under its codec floor passes',
     file: 'tools/replay.js',
-    from: '    if (!(db >= floor)) {',
-    to: '    if (false) {',
+    from: '    if (db >= floor) { worst = Math.min(worst, db); continue; }',
+    to: '    if (true) { worst = Math.min(worst, db); continue; }',
     expect: 'a soundtrack block is judged against its codec floor unless the difference is under the gate',
   },
   {
@@ -2931,8 +2931,8 @@ const MUTATIONS = [
   {
     why: "the soundtrack replay indexes the page's examples with any name, inherited or missing",
     file: 'tools/replay.js',
-    from: 'async function compareSound(bytes, recipe, block, codec) {\n  const api = window.__artifex;\n  if (!Object.prototype.hasOwnProperty.call(api.examples, recipe.piece)) throw',
-    to: 'async function compareSound(bytes, recipe, block, codec) {\n  const api = window.__artifex;\n  if (false) throw',
+    from: 'async function compareSound(bytes, recipe, block, codec, band, flatness) {\n  const api = window.__artifex;\n  if (!Object.prototype.hasOwnProperty.call(api.examples, recipe.piece)) throw',
+    to: 'async function compareSound(bytes, recipe, block, codec, band, flatness) {\n  const api = window.__artifex;\n  if (false) throw',
     expect: 'every page function refuses a piece name that is not its own the same way',
   },
   {
@@ -3115,6 +3115,76 @@ const MUTATIONS = [
     to: '      video.currentTime = seeks[n];\n    });\n    await new Promise((resolve) => setTimeout(resolve, 60));\n'
       + '    const frame = new VideoFrame(video);\n    const got = shrink(frame);\n    frame.close();\n',
     expect: 'a WebM frame whose read throws still closes the VideoFrame it was read through',
+  },
+  {
+    why: 'a block under its floor matches by its noise-like bands whatever the rest of it decodes to, so a moved tone passes',
+    file: 'tools/replay.js',
+    from: '    if (!(10 * Math.log10(signal / Math.max(0, error - noiseError)) >= floor)) return',
+    to: '    if (false) return',
+    expect: 'a block under its floor matches only where the rest keeps it and its noise-like bands keep their waveform and levels',
+  },
+  {
+    why: 'rounding that takes the rest of a block under zero refuses a block whose whole difference is in its noise-like bands',
+    file: 'tools/replay.js',
+    from: 'signal / Math.max(0, error - noiseError)',
+    to: 'signal / (error - noiseError)',
+    expect: 'a block under its floor matches only where the rest keeps it and its noise-like bands keep their waveform and levels',
+  },
+  {
+    why: 'noise-like bands pass whatever waveform they decode to, so another noise passes',
+    file: 'tools/replay.js',
+    from: '    if (!(wave >= waveform)) return',
+    to: '    if (false) return',
+    expect: 'a block under its floor matches only where the rest keeps it and its noise-like bands keep their waveform and levels',
+  },
+  {
+    why: 'noise-like bands pass whatever level they decode to, so a louder or quieter voice passes',
+    file: 'tools/replay.js',
+    from: '    if (!(kept >= level)) return',
+    to: '    if (false) return',
+    expect: 'a block under its floor matches only where the rest keeps it and its noise-like bands keep their waveform and levels',
+  },
+  {
+    why: 'noise-like band levels are held only to 12 dB, which a voice 3 dB louder keeps',
+    file: 'tools/replay.js',
+    from: 'const SOUND_NOISE_DB = { waveform: 3, envelope: 18 };',
+    to: 'const SOUND_NOISE_DB = { waveform: 3, envelope: 12 };',
+    expect: 'a block under its floor matches only where the rest keeps it and its noise-like bands keep their waveform and levels',
+  },
+  {
+    why: 'a band is noise-like at half the flatness, taking in more of a chord',
+    file: 'tools/replay.js',
+    from: 'const SOUND_FLATNESS = 0.4;',
+    to: 'const SOUND_FLATNESS = 0.2;',
+    expect: 'a block under its floor matches only where the rest keeps it and its noise-like bands keep their waveform and levels',
+  },
+  {
+    why: 'noise-like bands are chosen from the unwindowed spectrum, whose leakage fills the bands between a chord\'s partials',
+    file: 'tools/replay.js',
+    from: 'wr[i - at] = x * hann[i - at];',
+    to: 'wr[i - at] = x;',
+    expect: 'a noise voice replays by what a perceptual codec keeps of it, and a different one still differs',
+  },
+  {
+    why: 'every band is noise-like, so a tone is judged as noise',
+    file: 'tools/replay.js',
+    from: '>= flatness)) continue;',
+    to: '>= 0)) continue;',
+    expect: 'a noise voice replays by what a perceptual codec keeps of it, and a different one still differs',
+  },
+  {
+    why: 'band energies count each mirrored bin once, so they no longer add up to the block and a codec-kept noise voice differs',
+    file: 'tools/replay.js',
+    from: 'm = (k === 0 || k === bins - 1 ? 1 : 2) / block;',
+    to: 'm = 1 / block;',
+    expect: 'a noise voice replays by what a perceptual codec keeps of it, and a different one still differs',
+  },
+  {
+    why: 'the envelope error takes energies for amplitudes, too small to refuse a voice 6 dB louder or quieter',
+    file: 'tools/replay.js',
+    from: 'envelope += (Math.sqrt(got) - Math.sqrt(want)) ** 2;',
+    to: 'envelope += (got - want) ** 2;',
+    expect: 'a noise voice replays by what a perceptual codec keeps of it, and a different one still differs',
   },
 
 ];
