@@ -1,7 +1,7 @@
 ---
 type: api_spec
-summary: "Defines style packs: the folder and style.json format, where packs are installed, how a style name resolves, the npm run styles list, trust and check commands, and drawing a style by name with --style; read before installing, sharing or checking a style pack."
-related_files: ["tools/styles.js", "skills/artifex/styles/builtin.json", "skills/artifex/styles/catalog.md", "tools/piece-input.js", "tools/build-page.js", "tools/contact-sheet.js", "tests/styles.test.js", "docs/security.md"]
+summary: "Defines style packs: the folder and style.json format, where packs are installed, how a style name resolves, the npm run styles list, trust, check and pack commands, and drawing a style by name with --style; read before making, installing, sharing or checking a style pack."
+related_files: ["tools/styles.js", "skills/style-pack/SKILL.md", "tools/replay.js", "skills/artifex/styles/builtin.json", "skills/artifex/styles/catalog.md", "tools/piece-input.js", "tools/build-page.js", "tools/contact-sheet.js", "tests/styles.test.js", "docs/security.md"]
 ---
 
 # Style packs
@@ -92,7 +92,8 @@ A name is lowercased, then matched exactly against the built-in names and then t
 | `npm run styles` | Lists every built-in style and installed pack: name, built in or installed, and for a pack its version, the version it was proved with and whether it is trusted, then title and summary. Broken and refused folders follow with their reasons. The last line names the install folder. |
 | `npm run styles -- --json` | Prints the same list as JSON; `npm run styles -- list --json` is the same. |
 | `npm run styles -- trust <name>` | Shows a pack and records your trust in it (below). |
-| `npm run styles -- check <name>` | Checks a style (below). |
+| `npm run styles -- check <name>` | Checks a style, and replays a pack's sample (below). |
+| `npm run styles -- pack <piece> --name <name> --guide <guide.md> --summary <text>` | Makes a pack of a piece, proves its sample and installs it (see [make a pack](#make-a-pack)). |
 
 A command that fails prints its reason on standard error and exits with code 1.
 
@@ -122,7 +123,29 @@ On an installed pack, it runs these steps in order and stops at the first failur
 3. Requires `artifex` to be this library's version. A pack proved with another version fails with `is not proved on this version`.
 4. Loads the piece, confined to the pack's listed files and `artifex/core/<file>.js`. Any other require is refused by name.
 
-Only step 4 runs pack code. `check` does not replay the sample; to do that, run `npm run replay -- <pack>/sample.svg --piece <pack>/piece.cjs` (see [replaying a saved file](../knowledge/development.md#replaying-a-saved-file)).
+5. Copies the pack's listed files to a new temporary folder and replays the sample there with the copy's piece, as `npm run replay -- sample.svg --piece piece.cjs` does (see [replaying a saved file](../knowledge/development.md#replaying-a-saved-file)). An SVG sample must redraw byte for byte in Node; a PNG sample is redrawn in installed Edge and must be identical, or at least 40 dB PSNR and closer to its own frame than to either neighbour. A sample that differs fails with replay's first difference. The copy is removed either way.
+
+Steps 4 and 5 run pack code. A pass shows the sample redraws on this machine and this Artifex version; it says nothing about another browser, GPU or version.
+
+## Make a pack
+
+```
+npm run styles -- pack <piece> --name <name> --guide <guide.md> --summary <text>
+  [--title <text>] [--version <v>] [--author <text>] [--license <spdx>] [--seed <n>] [--t <0..1>] [--replace]
+```
+
+`<piece>` is an [external piece](../knowledge/development.md#external-pieces), a built-in style's module or any other piece module; relative paths resolve from where you ran the command. The [style-pack skill](../../skills/style-pack/SKILL.md) walks an agent through it.
+
+1. Refuses a `--name` that breaks the `name` rule or is a built-in style's name, an existing `<ARTIFEX_HOME>/styles/<name>` unless `--replace` is given, a link there even with `--replace`, and a guide without a `# ` title followed by headings that start `What makes it read as`, `Recipe`, `Pitfalls` and `Any subject`, in that order. Other headings, such as `Palette`, may come between them.
+2. Loads the piece and copies it to `piece.cjs`, and every local helper or JSON file it reaches to `lib/<file name>`, adding `-2`, `-3` and on when two share a name. Each literal `require` is rewritten to the file's new place. A require of the library's `core/`, by any path, becomes `artifex/core/<file>.js`, as does `examples/stroke-font.js`, which re-exports `core/stroke-font.js`. A require of any other file in the library's `examples/` is refused, because only `core/` is the library's API.
+3. Draws the sample at `--seed` (default: the piece's seed) and the playhead `--t` (default 1) on the frame grid: `sample.svg` in Node for a piece that declares `vector` output, otherwise `sample.png` 600 pixels wide, drawn in installed Edge as the page's PNG button draws it. Each carries its replay manifest.
+4. Writes `style.json`: `title` from `--title` or the guide's `# ` heading, `version` from `--version` or `1.0.0`, `artifex` this library's version, `author` and `license` when given, and the hash of every file.
+5. Replays the sample from a clean copy, as `check` does.
+6. Only when it matches, moves the pack into `<ARTIFEX_HOME>/styles/<name>`, replacing the old folder under `--replace`, and trusts it as `trust` does, since you just made it from your own piece.
+
+The pack is built in a temporary folder inside `ARTIFEX_HOME`, beside `styles/`, which is removed whatever happens. When a step fails, including a sample that does not replay, nothing is installed or trusted, and a pack `--replace` would have replaced is kept as it was.
+
+To share a pack, zip its folder. The person who receives it extracts it into their `~/.artifex/styles/`, reads it, trusts it and runs `check` on their own machine.
 
 ## Draw a style by name
 
@@ -132,4 +155,4 @@ A pack goes through steps 1, 2 and 4 of `check` first, so an untrusted or change
 
 ## Checks
 
-`node --test tests/styles.test.js` checks `builtin.json` against the gallery and the modules, each `style.json` rule, the scan and its broken and refused folders, the unknown-name error, trust records, every refusal of `check` and `trust`, links, the command line, and `--style` in `page` and `seeds`: loading, refusals, the version warning and output names, all under a temporary `ARTIFEX_HOME`.
+`node --test tests/styles.test.js` checks `builtin.json` against the gallery and the modules, each `style.json` rule, the scan and its broken and refused folders, the unknown-name error, trust records, every refusal of `check` and `trust`, links, the command line, and `--style` in `page` and `seeds`: loading, refusals, the version warning and output names, all under a temporary `ARTIFEX_HOME`. It also checks `pack`'s rewriting of requires, the guide headings, `style.json` and trust output, every refusal, the removal of its own output and the keeping of a replaced pack when the sample does not replay, and `check`'s replay of a changed sample, with SVG samples in Node. A PNG sample needs installed Edge and is not drawn by these tests.
