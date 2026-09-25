@@ -298,6 +298,24 @@ entry gives the style's `guide` and `piece` paths, and for a pack whether it is
 `trusted`. Open that guide and piece for the style asked for. When the name is
 not there, tell the user, list the names that are, and offer to make the style.
 
+To make a style no guide holds:
+
+1. Write its visual signature in five parts: material (felt, knit, sponge,
+   enamel), light (where it comes from, how hard), depth (layers, occlusion,
+   thickness), camera (height, lens, how it moves) and motion (weight,
+   cadence). A reference image gives its technique and palette family, never
+   its composition.
+2. Read the nearest guide for each part, for example [3D render](styles/render-3d.md)
+   for light and depth and [embroidery](styles/embroidery.md) for fibre, and
+   take their techniques, not their subjects.
+3. Draw a [time strip](#look-at-a-film)
+   (`npm --prefix "<library root>" run seeds -- "./my-piece.cjs" --frames 9 --png`),
+   or a contact sheet for a still, and point to each part of the signature on
+   every frame. A part you cannot point to is missing: flat fills under a soft
+   shadow read as cut paper, not felt.
+
+This method is new; it is judged on the next film trial.
+
 To look at a style by name, run `npm run page -- --style <name>` or
 `npm run seeds -- --style <name> 9 0.5` (with `--param` or `--png` as for any
 piece). They write `out/style-<name>-page.html` and
