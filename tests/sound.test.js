@@ -150,7 +150,10 @@ test('room is a seeded convolver that falls to -60 dB and darkens as it falls', 
   assert.equal(b.length, Math.round(0.02 * RATE) + Math.ceil(1.5 * RATE));
   const [left, right] = [b.getChannelData(0), b.getChannelData(1)];
   assert.ok(left.subarray(0, Math.round(0.02 * RATE)).every((v) => v === 0), 'nothing before the predelay');
-  assert.notDeepEqual(left, right, 'the two sides are independent');
+  // Past the early reflections the two sides are independent noise, so they barely correlate.
+  let lr = 0, ll = 0, rr = 0;
+  for (let i = Math.round(0.09 * RATE); i < left.length; i++) { lr += left[i] * right[i]; ll += left[i] ** 2; rr += right[i] ** 2; }
+  assert.ok(Math.abs(lr / Math.sqrt(ll * rr)) < 0.2, 'the two sides are independent');
   assert.deepEqual(impulse(1, { size: 1.5, predelay: 0.02 }).getChannelData(0), left, 'one seed makes one room');
   assert.notDeepEqual(impulse(2, { size: 1.5, predelay: 0.02 }).getChannelData(0), left, 'another seed makes another room');
 
