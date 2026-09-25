@@ -1271,3 +1271,39 @@ test('the limiter meets every peak on both channels from the first sample, ahead
   normalizeLoudness(planar([again]), 'mp4a');
   assert.deepEqual(new Uint32Array(again.buffer), new Uint32Array(out.buffer), 'two levellings are the same bits');
 });
+
+test('levelling keeps its bits while making only the envelope, the output and the least need as long as the soundtrack', () => {
+  // FNV-1a over every levelled bit and the report's text. Each value is what the
+  // levelling gave before it reused its buffers across the secant tries, so a
+  // film exported before and replayed after, or the other way, still matches.
+  const bits = (channels, report) => {
+    let h = 0x811c9dc5;
+    for (const x of channels) for (const u of new Uint32Array(x.buffer)) h = Math.imul(h ^ u, 16777619);
+    for (const ch of JSON.stringify(report)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+    return (h >>> 0).toString(16).padStart(8, '0');
+  };
+  const clicked = () => { const x = tone([[3, -40]]); for (let i = 0; i < x.length; i += 12000) x[i] = 0.9; return x; };
+  for (const [what, make, want] of [
+    ['drums, the right kicks 3000 samples after the left', () => [drums(3), drums(3, DRUM_START + 3000)], '6ac0f9eb'],
+    ['speech-like bursts', () => [bursts(3), bursts(3)], '28b47940'],
+    ['clicks cut by the full 12 dB', () => [clicked(), clicked()], '2c6a49ac'],
+    ['a kick on the first sample, in one channel', () => [drums(3, 0)], '61bacd09'],
+  ]) {
+    const channels = make();
+    assert.equal(bits(channels, normalizeLoudness(planar(channels), 'mp4a')), want, `${what} levels to the bits it always did`);
+  }
+
+  // Every typed array made while levelling, by kind and length: past 65536
+  // points, the true peak's own block, only the envelope, one output per
+  // channel and the limiter's least need, once for all the tries.
+  const n = 10 * RATE, channels = [drums(10), drums(10, DRUM_START + 3000)], made = [];
+  const kinds = { Float64Array, Float32Array, Int32Array };
+  for (const [name, Kind] of Object.entries(kinds)) {
+    globalThis[name] = new Proxy(Kind, { construct: (K, args) => { const a = Reflect.construct(K, args); made.push([name, a.length]); return a; } });
+  }
+  let r;
+  try { r = normalizeLoudness(planar(channels), 'mp4a'); } finally { Object.assign(globalThis, kinds); }
+  assert.ok(r.limited > 3, `the drums are limited, by ${r.limited} dB`);
+  assert.deepEqual(made.filter(([, length]) => length > 65536 + 33),
+    [['Float64Array', n + 11], ['Float32Array', n], ['Float32Array', n], ['Float64Array', n]]);
+});
