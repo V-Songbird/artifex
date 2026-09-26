@@ -491,6 +491,35 @@ test('pack refuses by name and writes nothing', async (t) => {
     { replace: true, piece: 'dotted.cjs', name: 'dots', guide: 'g.md', summary: 's', seed: '4', t: '0.5' });
 });
 
+test('Windows device names are refused as a pack name and in every style.json path segment', async (t) => {
+  // Git for Windows refuses to index these names, whatever their case, extension
+  // or spaces before the dot, and older Windows opens the device instead of the file.
+  const devices = ['con', 'prn', 'aux', 'nul', ...'123456789'.split('').flatMap((n) => ['com' + n, 'lpt' + n])];
+  const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const manifest = (name, file = 'dots.js') => ({
+    stylePack: 1, name, title: 'Dots', version: '1.0.0', artifex: VERSION, summary: 'Dots.', piece: 'piece.cjs', guide: 'guide.md', sample: 'sample.svg',
+    files: Object.fromEntries(['piece.cjs', 'guide.md', 'sample.svg', file].map((one) => [one, 'a'.repeat(64)])),
+  });
+  const { dir, env } = tempHome(t);
+  const author = project(t, { 'dotted.cjs': PIECE.replace('./lib/dots.js', './dots.js'), 'dots.js': DOTS, 'guide.md': GUIDE });
+  for (const device of devices) {
+    const upper = device.toUpperCase();
+    assert.throws(() => styles.validateManifest(manifest(device), device),
+      new RegExp('^Error: style\\.json: "name" is "' + device + '", which Windows reads as the device ' + upper + '$'));
+    await assert.rejects(styles.pack({ piece: path.join(author, 'dotted.cjs'), name: device, guide: path.join(author, 'guide.md'), summary: 'Dots.' }, env, quiet),
+      new RegExp('^Error: pack: the name is "' + device + '", which Windows reads as the device ' + upper + '; choose another$'));
+    for (const [file, segment] of [[device, device], ['lib/' + upper + '.js', upper + '.js'], ['lib/' + device + '.tar.gz', device + '.tar.gz'],
+      [device + ' .json/dots.js', device + ' .json'], ['lib/' + upper[0] + device.slice(1) + '/dots.js', upper[0] + device.slice(1)]]) {
+      assert.equal(styles.pathProblem(file), 'has a segment that is "' + segment + '", which Windows reads as the device ' + upper, file);
+      assert.throws(() => styles.validateManifest(manifest('dots', file), 'dots'), new RegExp('^Error: style\\.json: files: "' + escape(file) + '" has a segment that is '));
+    }
+  }
+  assert.deepEqual(fs.readdirSync(dir), [], 'a refused pack writes nothing');
+  // A device name inside a longer name, or after a dot, is an ordinary name.
+  for (const name of ['con-x', 'x-con', 'auxx', 'com10', 'com0', 'lpt0', 'nul1']) assert.equal(styles.validateManifest(manifest(name), name).name, name);
+  for (const file of ['lib/con-x.js', 'lib/auxx.js', 'lib/com0.js', 'lib/x.con', 'lib/x.aux.js', 'console/dots.js']) assert.equal(styles.pathProblem(file), null, file);
+});
+
 test('pack removes its own output when the sample does not replay, and keeps the pack it would replace', async (t) => {
   const { dir, env } = tempHome(t);
   // Each draw moves the square, so the redraw can never match the sample.
