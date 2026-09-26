@@ -83,8 +83,9 @@ function friction(e, small, R) {
   return out;
 }
 
-// How far back a piece reaches for notes still ringing as it begins, begun in the piece before it.
-const CARRY = 3;
+// How far back a piece reaches for notes still ringing as it begins, begun in the piece before it:
+// longer than the longest voice, the rest chord's 5.3 s (see KINDS rest).
+const CARRY = 6;
 // -60 dB, where a decay counts as over (as core/sound.js voice has it).
 const QUIET = 1e-3;
 
