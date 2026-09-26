@@ -473,10 +473,12 @@ test('owned teardown is judged by its own process, never by the kill command', a
   };
   const suite = (exitCode) => Object.assign(new EventEmitter(), { pid: owned().pid, exitCode, signalCode: null });
   const stuck = suite(null);
-  const started = Date.now();
+  // Node fires a timer once whole loop milliseconds reach its delay, so it can
+  // fire under a millisecond early: a correct grace period lasts over 299 ms.
+  const started = performance.now();
   assert.match((await terminateSuite(stuck, 300))?.message ?? '',
     new RegExp(`owned tree termination left process ${stuck.pid} running 300 ms after the kill`), 'a process still running is a failure');
-  assert.ok(Date.now() - started >= 300, 'the process is awaited for the whole grace period');
+  assert.ok(performance.now() - started >= 300 - 1, 'the process is awaited for the whole grace period');
   assert.equal(await terminateSuite(suite(1), 300), null, 'a process that exited by itself has stopped');
   const exiting = suite(null);
   // Exit only once teardown is waiting, as when the exit arrives after the kill's.
