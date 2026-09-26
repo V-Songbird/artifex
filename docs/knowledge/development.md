@@ -1,7 +1,7 @@
 ---
 type: knowledge
 summary: "Describes Artifex's source layout, development commands, plugin metadata, and the limits of its checks."
-related_files: ["package.json", ".nvmrc", "core/piece.js", "core/webgpu-preview.js", "examples/pixel-field.js", "tests/webgpu-preview.test.js", "tests/page-preview.test.js", "tests/pixel-field.test.js", "core/field.js", "core/time.js", "core/layer.js", "core/sound.js", "core/stroke-font.js", "examples/stroke-font.js", "tests/field.test.js", "tests/time.test.js", "tests/layer.test.js", "tests/sound.test.js", "tests/negative.js", "tests/negative-runner.test.js", "tests/contact-sheet.test.js", "tests/external-piece.test.js", "tests/page-build-errors.test.js", "tests/check-browser.test.js", "tools/piece-input.js", "tools/check-browser.js", "tools/contact-sheet.js", "tools/lint-unread.js", "tools/build-page.js", "tools/bench.js", "plugin.json", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json", "skills/artifex/SKILL.md", "skills/artifex/styles/catalog.md", ".github/workflows/check.yml", "tools/replay.js", "tests/replay.test.js"]
+related_files: ["package.json", ".nvmrc", "core/piece.js", "core/webgpu-preview.js", "examples/pixel-field.js", "tests/webgpu-preview.test.js", "tests/page-preview.test.js", "tests/pixel-field.test.js", "core/field.js", "core/time.js", "core/layer.js", "core/sound.js", "core/stroke-font.js", "examples/stroke-font.js", "tests/field.test.js", "tests/time.test.js", "tests/layer.test.js", "tests/sound.test.js", "tests/negative.js", "tests/negative-runner.test.js", "tests/contact-sheet.test.js", "tests/external-piece.test.js", "tests/page-build-errors.test.js", "tests/check-browser.test.js", "tools/piece-input.js", "tools/check-browser.js", "tools/contact-sheet.js", "tools/lint-unread.js", "tools/build-page.js", "tools/bench.js", "plugin.json", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json", "skills/artifex/SKILL.md", "skills/artifex/reference/", "skills/artifex/styles/catalog.md", ".github/workflows/check.yml", "tools/replay.js", "tests/replay.test.js"]
 ---
 
 # Developing Artifex
@@ -134,6 +134,7 @@ Run `node --test tests/replay.test.js` for manifest reading, the version, piece,
 | [`core/geom.js`](../../core/geom.js), [`core/path.js`](../../core/path.js) | Geometry and path operations. |
 | [`core/num.js`](../../core/num.js), [`core/colour.js`](../../core/colour.js) | Numeric and colour operations. |
 | [`examples/index.js`](../../examples/index.js) | Examples available to the bundled tools. |
+| [`skills/artifex/SKILL.md`](../../skills/artifex/SKILL.md) | The runtime skill's core: what every piece needs, from the contract, authored time and sound to the look loop, named styles and shared traps. It links the references in `skills/artifex/reference/`, each read only when a piece needs it: [films](../../skills/artifex/reference/films.md), [stills](../../skills/artifex/reference/stills.md), [vector and plotter output](../../skills/artifex/reference/vector.md), the [WebGPU preview](../../skills/artifex/reference/webgpu.md), and [geometry and fields](../../skills/artifex/reference/geometry-fields.md). |
 | [`skills/artifex/styles/`](../../skills/artifex/styles/catalog.md) | Named styles: a guide and a reference module per style, each module a piece of its own, listed in `builtin.json` and drawn together by the external piece `gallery.cjs`. |
 | [`tools/build-page.js`](../../tools/build-page.js) | Browser bundle, transport, inspection interface, and exports. |
 | [`tools/piece-input.js`](../../tools/piece-input.js) | External CommonJS piece loading, one piece or a list sharing its modules, caller-directory resolution and dependency bundling. |
@@ -145,7 +146,7 @@ Run `node --test tests/replay.test.js` for manifest reading, the version, piece,
 | [`tools/check-site.js`](../../tools/check-site.js) | The site's installed Edge check. |
 | [`tests`](../../tests) | Contract, geometry, rendering, examples, and mutation coverage. |
 
-Core helpers must remain useful across subjects. Keep algorithms specific to an example with that example. When the public contract changes, reconcile the [piece API](../apis/piece-api.md) and [runtime skill](../../skills/artifex/SKILL.md) with `FIELDS`.
+Core helpers must remain useful across subjects. Keep algorithms specific to an example with that example. When the public contract changes, reconcile the [piece API](../apis/piece-api.md) and the [runtime skill](../../skills/artifex/SKILL.md), with its references, with `FIELDS`.
 
 `examples/pixel-field.js` is the authored CPU/WGSL reference for optional pixel
 previews. Run `node --test tests/piece.test.js tests/webgpu-preview.test.js tests/page-preview.test.js tests/pixel-field.test.js`
