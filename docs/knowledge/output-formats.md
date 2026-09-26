@@ -1,7 +1,7 @@
 ---
 type: knowledge
 summary: "Explains Artifex's page, PNG, SVG, MP4 and WebM outputs, soundtracks, and the checks and limitations of each format."
-related_files: ["core/render.js", "core/film.js", "tests/fixtures/hatch-film.cjs", "tests/fixtures/noise-film.cjs", "core/webgpu-preview.js", "core/surface-vector.js", "examples/inversion.js", "examples/pixel-field.js", "examples/readout.js", "tools/build-page.js", "tools/check-browser.js", "tools/piece-input.js", "tools/contact-sheet.js", "tools/render-examples.js", "tests/examples.test.js", "tests/external-piece.test.js", "tests/film.test.js", "tests/page-build-errors.test.js", "tests/page-preview.test.js", "tools/replay.js", "tests/replay.test.js", "tools/film-cli.js", "tests/film-cli.test.js"]
+related_files: ["core/render.js", "core/film.js", "core/export.js", "tests/fixtures/hatch-film.cjs", "tests/fixtures/noise-film.cjs", "core/webgpu-preview.js", "core/surface-vector.js", "examples/inversion.js", "examples/pixel-field.js", "examples/readout.js", "tools/build-page.js", "tools/check-browser.js", "tools/piece-input.js", "tools/contact-sheet.js", "tools/render-examples.js", "tests/examples.test.js", "tests/external-piece.test.js", "tests/film.test.js", "tests/page-build-errors.test.js", "tests/page-preview.test.js", "tools/replay.js", "tests/replay.test.js", "tools/film-cli.js", "tests/film-cli.test.js"]
 ---
 
 # Output formats
@@ -193,9 +193,9 @@ The replay manifest records the library version, piece name, seed, parameters, d
 | A PNG saved from the page, at any scale | an `iTXt` chunk before `IEND`, keyword `artifex-manifest`, no compression, empty language tag and translated keyword, holding the manifest as JSON | `t` and the export `scale` |
 | A WebM film from the fallback | a `Tags` element before the first `Cluster`: one `Tag` with empty `Targets` (the whole film) and one `SimpleTag`, `TagName` `ARTIFEX_MANIFEST` and `TagString` holding the manifest as JSON | `film: { frames, hz, loop, scale: 1 }`, as the MP4 of the same film |
 
-The WebM's tag is added to the saved file after its Duration. Every Cluster and Block keeps its bytes, and the stored positions past the tag move with them (see [WebM](#webm)). Players skip tags they do not use. `webmManifest(bytes)` in [`tools/build-page.js`](../../tools/build-page.js) reads it back, returns `null` for a WebM without one, and throws by name for a file that ends inside the element. `video()` also returns it as `report.manifest`.
+The WebM's tag is added to the saved file after its Duration. Every Cluster and Block keeps its bytes, and the stored positions past the tag move with them (see [WebM](#webm)). Players skip tags they do not use. `webmManifest(bytes)` in [`core/export.js`](../../core/export.js) reads it back, returns `null` for a WebM without one, and throws by name for a file that ends inside the element. `video()` also returns it as `report.manifest`.
 
-The PNG's JSON is ASCII: any other character is written as a `\uXXXX` escape, as in a film, so it is also the UTF-8 that `iTXt` requires. The chunk is added to the bytes the browser encoded; removing it gives back those bytes exactly, and no pixel changes. Image tools that rewrite a PNG may drop it. `pngManifest(bytes)` in [`tools/build-page.js`](../../tools/build-page.js) reads it back, or returns `null` for a PNG without one. It reads only inside the chunk, and throws by name for a file that ends inside the chunk or a chunk without its text.
+The PNG's JSON is ASCII: any other character is written as a `\uXXXX` escape, as in a film, so it is also the UTF-8 that `iTXt` requires. The chunk is added to the bytes the browser encoded; removing it gives back those bytes exactly, and no pixel changes. Image tools that rewrite a PNG may drop it. `pngManifest(bytes)` in [`core/export.js`](../../core/export.js) reads it back, or returns `null` for a PNG without one. It reads only inside the chunk, and throws by name for a file that ends inside the chunk or a chunk without its text.
 
 ### Replaying a saved file
 

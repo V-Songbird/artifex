@@ -168,7 +168,7 @@ test('a piece that declares boxes opens at the address bar\'s box, rebuilds from
   png.onclick();
   await new Promise(setImmediate);
   elements.get('svg').onclick();
-  const { pngManifest } = require('../tools/build-page.js');
+  const { pngManifest } = require('../core/export.js');
   const { svgManifest } = require('../core/surface-vector.js');
   assert.deepEqual(pngManifest(new Uint8Array(await blobs.at(-2).arrayBuffer())).size, { w: 150, h: 40 });
   const svg = await blobs.at(-1).text();

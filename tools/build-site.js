@@ -9,6 +9,8 @@
 // go in its own script. The stage loads a shot's scripts as the visitor nears
 // the shot. core.js is bundle(): the module runtime, the library
 // modules the shots and the stage require, and a registry of the shots.
+// exports.js holds core/export.js and what it reaches beyond core.js; the
+// stage loads it the first time a visitor asks for a file.
 // data.js is the shot data the stage reads, a same-origin script rather than
 // text in the page. Nothing under a private directory is bundled or copied.
 //
@@ -18,13 +20,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 const zlib = require('node:zlib');
-const { bundle, reach } = require('./build-page.js');
+const { bundle, reach, checkResolvable, wrap } = require('./build-page.js');
 const { loadExternal } = require('./piece-input.js');
 const { shots: cut } = require('../core/time.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const SITE = path.join(ROOT, 'site');
 const OUT = path.join(ROOT, 'out', 'site');
+const EXPORTS = 'core/export.js';
 const USAGE = 'usage: npm run site [-- --serve [--port N]]';
 
 // The public boundary: working records never reach the site, whatever links to them.
@@ -123,7 +126,7 @@ function build({ shots = path.join(SITE, 'shots.js'), site = SITE, out = OUT } =
     .map(([key, ids], n) => ({ shots: key.split(',').map(Number), name: chunk('shared-' + (n + 1) + '.js', ids)[0] }));
   const posters = new Map();
   const data = {
-    hz: config.hz, seed: config.seed, frames,
+    hz: config.hz, seed: config.seed, frames, exports: { script: 'exports.js', module: EXPORTS },
     shots: list.map((s, i) => {
       const reach = external.pieces[i].modules;
       const scripts = shared.filter((c) => c.shots.includes(i)).map((c) => c.name)
@@ -149,7 +152,10 @@ function build({ shots = path.join(SITE, 'shots.js'), site = SITE, out = OUT } =
   // core.js holds the library modules the shots, the stage and the worker require, and what those reach.
   const runtime = ['stage.js', 'worker.js'].map((name) => [name, read(name)]);
   const needs = external.library.concat(runtime.flatMap(([, text]) => [...text.matchAll(/\breq\('([^']+)'\)/g)].map((m) => m[1])));
-  files.set('core.js', parses('core.js', bundle({ source: external.registry }, reach(needs))));
+  const core = reach(needs), exported = reach(needs.concat(EXPORTS));
+  files.set('core.js', parses('core.js', bundle({ source: external.registry }, core)));
+  checkResolvable(exported);
+  files.set('exports.js', parses('exports.js', exported.filter((id) => !core.includes(id)).map(wrap).join('\n')));
   for (const [name, text] of runtime) files.set(name, parses(name, text));
   files.set('site.css', read('site.css'));
 

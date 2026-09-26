@@ -431,6 +431,66 @@
       });
     }
 
+    // --- exports ----------------------------------------------------------------
+    // The page's exports, from core/export.js in exports.js, loaded the first
+    // time a file is asked for, so the first load does not carry them. `opts`
+    // names a shot (the one on screen by default) and its playhead t (by
+    // default the one on screen, else the shot's still, else 0). Under reduced
+    // motion a call must name its shot.
+    let exporter = null;
+    const asked = {};
+    function exporting() {
+      // A load that failed is asked for again next time.
+      return exporter || (exporter = script(data.exports.script).then(() => req(data.exports.module), (error) => {
+        exporter = null;
+        delete scripts[data.exports.script];
+        throw error;
+      }));
+    }
+
+    function target(opts) {
+      // Under reduced motion the scroll is not a film frame, so it names no shot.
+      if (opts.shot === undefined && mode !== 'film') return Promise.reject(new Error('stage: under reduced motion, name the shot to export'));
+      const f = frameNow(), here = T.shotAt(film, f).index;
+      const i = opts.shot === undefined ? here : data.shots.findIndex((s) => s.name === opts.shot);
+      if (i < 0) return Promise.reject(new Error('stage: no shot is named ' + opts.shot));
+      return Promise.all([exporting(), load(i)]).then(([E]) => {
+        const s = shots[i];
+        const t = opts.t !== undefined ? opts.t : i === here ? wanted(i, f).t : s.still || 0;
+        return { E, s, t, solve: solved(s) };
+      });
+    }
+
+    /** The film this browser can make of a shot: { format: 'mp4' | 'webm' | null, reason }, as the page offers it. */
+    function offer(opts = {}) {
+      return target(opts).then((x) => x.E.filmOffer(x.s.piece, asked));
+    }
+
+    /**
+     * A file of a shot, carrying its recipe: kind 'png' at opts.scale (1 by
+     * default), 'svg' where the piece declares vector, or 'film', the MP4 or
+     * WebM offer() names, with opts.scale, opts.bitrate and opts.onProgress as
+     * the page's film takes them. Resolves to { name, blob }, a film to its report.
+     */
+    function file(kind, opts = {}) {
+      return target(opts).then((x) => {
+        const p = x.s.piece, stem = x.s.name + '-' + x.solve.seed;
+        if (kind === 'png') {
+          const k = opts.scale === undefined ? 1 : opts.scale;
+          return x.E.png(p, x.solve, x.t, k).then((blob) => ({ name: stem + '@' + k + 'x.png', blob }));
+        }
+        if (kind === 'svg') return { name: stem + '.svg', blob: new Blob([x.E.svg(p, x.solve, x.t)], { type: 'image/svg+xml' }) };
+        if (kind !== 'film') throw new Error('stage: an export is png, svg or film, not ' + kind);
+        return x.E.filmOffer(p, asked).then((choice) => {
+          if (!choice.format) throw new Error('stage: ' + x.s.name + ' is a still: there is no film to write');
+          if (choice.format === 'webm') return x.E.webm(p, x.solve, x.s.name);
+          return x.E.mp4(p, x.solve, x.s.name, { scale: opts.scale, bitrate: opts.bitrate, onProgress: opts.onProgress });
+        });
+      });
+    }
+
+    stat.exports = { offer, file, module: exporting };
+
     // --- reduced motion: stills in reading order --------------------------------
     function stills() {
       if (!observer) {

@@ -1785,7 +1785,7 @@ test('a film is read from the blocks its FILE holds, by walking it rather than s
   // file with every shape a recorder writes: a header to step over, a Segment and
   // Clusters of UNKNOWN size to step into, a Block inside a BlockGroup, and a
   // payload byte that looks exactly like a block id.
-  const { webmBlockTimes } = require('../tools/build-page.js');
+  const { webmBlockTimes } = require('../core/export.js');
   const webm = (scale) => Uint8Array.from([
     0x1A, 0x45, 0xDF, 0xA3, 0x83, 0xA3, 0xA3, 0xA3,
     0x18, 0x53, 0x80, 0x67, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
@@ -1809,7 +1809,7 @@ test('a film is read from the blocks its FILE holds, by walking it rather than s
 test('a recorded WebM is saved with its length, and every other byte as recorded', () => {
   // The shape Edge's recorder writes: a Segment of unknown size, a Void, and an
   // Info whose Duration is one TimecodeScale unit, which players show as 0.001 s.
-  const { webmWithDuration, webmBlockTimes } = require('../tools/build-page.js');
+  const { webmWithDuration, webmBlockTimes } = require('../core/export.js');
   const cluster = [0x1F, 0x43, 0xB6, 0x75, 0xFF, 0xE7, 0x81, 0x00,
     0xA3, 0x85, 0x81, 0x00, 0x00, 0x80, 0xA3, 0xA3, 0x85, 0x81, 0x00, 0x2A, 0x80, 0xA3];
   const film = (info, known) => {
@@ -1851,7 +1851,7 @@ test('a recorded WebM is saved with its length, and every other byte as recorded
 });
 
 test('a WebM carries its recipe in one Tags element before the first Cluster, and every other byte as saved', () => {
-  const { webmWithDuration, webmWithManifest, webmManifest, webmBlockTimes } = require('../tools/build-page.js');
+  const { webmWithDuration, webmWithManifest, webmManifest, webmBlockTimes } = require('../core/export.js');
   const cluster = [0x1F, 0x43, 0xB6, 0x75, 0xFF, 0xE7, 0x81, 0x00,
     0xA3, 0x85, 0x81, 0x00, 0x00, 0x80, 0xA3, 0xA3, 0x85, 0x81, 0x00, 0x2A, 0x80, 0xA3];
   const info = [0x15, 0x49, 0xA9, 0x66, 0x8E, 0x2A, 0xD7, 0xB1, 0x83, 0x0F, 0x42, 0x40, 0x44, 0x89, 0x84, 0x3F, 0x80, 0x00, 0x00];
@@ -1882,7 +1882,7 @@ test('a WebM carries its recipe in one Tags element before the first Cluster, an
 });
 
 test('every EBML size is read exactly, at every length up to 8 bytes', () => {
-  const { ebmlHead, webmBlockTimes } = require('../tools/build-page.js');
+  const { ebmlHead, webmBlockTimes } = require('../core/export.js');
   // A Void element whose size is written in `len` bytes.
   const sized = (len, size) => {
     const bytes = [];
@@ -1917,7 +1917,7 @@ test('every EBML size is read exactly, at every length up to 8 bytes', () => {
 });
 
 test('a single-frame film needs exactly one frame and no spacing interval', () => {
-  const { filmVerdict } = require('../tools/build-page.js');
+  const { filmVerdict } = require('../core/export.js');
   assert.throws(() => filmVerdict(1, 30, []), /holds 0 of 1 frames/);
   assert.throws(() => filmVerdict(1, 30, [0, 33]), /holds 2 of 1 frames/);
   assert.throws(() => filmVerdict(2, 30, [0]), /holds 1 of 2 frames/);
@@ -1941,7 +1941,7 @@ test('a single-frame film needs exactly one frame and no spacing interval', () =
 });
 
 test('a film too slow to record in real time says so, and names the export that can', () => {
-  const { filmVerdict } = require('../tools/build-page.js');
+  const { filmVerdict } = require('../core/export.js');
   const even = Array.from({ length: 300 }, (_, i) => Math.round((i * 1000) / 30));
   // The same holes, told apart by how far the loop fell behind its schedule.
   const lost = grab(() => filmVerdict(300, 30, even.slice(1), { worstLagMs: 4 })).message;
@@ -1959,7 +1959,7 @@ test('a film too slow to record in real time says so, and names the export that 
 test('a film with every frame and uneven spacing is refused, and so is one missing a frame', () => {
   // Frames written, frames received and duration ALL passed on a film that
   // played in bursts. Spacing was the one thing nobody measured.
-  const { filmVerdict } = require('../tools/build-page.js');
+  const { filmVerdict } = require('../core/export.js');
   const even = Array.from({ length: 300 }, (_, i) => Math.round((i * 1000) / 30));
 
   const v = filmVerdict(300, 30, even);

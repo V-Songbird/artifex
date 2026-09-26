@@ -17,7 +17,8 @@ const { VERSION, frameT } = require('../core/piece.js');
 const { renderVector } = require('../core/render.js');
 const { callerDirectory, imports, loadExternal } = require('./piece-input.js');
 const { manifestOf, replay } = require('./replay.js');
-const { bundle, html, pngWithManifest } = require('./build-page.js');
+const { bundle, html } = require('./build-page.js');
+const { pngWithManifest } = require('../core/export.js');
 const { withEdge, waitFor, evaluateInPieces } = require('./check-browser.js');
 
 const ROOT = path.resolve(__dirname, '..');

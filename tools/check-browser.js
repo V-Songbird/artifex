@@ -10,7 +10,7 @@ const http = require('node:http');
 const { spawn } = require('node:child_process');
 const { setTimeout: delay } = require('node:timers/promises');
 
-const { webmBlockTimes, filmVerdict } = require('./build-page.js');
+const { webmBlockTimes, filmVerdict } = require('../core/export.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const OUT = path.join(ROOT, 'out');
