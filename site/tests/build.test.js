@@ -39,16 +39,17 @@ test('site: the real shot list builds, one script per shot, every module defined
   const out = temp(t);
   const result = build({ out });
   const { data } = result;
-  assert.deepEqual(data.shots.map((s) => s.name), ['intro', 'bloom', 'ink', 'crack', 'mirror', 'bend', 'portal', 'trace', 'print', 'cad', 'fold', 'paint', 'kandinsky', 'wall', 'rows', 'grid', 'cells']);
-  assert.deepEqual(data.shots.map((s) => s.tier), ['frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'frame', 'worker']);
-  assert.equal(data.frames, 3600);
+  assert.deepEqual(data.shots.map((s) => s.name), ['intro', 'bloom', 'ink', 'crack', 'mirror', 'bend', 'portal', 'trace', 'print', 'cad', 'fold', 'paint', 'kandinsky', 'wall', 'unstick', 'cues', 'readout', 'settle', 'contain', 'rows', 'grid', 'cells']);
+  assert.deepEqual(data.shots.map((s) => s.tier), [...Array(21).fill('frame'), 'worker']);
+  assert.equal(data.frames, 4620);
   // Every module is defined once, and a shot's scripts define exactly the modules its piece reaches.
   const defines = (f) => [...fs.readFileSync(path.join(out, f), 'utf8').matchAll(/^__def\("(external\/\d+\.js)"/gm)].map((m) => m[1]);
   const defined = result.files.filter((f) => /^(shared-\d+|shot-.*)\.js$/.test(f)).flatMap(defines);
   assert.equal(new Set(defined).size, defined.length, 'a module defined twice: ' + defined);
   const external = loadExternal(require('../shots.js').shots.map((s) => s.piece), SITE);
   data.shots.forEach((s, i) => assert.deepEqual(s.scripts.flatMap(defines).sort(), external.pieces[i].modules.slice().sort(), s.name + ' loads what it reaches'));
-  assert.ok(data.shots.every((s) => s.scripts[s.scripts.length - 1] === 'shot-' + s.name + '.js'));
+  // Each shot's own script comes last; the wall has none, as the shots after it build on its piece.
+  assert.deepEqual(data.shots.filter((s) => s.scripts[s.scripts.length - 1] !== 'shot-' + s.name + '.js').map((s) => s.name), ['wall']);
   const shared = (name) => data.shots.find((s) => s.name === name).scripts.filter((f) => f.startsWith('shared-')).map((f) => fs.readFileSync(path.join(out, f), 'utf8')).join('\n');
   // The intro loads the paper and wordmark and nothing it does not draw; the placeholders share the lattice.
   assert.deepEqual(data.shots[0].scripts, ['shared-1.js', 'shot-intro.js']);
@@ -59,11 +60,14 @@ test('site: the real shot list builds, one script per shot, every module defined
   for (const f of ['drawPage', 'released', 'drawSheet', 'drawPlot']) assert.ok(shared('fold').includes(f), 'fold shares ' + f);
   // The papercut the paint seam begins on, and the impasto and its oil paint the Kandinsky shot scrapes.
   for (const f of ['drawCut', 'drawDabs', 'drawSmears']) assert.ok(shared('kandinsky').includes(f), 'kandinsky shares ' + f);
-  // The scraping the wall begins from, shared; a module one shot needs stays in its script: the wall's hang and the style modules.
-  assert.ok(shared('wall').includes('drawStep'), 'wall shares drawStep');
-  const wall = fs.readFileSync(path.join(out, 'shot-wall.js'), 'utf8');
-  for (const f of ['drawHang', 'style-gallery', 'light-painting']) assert.ok(f === 'style-gallery' ? !wall.includes(f) : wall.includes(f), 'shot-wall.js ' + f);
-  for (const name of ['ink', 'mirror', 'cad', 'kandinsky', 'wall']) assert.ok(fs.existsSync(path.join(out, 'posters', name + '.webp')), name + ' has its poster');
+  // The scraping the wall begins from, and the wall's hang and style modules, which the shots after it frame too; never the gallery.
+  for (const f of ['drawStep', 'drawHang', 'light-painting']) assert.ok(shared('wall').includes(f) && shared('contain').includes(f), 'wall and contain share ' + f);
+  assert.ok(!shared('wall').includes('style-gallery') && !shared('rows').includes('drawHang'));
+  // The loose forms' skins, their score and its voices, from the unstick seam to the contain seam; the fall only in the two that fall.
+  for (const name of ['unstick', 'cues', 'readout', 'settle', 'contain']) for (const f of ['drawSkin', 'function poses', 'function play']) assert.ok(shared(name).includes(f), name + ' shares ' + f);
+  for (const name of ['unstick', 'cues', 'readout']) assert.ok(!data.shots.find((s) => s.name === name).scripts.some((f) => fs.readFileSync(path.join(out, f), 'utf8').includes('function collide')), name + ' does not load the fall');
+  assert.ok(shared('contain').includes('function collide'), 'contain shares the fall with settle');
+  for (const name of ['ink', 'mirror', 'cad', 'kandinsky', 'wall', 'cues', 'readout', 'settle']) assert.ok(fs.existsSync(path.join(out, 'posters', name + '.webp')), name + ' has its poster');
   // Every piece loads and validates from core.js and its own scripts, as the stage loads it.
   for (const s of data.shots) {
     const context = vm.createContext({});
@@ -77,8 +81,8 @@ test('site: the real shot list builds, one script per shot, every module defined
   assert.deepEqual(bundled.filter((id) => !id.startsWith('core/')), ['examples/index.js'], 'core.js holds no example');
   for (const s of data.shots) assert.ok(core.includes('module.exports["site-' + s.name + '"] = require(' + JSON.stringify(s.id) + ');'), s.name + ' is in the registry');
   const html = fs.readFileSync(path.join(out, 'index.html'), 'utf8');
-  assert.match(html, /<section class="shot seam" id="shot-grid" data-shot="15" aria-hidden="true">/);
-  assert.equal((html.match(/<figure class="still"/g) || []).length, 8, 'a still for each shot, none for the seam');
+  assert.match(html, /<section class="shot seam" id="shot-grid" data-shot="20" aria-hidden="true">/);
+  assert.equal((html.match(/<figure class="still"/g) || []).length, 11, 'a still for each shot, none for the seam');
   // The data is a same-origin script, not text in the page: the page has no inline script.
   assert.deepEqual(html.match(/<script[^>]*>/g), ['<script src="data.js">', '<script src="core.js">', '<script src="stage.js">']);
   assert.equal(fs.readFileSync(path.join(out, 'data.js'), 'utf8'), 'window.__siteData = ' + JSON.stringify(data) + ';\n');
