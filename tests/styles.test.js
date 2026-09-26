@@ -174,6 +174,12 @@ test('an unknown style name lists every built-in and installed style and the ins
   assert.throws(() => styles.resolve('puntillismo', env), {
     message: 'style: no style named "puntillismo". Available: ' + builtin + ' (built in); pointillism (installed). Packs are installed in ' + path.join(dir, 'styles') + '.',
   });
+  // A name is matched against the installed folders' names, never joined into a path.
+  for (const name of ['../styles/pointillism', 'styles/pointillism', '.', '..', path.join(dir, 'styles', 'pointillism')]) {
+    assert.throws(() => styles.resolve(name, env), { message: /^style: no style named / }, name);
+    assert.throws(() => styles.trust(name, env, quiet), { message: /^style: no style named / }, name);
+  }
+  assert.equal(fs.existsSync(path.join(dir, 'trust.json')), false, 'a refused name records no trust');
 });
 
 test('trust records the hash of style.json and check refuses a pack changed since', async (t) => {
@@ -459,6 +465,10 @@ test('pack refuses by name and writes nothing', async (t) => {
   const refused = (change, pattern) => assert.rejects(styles.pack({ ...options, ...change }, env, quiet), pattern);
   await refused({ name: 'Pointillism' }, /^Error: pack: the name must be lowercase kebab-case, at most 40 characters, not "Pointillism"$/);
   await refused({ name: 'a'.repeat(41) }, /at most 40 characters/);
+  // A name is a folder under styles/, so one that climbs out of it is refused before it forms a path.
+  const escape = '../../' + path.basename(dir) + '-escape';
+  for (const name of [escape, '..', 'a/b', 'a\\b', path.join(dir, 'abs')]) await refused({ name }, /the name must be lowercase kebab-case/);
+  assert.equal(fs.existsSync(path.join(dir, escape.slice(3))), false, 'nothing is written beside ARTIFEX_HOME');
   await refused({ name: 'impasto' }, /^Error: pack: "impasto" is a built-in style's name; choose another$/);
   await refused({ guide: path.join(author, 'thin.md') }, /thin\.md has no "## What makes it read as" heading; a guide has "# <title>", then "## What makes it read as", "## Recipe", "## Pitfalls", "## Any subject", in that order$/);
   await refused({ seed: '-1' }, /^Error: pack: --seed must be an integer from 0 to 4294967295$/);
