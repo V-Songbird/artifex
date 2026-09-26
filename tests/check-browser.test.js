@@ -157,10 +157,13 @@ test('browser stop waits for the owned Edge to exit and fails while it keeps run
   const kill = async () => { calls++; };
   await stopBrowser(root, delay(200), { limitMs: 5000, kill });
   assert.equal(calls, 1);
-  const started = Date.now();
+  // Node fires a timer once whole loop milliseconds reach its delay, so it can
+  // fire under a millisecond early, and the stop arms that delay from
+  // Date.now()'s whole milliseconds: a correct stop waits over 498 ms here.
+  const started = performance.now();
   await assert.rejects(stopBrowser(root, new Promise(() => {}), { limitMs: 500, kill }),
     /could not stop owned Edge process 424242 within 500 ms/, 'an Edge whose exit is never seen is not stopped');
-  assert.ok(Date.now() - started >= 500, 'the exit is awaited until the limit');
+  assert.ok(performance.now() - started >= 500 - 2, 'the exit is awaited until the limit');
   await assert.rejects(stopBrowser(root, Promise.resolve(), { kill: async () => { throw new Error('spawn taskkill.exe ENOENT'); } }),
     /ENOENT/, 'a stop that cannot start fails');
   // A finished stop must not hold the command open until its 60 s bound.
