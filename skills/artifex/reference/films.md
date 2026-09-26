@@ -72,6 +72,16 @@ finish: {
 A film is judged as a world, not a subject on a set. Every rule here is checked
 on frames, not in code.
 
+**The mark rules of the [focal preset](stills.md#art-direction-preset-focal-composition)
+hold on every frame of a film.** Read them there:
+
+- [give every irregularity a cause](stills.md#art-direction-preset-focal-composition):
+  form, gesture, material, placement and timing each get their own, not one noise;
+- [inspect paint order in rendered output](stills.md#art-direction-preset-focal-composition):
+  correct invariants do not prove the layering;
+- [prefer five excellent marks to fifty equivalent decorative ones](stills.md#art-direction-preset-focal-composition):
+  detail and contrast fall away from the subject.
+
 **Plan in seconds before code.** Write a beat sheet: each scene's beats in
 seconds, the background action that runs under it, and for each transition the
 physical event that links one scene's shape to the next. Keep it in the piece's
