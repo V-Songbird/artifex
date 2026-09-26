@@ -110,6 +110,18 @@ To render your own piece without editing the plugin, export it with
 This writes `my-piece-page.html` beside the piece. Replace `<library root>`
 with the absolute library directory; relative piece paths start where npm was invoked.
 
+## Read the reference your piece needs
+
+This file holds what every piece needs. Open a reference when the piece needs it:
+
+| when | read |
+|---|---|
+| a still, or the focal preset for any piece | [stills](reference/stills.md): its looks to leave out, focal composition, scaling to print |
+| a piece delivered as a film | [films](reference/films.md): its looks to leave out, the finish, art direction, continuity and transitions, looking at a film, saving it |
+| a plotter or print SVG | [vector and plotter output](reference/vector.md) |
+| a GPU pixel preview | [WebGPU preview](reference/webgpu.md) |
+| clipping, offsets, resampling or fields | [geometry and fields](reference/geometry-fields.md) |
+
 ## What the library gives you
 
 Small on purpose — nothing here assumes a subject. Everything else you write.
@@ -129,7 +141,7 @@ require('./core/field.js')   // sampleGrid, gradient, curl, warp, threshold,
 require('./core/time.js')    // span, ease, tween, shots, shotAt, spring,
                              // follow
 require('./core/layer.js')   // layer
-require('./core/sound.js')   // sumInto, voice, room
+require('./core/sound.js')   // sumInto, voice, ambience, room
 ```
 
 **`noise2` is value noise and `gradient2` is gradient noise.** The derivative of
@@ -138,17 +150,9 @@ whose gradients drive curls or hatch angles.
 
 These modules provide subject-independent arithmetic, path and colour operations.
 If a reusable operation needed across pieces is missing, report the gap.
-
-For segment query results and bounded open offsets, read the
-[geometry API](../../docs/apis/geometry.md). Intersections distinguish a single
-point from a collinear overlap. Offsets keep self-intersections and use limited
-miter joins with bevel fallback; they are not polygon boolean operations.
-
-For fields that end in drawing paths, read the [field API](../../docs/apis/fields.md).
-`isolines` returns raw segments and chained paths in grid coordinates;
-`streamline` walks scalar angles or vector directions with a fixed spatial step.
-`gradient` and `curl` differentiate a caller-supplied scalar field with a finite
-difference step in that field's coordinate units.
+Before clipping, offsetting or walking a field, read
+[geometry and fields](reference/geometry-fields.md): `clipPolyline` returns
+runs, not one line.
 
 **`mix` works in linear light.** `mix('#000','#fff',0.5)` is `#bcbcbc`, not
 `#808080`: the first represents half the light; averaging the encoded sRGB values
@@ -170,10 +174,6 @@ grain, a line with no arrowhead — use `turn(from, to, Math.PI)`.
 **`centred(u, v)` takes two values.** Averaging n independent uniforms reduces
 their standard deviation by 1/√n. Adding more samples concentrates results near
 the centre and reduces variation between seeds.
-
-**`clipPolyline` returns RUNS, not one line.** A line that leaves the design box
-and comes back is two marks; joining them draws a stroke across the middle of
-the picture that you never asked for, and a plotter draws it too.
 
 ## Look at nine seeds
 
@@ -223,21 +223,17 @@ After the review, name the default the piece fell back on, in visual terms:
 "every stroke leaves the same point and sweeps the same way, like a bouquet",
 not "it looks generic". Add it to the piece's [looks to leave out](#ask-which-looks-to-leave-out),
 then re-roll or revise before you show the next draft. For a film, also
-[look at a film](#look-at-a-film) at its cuts and transitions.
+[look at a film](reference/films.md#look-at-a-film) at its cuts and transitions.
 
 ## Ask which looks to leave out
 
 Before the first draft, ask the owner which looks this piece must not have, and
 keep the answer with the piece, in the comment at the top of its source. Start
 the list with the defaults this skill already names, so the owner can strike or
-extend it:
-
-- one noise family at every scale ([focal composition](#art-direction-preset-focal-composition));
-- in a still, a grain pass over the finished frame instead of texture on each mark
-  (same); a film's [finish](#film-finish) is one declared process over every frame,
-  not this;
-- a line that fades up through `globalAlpha` instead of arriving (same);
-- a flow field around a focus that turns botanical ([traps](#traps)).
+extend it: a still's in [stills](reference/stills.md#looks-to-leave-out), a
+film's in [films](reference/films.md#looks-to-leave-out). A grain pass over the
+finished frame is on a still's list, never a film's: a film's finish is one
+declared process over every frame.
 
 The list belongs to the piece; the library forbids no style.
 
@@ -272,14 +268,6 @@ used by `contours` and `drift`. The shared stroke font lives in
 point exporting the same module. Segment chaining stays in `core/geom.js` and
 is used by `core/field.js` to join isoline segments.
 
-`inversion.js` reads the surface's `getTransform()` to stop circles below a
-1.4-pixel diameter. Larger PNG exports add smaller circles without moving shared
-geometry. `VectorSurface` and the benchmark null surface expose detached numeric
-`{a,b,c,d,e,f}` snapshots through `getTransform()`, without `DOMMatrix` methods.
-Ordinary SVG export uses identity scale and retains the design-resolution cutoff;
-surfaces without a reader use scale 1. The tree also stops after twelve reflections. See
-[output formats](../../docs/knowledge/output-formats.md) for that limit.
-
 ## Named styles
 
 When someone asks for a style by name, open the [style catalog](styles/catalog.md)
@@ -308,7 +296,7 @@ To make a style no guide holds:
 2. Read the nearest guide for each part, for example [3D render](styles/render-3d.md)
    for light and depth and [embroidery](styles/embroidery.md) for fibre, and
    take their techniques, not their subjects.
-3. Draw a [time strip](#look-at-a-film)
+3. Draw a [time strip](reference/films.md#look-at-a-film)
    (`npm --prefix "<library root>" run seeds -- "./my-piece.cjs" --frames 9 --png`),
    or a contact sheet for a still, and point to each part of the signature on
    every frame. A part you cannot point to is missing: flat fills under a soft
@@ -409,7 +397,8 @@ draw(g, s, t, clock) {
 - **`ease` curves hold their end values outside `[0, 1]`**, exactly. `back`
   passes its mark and settles; `bump` goes out and comes back, an event such as
   a blink. The table is frozen because every piece in a page shares it.
-- **A cut is a hard cut.** The module has no transitions.
+- **A cut is a hard cut.** The module has no transitions; a film authors them
+  as cues ([continuity](reference/films.md#continuity)).
 - **`spring` and `follow` move with weight.** `spring({ stiffness, damping,
   delay })(s)` takes seconds since a cue and rises from 0 to 1: `damping` is a
   ratio, below 1 it passes the mark and rings, 1 arrives soonest without
@@ -456,37 +445,17 @@ A film is drawn at one box: its frame size cannot change while it plays.
 
 For a costly opaque per-pixel field, an author may add
 `preview: { kind: 'webgpu-pixels', wgsl, uniforms }` to a raster-only piece.
-Read the exact [GPU pixel ABI](../../docs/apis/piece-api.md#optional-webgpu-pixel-preview)
-and `examples/pixel-field.js` first. WGSL defines
-`artifexPixel(position: vec2f) -> vec3f` in encoded sRGB, with fixed seed/time/size
-inputs and at most sixteen float uniforms. Keep `draw` as the CPU implementation;
-there is no automatic JavaScript translation or arbitrary GPU resource API.
-Use the resolved state seed and shared quantized clock in both implementations.
-
-The page starts on CPU, labels GPU output as approximate and falls back on
-unavailable or software adapters, insufficient device limits, initialization or
-render failure, timeout and loss. GPU preview is bounded to 4096 per axis and
-8,294,400 pixels. Exports, contact sheets and replay manifests remain CPU-based.
-Measure matching native CPU/GPU inputs and inspect local differences before
-claiming fidelity or a speedup; Node mocks and shader timings alone do not
-establish those claims. Shader arithmetic may differ across devices.
+Read the [WebGPU preview](reference/webgpu.md) first: `draw` stays the CPU
+implementation, and exports, contact sheets and replay stay on the CPU.
 
 ## The four outputs
 
 | you want | how |
 |---|---|
 | an interactive page | pass a real `CanvasRenderingContext2D` to `drawFrame` |
-| a print-resolution still | same, at `scale: 8` or higher. **Not capped.** |
-| a film | walk `playheads(piece)`; the frames are a property of the piece, never of how fast the machine is. The built page does it: **MP4**, with the long edge at 1920 px or more, or **MP4 1x** for a draft, frame-exact at any drawing speed and carrying the declared soundtrack, or `__artifex.film({ scale, bitrate })`, which saves nothing and returns the report read from the file. From a shell, `npm run film -- ./my-piece.cjs` saves that same export beside the piece as `my-piece.mp4`, with its report as `my-piece.mp4.json`, and takes `--out`, `--scale` and `--bitrate`; do not write your own browser driver. The default bitrate is 0.45 bit per pixel per frame, about 22 Mbit/s at 1080p24, measured to keep fine hatching over replay's 30 dB floor; pass `bitrate` in bit/s to spend more. Only where the browser cannot encode that MP4 does the page offer **WebM video**, which records in real time, so it needs frames cheaper than their budget and has no sound |
-| a plotter / print SVG | `renderVector(piece)` — declare `outputs: ['raster','vector']` first |
-
-**Chain your segments before you draw them.** A plotter lifts its pen between
-paths. `chain(segs)` in `core/geom.js` joins connected segments into longer
-pen-down paths. Endpoints match exactly: generate shared endpoints with the same
-arithmetic. The implementation uses numeric `Map` keys, which treat `-0` and `0`
-as equal. Rounding coordinates into string keys can merge distinct endpoints and
-can distinguish tiny negative values rounded to `"-0.000000"` from values rounded
-to `"0.000000"`.
+| a print-resolution still | same, at `scale: 8` or higher. **Not capped.** Read [scaling to print](reference/stills.md#scaling-to-print) |
+| a film | walk `playheads(piece)`; the frames are a property of the piece, never of how fast the machine is. The built page's **MP4** export, or `npm run film -- ./my-piece.cjs` from a shell, saves it frame-exact with its soundtrack; do not write your own browser driver. Read [save a film](reference/films.md#save-a-film) |
+| a plotter / print SVG | `renderVector(piece)` — declare `outputs: ['raster','vector']` first, then read [vector and plotter output](reference/vector.md) |
 
 **A raster check must render into its own canvas** created with
 `willReadFrequently: true`. Canvas rasterization and anti-aliasing can vary with
@@ -502,16 +471,7 @@ otherwise it is drawn every time. It pays where frames are rasterized on the
 CPU. `drift` and `readout` use it.
 
 The surface is **Canvas2D-shaped** in all four, so one `draw` reaches all of
-them unchanged.
-
-A vector surface **refuses every raster operation by name** —
-`drawImage`, `putImageData`, `fillText`, `createPattern`, `clearRect` and the
-rest — and tells you what to do instead. It will never hand back a file quietly
-missing half the picture.
-
-**Scaling to print:** do not multiply every stochastic frequency by the scale.
-Macro composition must be invariant under resolution; only micro-detail
-bandwidth may rise with it.
+them unchanged, except that a vector surface refuses raster operations by name.
 
 ## Sound
 
@@ -584,14 +544,14 @@ solved trajectory.
   verdict. Report the block, its time and its measure; never delete, soften or
   filter a sound, or change any of the art, to satisfy a checker.
 
-### Voices, a room and a bed
+### Voices, a place and a room
 
 A bare oscillator blip sounds like a test tone. `core/sound.js` gives a voice
-in layers and a room for it to sound in; neither names an instrument, so the
-subject decides what they are.
+in layers, the ambience of a place and a room for them to sound in; none names
+an instrument, so the subject decides what they are.
 
 ```js
-const { sumInto, voice, room } = require('./core/sound.js');
+const { sumInto, voice, ambience, room } = require('./core/sound.js');
 const R = rng(state.seed);
 const v = voice(ctx, R, 'impact 3', seconds, {
   pitch: 220,                                   // the body's first partial, in hertz
@@ -603,6 +563,14 @@ const v = voice(ctx, R, 'impact 3', seconds, {
   level: 0.4, pan: -0.2,
   velocity: 0.7,   // 0..1: how hard it starts; softer is quieter and darker
   vary: 0.5,       // 0..1: this voice's own seeded pitch, level and decay
+  bend: [[0, -150], [0.1, 0]],                  // [seconds, cents]: the pitch glides as it sounds
+  vibrato: { depth: 10, rate: 5.5, delay: 0.3 }, // cents either way, times a second, from a delay
+  sweep: [[0, 800], [0.2, 5000], [1.5, 1200]],  // [seconds, hertz]: a low-pass that opens and closes
+  distance: 0.4,   // 0..1: far is quieter and darker; send it more to the room
+});
+const rain = ambience(ctx, R, 'rain', 0, {       // the place: a low bed and small events
+  length: 8, colour: 2800, band: 1.5, level: 0.004, drift: 0.3, fade: 1.5,
+  grains: { rate: 160, length: 0.012, chirp: 0.6, level: 0.045, spread: 24 }, // drops as rising bubbles
 });
 const hall = room(ctx, R, 'room', { size: 1.6 });     // a convolver of seeded noise
 ```
@@ -616,7 +584,16 @@ const hall = room(ctx, R, 'room', { size: 1.6 });     // a convolver of seeded n
   thinning, and let the picture follow the same curve. Set each event's
   `velocity` from its cause, such as its weight, speed or nearness, so an
   accent is both louder and brighter; give repeated events `vary` so no two
-  strike alike. A far sound is softer, darker and wetter than a near one.
+  strike alike.
+- **Let each note move while it sounds.** A held pitch at one colour is a
+  machine. Fall into a note or rise out of it with `bend`, let a held note
+  swing with `vibrato` after a delay, open and close its colour with `sweep`.
+  Take the motion from the cause: a closing bubble rises, a passing engine's
+  note drops as it goes, a gust opens and then closes.
+- **Put the sounds at their distances.** Set `distance` from the cause's
+  place: a far sound is quieter, darker and wetter than a near one. Its room
+  send should grow as its dry sound falls; the [film scaffold](film-scaffold.cjs) does that when a
+  sound gives no `wet`. A thing that moves toward the viewer comes nearer.
   Check `sound.limited` in the export report: past about 4 dB the limiter is
   flattening your accents, so lower the loudest transients against the body.
 - **Name every voice by its cause**, such as `'drop 4'`: its noise is
@@ -629,205 +606,16 @@ const hall = room(ctx, R, 'room', { size: 1.6 });     // a convolver of seeded n
 - **Lay a bed under the effects.** A film whose sounds all start and stop on
   events has silence between them. Give each shot a bed: one or two voices
   with a slow attack, a hold across the shot and detuned partials, 10 to 20 dB
-  under the events, low in pitch or a band of tail noise, so the effects sit
-  on something. Change the bed where the shot changes, overlapping the two
+  under the events, low in pitch, so the effects sit on something. Change the bed where the shot changes, overlapping the two
   over its attack and decay rather than cutting.
+- **Give a place its ambience when it has one.** Rain, a stream, wind or a
+  street is heard as many small events more than as noise: build it with
+  `ambience` grains in the place's band, such as bubbles that rise as they
+  close for water, and keep its bed low and dark under them. A steady band of
+  noise at the level of the events is heard as white noise, not as a place;
+  keep an ambience 20 dB or more under the events. Not every shot has one.
 - **Every layer fades out over 80 ms** from -60 dB and stops, so a voice never
   ends in a click.
-
-## Film finish
-
-A film may declare `finish`: one process that touched every pixel of every
-frame, as developing and printing touch a film. `drawFrame` draws it after
-`draw` on every raster frame, the same way on each. Read the
-[piece API](../../docs/apis/piece-api.md#film-finish) for the contract.
-
-```js
-finish: {
-  grain: 0.35,     // 0..1: seeded grain that boils, a new offset every frame
-  weave: 1.2,      // design units: the picture moving in the gate
-  flicker: 0.05,   // 0..1: how far a frame's exposure may dip
-  vignette: 0.35,  // 0..1: how dark the corners fall
-  grade: { black: '#1d1812', white: '#f4ecdc', tone: '#9c7a52', toning: 0.15 },
-}
-```
-
-- **Reach for it when a film should read as one film.** Scenes in their own
-  palettes, cutouts and parts drawn apart read as a collage of styles until one
-  process passes over all of them. Grain, weave and flicker keep the whole frame
-  alive where nothing in the picture moves.
-- **The grade unifies the palette.** `black` and `white` are where the print's
-  darkest and lightest land, so every scene shares one black and one white;
-  `tone` pulls every hue toward one colour by `toning` and keeps each pixel's
-  lightness. A warm tone greys a saturated blue quickly: keep `toning` low and
-  let the ends do most of the work.
-- **One treatment, the whole film.** It is declared once, not per shot. Scenes
-  that should feel different differ in their marks and palettes, under the same
-  print. Do not bake a different grain or tint into each sprite instead: that is
-  the film that reads as made of different styles.
-- **The marks keep their own texture.** The finish is the film's material, not a
-  substitute for the material on screen: paper keeps its cut edge, paint its
-  stroke. [Texture belongs to the material](#art-direction-preset-focal-composition)
-  still holds for every mark, and for stills, which refuse `finish`.
-- **Keep it quiet and look at full size.** Grain spends bitrate: at the export's
-  default a film grain keeps about two thirds of its finest detail, and the rest
-  softens into mottling, so judge it on decoded frames at 100%, not on the
-  canvas, and raise `bitrate` if it must survive.
-- **Nothing to schedule.** Each part is a function of the seed and the frame, so
-  scrubs, exports and replay agree. An SVG keeps the bare marks; a PNG, a film and
-  the page carry the finish. Paint an opaque ground: grain over transparency
-  shows grey.
-
-`examples/cues.js` declares one: four palettes under one print.
-
-## Film art direction
-
-A film is judged as a world, not a subject on a set. Every rule here is checked
-on frames, not in code.
-
-**Plan in seconds before code.** Write a beat sheet: each scene's beats in
-seconds, the background action that runs under it, and for each transition the
-physical event that links one scene's shape to the next. Keep it in the piece's
-header comment beside its [looks to leave out](#ask-which-looks-to-leave-out),
-then turn it into one cue table in frames, as `examples/cues.js` does.
-
-**Start the plumbing from the [film scaffold](film-scaffold.cjs).** Copy it
-beside your piece and fill its slots: the shots, a cue table where every
-element has an entry and an exit, what paints each element, the sounds with
-their causes and distances, the room, the ground drawn once and the finish. It holds
-structure only and draws nothing but a grey ground: the subject, the look,
-the voices' recipes and the finish come from you and the style guide. Its
-build refuses an element with no exit and a sound whose cause is not on
-screen at its second.
-
-**Build and review scene by scene.** Finish one scene, [look at its
-frames](#look-at-a-film), fix it, then start the next. Write a long plan or
-source in pieces, a scene at a time: one very long write can be lost to the
-output limit.
-
-### What every scene holds
-
-- **The background lives, quieter than the subject.** Give elements behind the
-  subject their own cues and their own `R` names, so each keeps its own rhythm:
-  something flickers, drifts, sways or switches on and off. Keep it smaller,
-  slower and lower in contrast than the subject, so the eye still lands there.
-- **Background motion stays readable.** Nothing crosses the frame in about half
-  a second; slow it or shorten its path.
-- **Light reaches as far as it would.** A glow or beam lights what lies around
-  it: draw it as its own pass over the layers it crosses, with a blend such as
-  `screen` or `lighter` and a falloff with distance, or tint each layer it
-  crosses. A layer's edge or clip never cuts a light off. Every lit area has a
-  source, in the frame or plainly beyond it.
-- **Everything stands on something.** An element meets what holds it with a
-  contact shadow, an overlap or a shared edge, and a far form's base runs into
-  the colour and texture of the ground under it. A gap of a few pixels reads as
-  floating.
-
-### Continuity
-
-- **Props exit when their job ends.** An element whose beat is over leaves, on
-  screen or with the cut; one kept as a reminder reads as a mistake.
-- **Nothing appears or vanishes without a cause.** An element enters and
-  leaves through an edge, an opening that exists or from behind something.
-- **A character keeps its identifying features in every view.** Draw every view
-  from one set of parts: the same silhouette, markings, colours and proportions.
-  Put its views side by side and compare.
-- **A transition is a physical event.** Something that can happen to one
-  scene's shape turns it into the next: a surface breaks, a form grows into
-  another, the view passes through an opening. Never an empty frame, and never
-  the next scene as a flat card the view moves into. `core/time.js` only cuts;
-  author the change as cues, as `cues.js` blends its scenes part by part.
-- **Gags get anticipation and a hold.** Wind up before the action, let it land,
-  then hold the result long enough to read before the next beat.
-- **Motion has weight: parts overlap and follow through.** Nothing moves as one
-  rigid pose. Loose parts, such as a tail, hair, cloth or a held prop, start
-  after the body and arrive after it: drive them with `follow` from the body's
-  own move, with a longer `delay` and softer `stiffness` the further they hang.
-  A landing or a hit rings on a `spring` and holds until its `settle` before
-  the next beat. A sine wobble or an instant pose reads as mechanical.
-
-### Detail and resolution
-
-- **Detail falls away from the subject**, as the
-  [focal preset](#art-direction-preset-focal-composition) says for stills:
-  broader marks and lower contrast in the background.
-- **No line work near the pixel scale.** Lines, hatching or pattern spacing of
-  one or two output pixels shimmer into moiré as they move and blur in the
-  encoded film. Keep the finest spacing several pixels wide at the delivered
-  size, and judge it on a 100% crop of a decoded frame.
-
-### Look at a film
-
-Nine seeds show one playhead; a film also needs its times. A time strip draws
-them from the command line, at the piece's seed, 640 px wide per frame, each
-with its draw time:
-
-```shell
-npm --prefix "<library root>" run seeds -- "./my-piece.cjs" --frames 9 --png
-npm --prefix "<library root>" run seeds -- "./my-piece.cjs" --at 1.5,1.75,4,6.25 --png
-npm --prefix "<library root>" run seeds -- "./my-piece.cjs" --at 4,6.25 --loupe 480,300 --png
-```
-
-The first spreads nine frames from the first to the last, the second shows the
-frames holding those seconds, and the third adds under each a 100% crop of the
-film at its export size around that design point (the centre without one), for
-fine detail. Each writes `my-piece-frames.html` and `my-piece-frames.png`.
-After each scene, and before delivery:
-
-1. List every cut, every transition's midpoint and each beat of the beat sheet.
-2. Draw each in a strip with `--at`. Add the time a few frames later wherever
-   motion matters. Open the image and look at every frame.
-3. Check each frame against the three lists above: the background moves between
-   the pair, light reaches past the layers it crosses, everything touches what
-   holds it, nothing stays past its beat or vanishes between two times, no
-   transition midpoint is empty or a flat card, and each character matches its
-   other views.
-4. Name each fault in visual terms, fix it and look again. Check fine detail
-   with `--loupe`, then once more on the exported film.
-5. Save the film with `npm run film` and check it with
-   `npm --prefix "<library root>" run replay -- "./my-piece.mp4" --piece "./my-piece.cjs"`.
-   For a page that plays the piece without controls, open the built page
-   with `?player=1`; do not build a player of your own.
-
-## Art-direction preset: focal composition
-
-Use this optional preset when a focal relationship suits the piece. A tessellation,
-textile repeat or all-over field may deliberately give elements equal attention;
-review that intention without imposing a focal point. The following guidance
-does not add requirements to the piece contract.
-
-Review these compositional properties in rendered output:
-
-**Give every irregularity a cause.** Not one noise source standing in for all of
-them. Keep them separate: *morphological* (the form itself), *gestural* (how it
-appears to have been made), *material* (how the medium behaves), *compositional*
-(where things sit), *temporal* (when things happen). One noise family at all
-five scales produces recognisable algorithmic self-similarity.
-
-**Texture belongs to the material, not to the frame.** A global grain pass over
-a finished image treats every surface as though the same particulate process
-affected it. Variation attached to the *mark* is more informative than variation
-attached to every pixel. A film differs: its grain,
-weave and print did touch every pixel, so declare them once as its
-[finish](#film-finish), over marks that keep their own texture.
-
-**Inspect paint order in rendered output.** Correct invariants do not establish
-that layering and occlusion produce the intended image.
-
-**Prefer five excellent marks to fifty equivalent decorative ones.** Detail and
-contrast should fall away from the focal relationship. Giving every element the
-same detail and contrast can weaken visual hierarchy.
-
-**A line must arrive, not fade up.** `globalAlpha = progress` is a finished line
-fading in, not a pen moving, and the difference is most of what makes a drawing
-read as drawn.
-
-**A mean can hide changes in a small mark.** A large local change may contribute
-little to a frame-wide average. Pair each mean with the largest single-cell
-change.
-
-**Seed robustness is the real test.** A system is not good because it accidentally
-produced one beautiful seed. Render nine and look at all of them.
 
 ## Traps
 
@@ -842,9 +630,6 @@ produced one beautiful seed. Render nine and look at all of them.
   trajectory once, store a snapshot per drawn frame, and have `draw` read
   `clock.frame`. Quantise the whole frame, not just the reveal: a simulation
   advanced continuously under a stepped drawing slides.
-- **Preserve straight runs when resampling.** Curvature-based resampling can drop
-  a two-point stroke below a station minimum, removing a letter's crossbar or
-  another straight feature. Retain its endpoints.
 - **Display values are not linear light.** Passing linear-light values directly
   to `round(v*255)`, without sRGB encoding, produces an incorrectly dark display
   result.
@@ -852,27 +637,14 @@ produced one beautiful seed. Render nine and look at all of them.
   With a falling displacement ceiling, the ceiling may dictate motion magnitude
   while the forces only choose direction. Measure how often the clamp binds
   across frames and seeds.
-- **Curvature is not occlusion.** A Laplacian measures local curvature rather
-  than visibility and can produce bright centres and dark rings unrelated to
-  blocked light. When estimating ambient occlusion from a height field, use
-  visibility information, such as a horizon sweep.
 - **Address stable entities, not output positions.** `R('dither', 'f', facets.length)`
   changes its address whenever an earlier facet is removed. Use an entity index
   that remains stable when other output is filtered or reordered.
 - **A check whose pass condition is "no difference" is satisfied by nothing
   happening.** Pair every bound with a floor that must be non-zero.
-- **A piece slower than real time cannot be recorded in real time.** The WebM
-  recorder stamps frames by the wall clock, so frames that cost more than their
-  budget are lost and the export says so. MP4 encodes every frame at its own
-  time; a heavy frame makes a slower export, never a shorter film.
 - **A clock read after the drawing calls return measures their submission.**
   A browser canvas defers rasterization; force it, for example with a one-pixel
   `getImageData`, before timing a frame.
-- **A film whose colour tag disagrees with its samples shifts every colour.**
-  Limited-range video read as full range lifts black to grey and dims white. The
-  MP4 export converts every frame to limited-range BT.709 and tags it so, in the
-  container and in the H.264 stream; keep that range and both tags through any
-  re-encode.
 - **A declared parameter must affect the output.** Sweep each parameter at min,
   value and max: cyclic parameters may produce the same output at both endpoints.
   Check that the build or draw actually reads its validated value.

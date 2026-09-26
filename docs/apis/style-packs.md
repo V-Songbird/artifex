@@ -55,7 +55,7 @@ The piece follows the [external piece](../knowledge/development.md#external-piec
 | Key | Rule |
 | --- | --- |
 | `stylePack` | `1`, the format version. |
-| `name` | Lowercase kebab-case (`a-z`, `0-9` and single hyphens), at most 40 characters, equal to the folder name. |
+| `name` | Lowercase kebab-case (`a-z`, `0-9` and single hyphens), at most 40 characters, equal to the folder name, and not a [Windows device name](#windows-device-names). |
 | `title`, `summary`, `version` | Nonempty single lines of text. `version` is the pack's own version, for people. |
 | `artifex` | The exact Artifex version the sample was drawn and proved with. It must equal the `artifex` field in the sample's replay manifest. |
 | `author`, `license` | Optional nonempty single lines of text. |
@@ -71,7 +71,12 @@ Any other key is refused. Each path in `files` is relative to the pack folder an
 - contains a `..` segment, an empty segment or a `.` segment;
 - holds a control character or one of `: * ? " < > |`;
 - ends a name with a dot or a space, which Windows drops;
+- has a folder or file name that is a [Windows device name](#windows-device-names), such as `lib/aux.js`;
 - names `style.json` itself.
+
+### Windows device names
+
+Windows reserves `CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9` and `LPT1` to `LPT9` for devices. A name is refused when it is one of these in any case, alone or followed by an extension, as in `aux.js`, `Nul.tar.gz` or `con .json`, where spaces come before the dot. Git for Windows cannot add such a file, and some Windows tools open the device instead of the file, so a pack with one would not install or be shared reliably on Windows, even when it was made on another system. A device name inside a longer name is allowed: `con-x`, `auxx.js`, `com10` and `x.con` are ordinary names.
 
 The sample's recipe (seed, parameters, playhead and scale) is kept only in the sample's own replay manifest, so it cannot disagree with a copy.
 
@@ -136,7 +141,7 @@ npm run styles -- pack <piece> --name <name> --guide <guide.md> --summary <text>
 
 `<piece>` is an [external piece](../knowledge/development.md#external-pieces), a built-in style's module or any other piece module; relative paths resolve from where you ran the command. The [style-pack skill](../../skills/style-pack/SKILL.md) walks an agent through it.
 
-1. Refuses a `--name` that breaks the `name` rule or is a built-in style's name, an existing `<ARTIFEX_HOME>/styles/<name>` unless `--replace` is given, a link there even with `--replace`, and a guide without a `# ` title followed by headings that start `What makes it read as`, `Recipe`, `Pitfalls` and `Any subject`, in that order. Other headings, such as `Palette`, may come between them.
+1. Refuses a `--name` that breaks the `name` rule, including a Windows device name, or is a built-in style's name, an existing `<ARTIFEX_HOME>/styles/<name>` unless `--replace` is given, a link there even with `--replace`, and a guide without a `# ` title followed by headings that start `What makes it read as`, `Recipe`, `Pitfalls` and `Any subject`, in that order. Other headings, such as `Palette`, may come between them.
 2. Loads the piece and copies it to `piece.cjs`, and every local helper or JSON file it reaches to `lib/<file name>`, adding `-2`, `-3` and on when two share a name. Each literal `require` is rewritten to the file's new place. A require of the library's `core/`, by any path, becomes `artifex/core/<file>.js`, as does `examples/stroke-font.js`, which re-exports `core/stroke-font.js`. A require of any other file in the library's `examples/` is refused, because only `core/` is the library's API.
 3. Draws the sample at `--seed` (default: the piece's seed) and the playhead `--t` (default 1) on the frame grid: `sample.svg` in Node for a piece that declares `vector` output, otherwise `sample.png` 600 pixels wide, drawn in installed Edge as the page's PNG button draws it. Each carries its replay manifest.
 4. Writes `style.json`: `title` from `--title` or the guide's `# ` heading, `version` from `--version` or `1.0.0`, `artifex` this library's version, `author` and `license` when given, and the hash of every file.

@@ -17,7 +17,8 @@ const { VERSION, frameT } = require('../core/piece.js');
 const { renderVector } = require('../core/render.js');
 const { callerDirectory, imports, loadExternal } = require('./piece-input.js');
 const { manifestOf, replay } = require('./replay.js');
-const { bundle, html, pngWithManifest } = require('./build-page.js');
+const { bundle, html } = require('./build-page.js');
+const { pngWithManifest } = require('../core/export.js');
 const { withEdge, waitFor, evaluateInPieces } = require('./check-browser.js');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -25,6 +26,10 @@ const STYLES = path.resolve(__dirname, '..', 'skills', 'artifex', 'styles');
 const KEYS = ['stylePack', 'name', 'title', 'version', 'artifex', 'summary', 'author', 'license', 'piece', 'guide', 'sample', 'files'];
 const OPTIONAL = new Set(['author', 'license']);
 const NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+// A file or folder name Windows can read as a device, whatever its case and
+// extension, as Git for Windows refuses it: the device, spaces, then a dot or the end.
+const DEVICE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9]) *(?:\.|$)/i;
+const deviceProblem = (name) => { const device = DEVICE.exec(name); return device && 'is "' + name + '", which Windows reads as the device ' + device[1].toUpperCase(); };
 const LOADABLE = /\.(?:c?js|mjs|json)$/i;
 const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
 
@@ -50,6 +55,8 @@ function pathProblem(file) {
   if (parts.includes('..')) return 'leaves the pack with ".."';
   if (parts.some((part) => part === '' || part === '.')) return 'has an empty or "." segment';
   if (parts.some((part) => /[. ]$/.test(part))) return 'ends a name with a dot or a space, which Windows drops';
+  const device = parts.map(deviceProblem).find(Boolean);
+  if (device) return 'has a segment that ' + device;
   if (file.toLowerCase() === 'style.json') return 'is the manifest itself';
   return null;
 }
@@ -62,6 +69,7 @@ function validateManifest(m, folder) {
   for (const key of KEYS) if (!OPTIONAL.has(key) && !Object.hasOwn(m, key)) bad('missing key "' + key + '"');
   if (m.stylePack !== 1) bad('"stylePack" must be 1, the format this library reads');
   if (typeof m.name !== 'string' || !NAME.test(m.name) || m.name.length > 40) bad('"name" must be lowercase kebab-case, at most 40 characters');
+  if (deviceProblem(m.name)) bad('"name" ' + deviceProblem(m.name));
   if (m.name !== folder) bad('"name" is "' + m.name + '" but the folder is "' + folder + '"');
   for (const key of ['title', 'version', 'artifex', 'summary', 'author', 'license']) {
     if (Object.hasOwn(m, key) && (typeof m[key] !== 'string' || !m[key].trim() || /[\x00-\x1f]/.test(m[key]))) bad('"' + key + '" must be a nonempty line of text');
@@ -406,6 +414,7 @@ async function pack(options, env = process.env, log = console.log, browser = {})
   const cwd = callerDirectory(process.cwd(), env);
   const name = options.name;
   if (!NAME.test(name) || name.length > 40) throw new Error('pack: the name must be lowercase kebab-case, at most 40 characters, not "' + name + '"');
+  if (deviceProblem(name)) throw new Error('pack: the name ' + deviceProblem(name) + '; choose another');
   if (builtins().some((style) => style.name === name)) throw new Error('pack: "' + name + '" is a built-in style\'s name; choose another');
   const dest = path.join(home(env), 'styles', name);
   const existing = fs.lstatSync(dest, { throwIfNoEntry: false });

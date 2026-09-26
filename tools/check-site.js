@@ -18,12 +18,14 @@
 // that follows a load, a new solve or a scale change (reported apart). Then reduced motion must
 // show every shot as a still and draw nothing on scroll; with the canvas
 // transfer taken away, the worker-tier shot must draw on the main thread; and
-// a recipe URL must open its shot, frame and seed; and "Play as film" must
-// scroll at the site's rate until a key stops it.
+// a recipe URL must open its shot, frame and seed; "Play as film" must
+// scroll at the site's rate until a key stops it; and the stage's exports must
+// carry their recipes (see exporting).
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { withEdge, evaluate, waitFor } = require('./check-browser.js');
+const { withEdge, evaluate, evaluateInPieces, waitFor, FORCED } = require('./check-browser.js');
+const { manifestOf } = require('./replay.js');
 const { serveSite, OUT } = require('./build-site.js');
 const { shots: cut } = require('../core/time.js');
 const { frameOf, p95 } = require('../site/stage.js');
@@ -306,6 +308,67 @@ async function play(client, context, base, data) {
   return { frameAfterOneSecond: during.frame, expected, stoppedAt: after.frame, failures };
 }
 
+/**
+ * The stage's exports, of the shot and frame a recipe URL opens: exports.js
+ * is not loaded until a file is asked for; a PNG at 1x, read in Node, names
+ * the recipe the address bar names at scale 1 and has the piece's size; one at
+ * 8x has eight times the size and names scale 8; an SVG of a raster-only
+ * piece is refused by name; the film on offer is the MP4, and its bytes, read
+ * in Node, name the recipe and every frame. With H.264 refused, the offer is
+ * the WebM, for that reason.
+ */
+async function exporting(client, context, base, shots) {
+  context.phase = 'exports';
+  const view = REFERENCES[0];
+  // A timed shot, the first of 5 seconds or less when there is one, so its film exports quickly.
+  const timed = shots.filter((x) => x.tier === 'frame');
+  const s = timed.find((x) => x.seconds <= 5) || timed[0], seed = 7;
+  const failures = [];
+  const fail = (what) => failures.push('exports: ' + what);
+  await open(client, context, view, base + '?shot=' + s.name + '&t=0.5&seed=' + seed);
+  // The stage writes the recipe back, its playhead to four places, once the scroll rests.
+  await waitFor(client, context, '/[?&]t=\\d\\.\\d{4}(&|$)/.test(location.search)');
+  const before = await evaluate(client, '({ defined: typeof __mods["core/export.js"], fetched: performance.getEntriesByType("resource").some((e) => /exports\\.js$/.test(e.name)), search: location.search, piece: __require("check")(' + JSON.stringify(s.id) + '), frames: __require("check")("core/render.js").playheads(__require("check")(' + JSON.stringify(s.id) + ')).length })');
+  if (before.defined !== 'undefined' || before.fetched) fail('exports.js was loaded before a file was asked for');
+  const q = new URLSearchParams(before.search), size = before.piece.size;
+  const bytes = (b64) => new Uint8Array(Buffer.from(b64, 'base64'));
+  const encode = 'async (f) => { const b = new Uint8Array(await f.blob.arrayBuffer()); let s = ""; for (let i = 0; i < b.length; i += 32768) s += String.fromCharCode(...b.subarray(i, i + 32768)); return { name: f.name, b64: btoa(s) }; }';
+  const recipeOf = (m) => m && { piece: m.piece, seed: m.seed, t: m.t };
+  const want = { piece: before.piece.name, seed, t: Number(q.get('t')) };
+  const near = (m) => m && m.piece === want.piece && m.seed === want.seed && Math.abs(m.t - want.t) < 1e-4;
+
+  const png = await evaluateInPieces(client, '__stage.exports.file("png").then(' + encode + ')');
+  const pngBytes = bytes(png.b64), view32 = new DataView(pngBytes.buffer);
+  const pngManifest = manifestOf(pngBytes, png.name).manifest;
+  if (!near(pngManifest) || pngManifest.scale !== 1) fail('the 1x PNG names ' + JSON.stringify(recipeOf(pngManifest)) + ' at scale ' + pngManifest.scale + ', not ' + JSON.stringify(want));
+  if (view32.getUint32(16) !== size.w || view32.getUint32(20) !== size.h) fail('the 1x PNG is ' + view32.getUint32(16) + ' x ' + view32.getUint32(20) + ', not ' + size.w + ' x ' + size.h);
+  const after = await evaluate(client, '({ defined: typeof __mods["core/export.js"], fetched: performance.getEntriesByType("resource").some((e) => /exports\\.js$/.test(e.name)) })');
+  if (after.defined !== 'function' || !after.fetched) fail('exports.js was not loaded for the export: ' + JSON.stringify(after));
+  const big = await evaluate(client, '__stage.exports.file("png", { scale: 8 }).then(async (f) => { const b = new Uint8Array(await f.blob.arrayBuffer()), d = new DataView(b.buffer); const E = await __stage.exports.module(); return { name: f.name, w: d.getUint32(16), h: d.getUint32(20), scale: E.pngManifest(b).scale }; })');
+  if (big.w !== size.w * 8 || big.h !== size.h * 8 || big.scale !== 8) fail('the 8x PNG is ' + JSON.stringify(big));
+  const svg = await evaluate(client, '__stage.exports.file("svg").then(() => "saved", (e) => e.message)');
+  if (!/declares raster only, so it has no SVG/.test(svg)) fail('an SVG of a raster-only piece: ' + svg);
+
+  const offer = await evaluate(client, '__stage.exports.offer()');
+  if (offer.format !== 'mp4') fail('the film on offer is ' + JSON.stringify(offer) + ', not the MP4');
+  const film = await evaluateInPieces(client, '__stage.exports.file("film", { scale: 1 }).then(async (r) => Object.assign(await (' + encode + ')(r), { frames: r.frames, conversion: r.conversion }))');
+  const filmManifest = manifestOf(bytes(film.b64), film.name).manifest;
+  const frames = before.frames;
+  // A film names every frame, so no playhead.
+  if (filmManifest.piece !== want.piece || filmManifest.seed !== seed || 't' in filmManifest || !filmManifest.film || filmManifest.film.frames !== frames || filmManifest.film.scale !== 1 || film.frames !== frames) {
+    fail('the film ' + film.name + ' names ' + JSON.stringify(filmManifest && { ...recipeOf(filmManifest), film: filmManifest.film }) + ' and holds ' + film.frames + ' frames, not ' + frames);
+  }
+  if (context.errors.length) fail('page errors: ' + context.errors.join('; '));
+
+  const { identifier } = await client.send('Page.addScriptToEvaluateOnNewDocument', { source: '(' + FORCED['no-h264'].install + ')();' });
+  await open(client, context, view, base + '?shot=' + s.name + '&t=0.5&seed=' + seed);
+  const refused = await evaluate(client, '__stage.exports.offer()');
+  await client.send('Page.removeScriptToEvaluateOnNewDocument', { identifier });
+  if (refused.format !== 'webm' || refused.reason !== 'h264') fail('with H.264 refused the film on offer is ' + JSON.stringify(refused));
+  if (context.errors.length) fail('page errors: ' + context.errors.join('; '));
+  return { shot: s.name, png: { name: png.name, bytes: pngBytes.length }, png8: big, svg, offer, film: { name: film.name, frames: film.frames, conversion: film.conversion }, withoutH264: refused, failures };
+}
+
 async function runSiteCheck(options = {}) {
   const dir = options.dir || OUT;
   const file = path.join(dir, 'data.js');
@@ -324,7 +387,8 @@ async function runSiteCheck(options = {}) {
       report.fallback = await fallback(client, context, server.url, shots);
       report.recipe = await recipe(client, context, server.url, shots, data);
       report.play = await play(client, context, server.url, data);
-      report.failures = [...report.walks.flatMap((w) => w.failures), ...report.reduced.failures, ...report.fallback.failures, ...report.recipe.failures, ...report.play.failures];
+      report.exports = await exporting(client, context, server.url, shots);
+      report.failures = [...report.walks.flatMap((w) => w.failures), ...report.reduced.failures, ...report.fallback.failures, ...report.recipe.failures, ...report.play.failures, ...report.exports.failures];
       return report;
     });
   } finally {

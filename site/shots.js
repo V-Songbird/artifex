@@ -12,10 +12,11 @@
 //
 // The intro, the bloom seam, the ink shot, the crack seam, the mirror shot,
 // the bend and portal seams, the trace and print seams, the CAD shot, the fold
-// and paint seams, the Kandinsky shot and the wall of every style are the
-// site's art. The three shots after them (rows, grid,
-// cells) are placeholders that keep the stage's worker tier and recipe checks
-// exercised until the real shots replace them.
+// and paint seams, the Kandinsky shot, the wall of every style, the unstick
+// seam, the cues, readout and settle shots and the contain seam are the
+// site's art. The three shots after them (rows, grid, cells) are
+// placeholders that keep the stage's worker tier and recipe checks exercised
+// until the real shots replace them.
 'use strict';
 
 module.exports = {
@@ -36,6 +37,11 @@ module.exports = {
     { name: 'paint', piece: './pieces/paint.cjs', seam: true, text: 'A wide knife spreads a thick ground over the papercraft, and the paper soaks up its oil. A brush lays the paint on in short, thick strokes, each dragging a little of the last: the swirling background first, the bird last.' },
     { name: 'kandinsky', piece: './pieces/kandinsky.cjs', poster: './posters/kandinsky.webp', title: 'Thick paint, scraped thin', text: "A palette knife drags the strokes off in long passes, smearing their colour across the ground, and spreads the bird's own paint into circles, arcs, bars and lines: the same bird, as a Kandinsky." },
     { name: 'wall', piece: './pieces/wall.cjs', poster: './posters/wall.webp', still: 0.6, title: 'Ask for any style', text: 'A frame is lowered over the painting, and it lies among one framed work of every style in the library, the same bird drawn by each: papercraft, a 3D render, CAD, pixel art, embroidery, a sticker, voxels, a doodle, Kandinsky, impasto, a circuit board, watercolour, sumi-e, a star atlas and light painting. The camera chooses one.' },
+    { name: 'unstick', piece: './pieces/unstick.cjs', seam: true, text: 'The paint the knife laid has dried. Each form cracks free round its edge and lifts off the ground, the forms on top first, a faint stain left where each was painted.' },
+    { name: 'cues', piece: './pieces/cues.cjs', poster: './posters/cues.webp', title: 'Motion, written', text: 'The loose forms play on cues someone wrote: the long lines slide into a staff, the big forms take their places as a band and play a phrase, each heard as it lands, hops or turns. Picture and sound read the same table.' },
+    { name: 'readout', piece: './pieces/readout.cjs', poster: './posters/readout.webp', title: 'The data decides the melody', text: 'A cursor runs along the staff, and as it reaches each place the next note hops up to the height its digit of pi gives, and sounds it. The seed decides only which form plays each note.' },
+    { name: 'settle', piece: './pieces/settle.cjs', poster: './posters/settle.webp', title: 'Forces find the rest', text: "The staff's chord shakes the forms loose. They fall, strike and pile at the foot of the frame: a fall solved once, so scrolling back replays it exactly." },
+    { name: 'contain', piece: './pieces/contain.cjs', seam: true, text: "The mat's bevel deepens into a box and the pile sinks to its floor. Then the box's sides close in, and the pile makes room." },
     { name: 'rows', piece: './pieces/rows.cjs', title: 'A placeholder shot', text: 'Scroll, and a pen rules rows across the page. Scroll back and it lifts them again: every frame is a function of the seed and the playhead.' },
     { name: 'grid', piece: './pieces/grid.cjs', seam: true, text: 'Columns cross the rows, and the cells they make fill.' },
     { name: 'cells', piece: './pieces/cells.cjs', seconds: 2, tier: 'worker', title: 'A placeholder still', text: 'The finished grid holds while you read, drawn off the main thread where the browser allows it.' },

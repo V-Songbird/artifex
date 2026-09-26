@@ -20,7 +20,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const EXAMPLES = require('../examples/index.js');
-const { bundle, html, filmNote } = require('./build-page.js');
+const { bundle, html } = require('./build-page.js');
+const { filmNote } = require('../core/export.js');
 const { withEdge, waitFor, evaluateInPieces } = require('./check-browser.js');
 const { isPiecePath, loadExternal, callerDirectory } = require('./piece-input.js');
 

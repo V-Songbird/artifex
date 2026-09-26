@@ -25,7 +25,8 @@ const { readMp4 } = require('../core/film.js');
 const { svgManifest } = require('../core/surface-vector.js');
 const EXAMPLES = require('../examples/index.js');
 const { loadExternal, callerDirectory } = require('./piece-input.js');
-const { bundle, html, pngManifest, webmManifest, webmBlockTimes, ebmlHead } = require('./build-page.js');
+const { bundle, html } = require('./build-page.js');
+const { pngManifest, webmManifest, webmBlockTimes, ebmlHead } = require('../core/export.js');
 const { withEdge, waitFor, evaluate, saveReport } = require('./check-browser.js');
 
 const USAGE = 'usage: npm run replay -- <file> [--piece ./piece.cjs] [--edge PATH] [--timeout-ms N] [--headed] [--json]';

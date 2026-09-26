@@ -18,7 +18,7 @@ const { exportFilm, muxMp4 } = require('../core/film.js');
 const { solve, atBox } = require('../core/piece.js');
 const { nullSurface } = require('../tools/bench.js');
 const { callerDirectory, loadExternal } = require('../tools/piece-input.js');
-const { pngWithManifest, webmWithDuration, webmWithManifest } = require('../tools/build-page.js');
+const { pngWithManifest, webmWithDuration, webmWithManifest } = require('../core/export.js');
 const {
   fileType, manifestOf, pieceFor, filmPlan, filmFrames, replayVerdict, replay, parseArgs, main, FILM_FLOOR_DB,
   soundPlan, compareSound, soundVerdict, SOUND_BLOCK, SOUND_FLOOR_DB, SOUND_GATE_DB, SOUND_BAND, SOUND_FLATNESS, SOUND_NOISE_DB, SOUND_VOICE, SOUND_CUT,

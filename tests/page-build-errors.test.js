@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const zlib = require('node:zlib');
-const { pngWithManifest, pngManifest } = require('../tools/build-page.js');
+const { pngWithManifest, pngManifest } = require('../core/export.js');
 const { fakeAudio, fakeCodecs, fakePage } = require('./fake-media.js');
 const { measureLoudness, normalizeLoudness } = require('../core/film.js');
 
@@ -553,7 +553,7 @@ function recorderStandIns(hz) {
 }
 
 test('the WebM export records frames without alpha and saves the film with its length', async () => {
-  const { webmBlockTimes } = require('../tools/build-page.js');
+  const { webmBlockTimes } = require('../core/export.js');
   const { media, inits } = recorderStandIns(4);
   const { api } = openPage({ media });
   api.setSeed(42);
@@ -582,7 +582,7 @@ test('the WebM export records a copy of each frame, on a canvas no piece reads b
 });
 
 test('the WebM export names the recipe an MP4 of the same film names', async () => {
-  const { webmManifest } = require('../tools/build-page.js');
+  const { webmManifest } = require('../core/export.js');
   const webm = openPage({ media: recorderStandIns(4).media });
   webm.api.setSeed(42);
   const report = await webm.api.video();
@@ -647,7 +647,7 @@ function indexedWebm(layout, { known = false, dated = true, crc = false, parts =
 // element it points at, or a Cluster by its Timecode -- its field's width, and
 // for a Seek entry the SeekID it claims.
 function stored(bytes) {
-  const { ebmlHead } = require('../tools/build-page.js');
+  const { ebmlHead } = require('../core/export.js');
   const into = [0x18538067, 0x1F43B675, 0x114D9B74, 0x4DBB, 0x1C53BB6B, 0xBB, 0xB7];
   const uint = (e) => { let v = 0; for (let i = 0; i < e.size; i++) v = v * 256 + bytes[e.body + i]; return v; };
   let base = 0, seek = null;
@@ -669,7 +669,7 @@ function stored(bytes) {
 // Whether each CRC-32 opening an element of the Segment, or a part of a SeekHead
 // or Cues, matches the rest of that element's data, in file order.
 function checksums(bytes) {
-  const { ebmlHead } = require('../tools/build-page.js');
+  const { ebmlHead } = require('../core/export.js');
   const index = [0x114D9B74, 0x4DBB, 0x1C53BB6B, 0xBB, 0xB7];
   const out = [];
   for (let p = 0; p < bytes.length;) {
@@ -686,7 +686,7 @@ function checksums(bytes) {
 const named = (bytes) => stored(bytes).map((s) => s.name);
 
 test('a WebM insertion moves every stored position with the element it names', () => {
-  const { ebmlHead, webmWithDuration, webmWithManifest, webmManifest, webmBlockTimes } = require('../tools/build-page.js');
+  const { ebmlHead, webmWithDuration, webmWithManifest, webmManifest, webmBlockTimes } = require('../core/export.js');
   // Long enough that every Cluster moves past Segment position 255.
   const manifest = { piece: 'cues', seed: 3, params: { words: 'a'.repeat(240) }, film: { frames: 4, hz: 24, loop: false, scale: 1 } };
   // What each recording names, and after the Tags go in: a SeekHead also lists them.
@@ -721,7 +721,7 @@ test('a WebM insertion moves every stored position with the element it names', (
 });
 
 test('a WebM that stores a position the insertion cannot move is refused by name', () => {
-  const { webmWithManifest } = require('../tools/build-page.js');
+  const { webmWithManifest } = require('../core/export.js');
   const film = (parts) => indexedWebm(['void', 'info', 'one', 'two', 'cues'], { parts });
   const refused = {
     'Cluster Position': { one: (at, all) => all.cluster(0, false, [0xA7, 0x81, at.one]) },
@@ -739,7 +739,7 @@ test('a WebM that stores a position the insertion cannot move is refused by name
 });
 
 test('a WebM SeekHead lists the Tags the page adds, and a reader that follows it finds the recipe', () => {
-  const { ebmlHead, webmWithDuration, webmWithManifest, webmManifest } = require('../tools/build-page.js');
+  const { ebmlHead, webmWithDuration, webmWithManifest, webmManifest } = require('../core/export.js');
   const manifest = { piece: 'listed', seed: 5, film: { frames: 4, hz: 24, loop: false, scale: 1 } };
   // A SeekHead before the Tags, as Edge writes when it finalizes, and one after them.
   for (const layout of [['head', 'void', 'info', 'one', 'two', 'cues'], ['info', 'cues', 'one', 'two', 'tail']]) {
@@ -758,7 +758,7 @@ test('a WebM SeekHead lists the Tags the page adds, and a reader that follows it
 });
 
 test('a WebM keeps every CRC-32 matching its element when the page writes its length', () => {
-  const { webmWithDuration, webmWithManifest } = require('../tools/build-page.js');
+  const { webmWithDuration, webmWithManifest } = require('../core/export.js');
   const manifest = { piece: 'summed', seed: 9 };
   for (const [layout, known] of [[['void', 'info', 'one', 'two', 'cues'], false], [['head', 'void', 'info', 'one', 'two', 'cues'], true]]) {
     for (const dated of [true, false]) {
@@ -777,7 +777,7 @@ test('a WebM keeps every CRC-32 matching its element when the page writes its le
 });
 
 test('a WebM SeekHead or Cues that opens with a CRC-32 keeps it matching through the page\'s edits', () => {
-  const { webmWithDuration, webmWithManifest, webmManifest } = require('../tools/build-page.js');
+  const { webmWithDuration, webmWithManifest, webmManifest } = require('../core/export.js');
   // Long enough that the positions inside each summed element are written wider.
   const manifest = { piece: 'summed-index', seed: 4, params: { words: 'a'.repeat(240) } };
   const parts = {
@@ -805,7 +805,7 @@ test('a WebM SeekHead or Cues that opens with a CRC-32 keeps it matching through
 });
 
 test('the MP4 note names the soundtrack codec and the colour route, and warns about Opus', async () => {
-  const { filmNote } = require('../tools/build-page.js');
+  const { filmNote } = require('../core/export.js');
   const base = { frames: 48, width: 64, height: 48, seconds: 2, bytes: 10240, drawMs: 12, totalMs: 40, realtime: 50, convertMs: 7 };
   const aac = filmNote({ ...base, sound: { codec: 'mp4a' }, conversion: 'gpu' });
   assert.match(aac, /10 kB, with an AAC soundtrack\. Colour converted on the GPU in 7 ms\. Drawn in 12 ms/);
