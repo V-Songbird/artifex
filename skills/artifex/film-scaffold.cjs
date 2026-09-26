@@ -19,7 +19,7 @@
 const { rng } = require('artifex/core/rand.js');
 const { span, shots } = require('artifex/core/time.js');
 const { layer } = require('artifex/core/layer.js');
-const { sumInto, voice, room } = require('artifex/core/sound.js');
+const { sumInto, voice, ambience, room } = require('artifex/core/sound.js');
 
 const W = 1280;
 const H = 720;
@@ -39,11 +39,16 @@ const ELEMENTS = [];
 // THE SOUNDS: each at the second its picture shows its cause, which is an
 // element on screen then or the shot that holds it (for a bed). `voice` takes
 // core/sound.js's voice spec: a transient, a body of partials and a tail, how
-// hard it starts (`velocity`) and how much it differs from its neighbours
-// (`vary`). `wet` is how much of it the room takes: a far sound is softer,
-// darker and wetter than a near one.
-//   { at: 0.5, cause: 'a', wet: 0.2, voice: { pitch: 330, partials: [[1, 1], [2.7, 0.3]], velocity: 0.8, vary: 0.4, strike: { level: 0.3 } } },
+// hard it starts (`velocity`), how much it differs from its neighbours
+// (`vary`), how it moves while it sounds (`bend`, `vibrato`, `sweep`) and how
+// far away it is (`distance`, 0 to 1: softer and darker). `wet` is how much of
+// it the room takes; left out, it grows from SEND near to 1 far.
+//   { at: 0.5, cause: 'a', voice: { pitch: 330, partials: [[1, 1], [2.7, 0.3]], velocity: 0.8, vary: 0.4, strike: { level: 0.3 }, distance: 0.6 } },
+//   { at: 1, cause: 'a', voice: { pitch: 440, attack: 0.2, hold: 0.8, bend: [[0, -60], [0.25, 0]], vibrato: { depth: 15, delay: 0.3 }, sweep: [[0, 600], [0.5, 4000], [1.5, 900]] } },
 //   { at: 0, cause: 'first', voice: { pitch: 55, attack: 1.5, hold: 1, decay: 1.5, detune: 9, level: 0.2 } },
+// A row with `ambience` in place of `voice` is the sound of the place itself,
+// such as wind, water or a street, for a shot that has one; not every shot does.
+//   { at: 0, cause: 'first', ambience: { length: 4, colour: 700, band: 2.5, level: 0.03, drift: 0.6 } },
 const SOUNDS = [];
 
 // THE ROOM the sounds play in, and how much of a sound it takes by default.
@@ -118,9 +123,10 @@ module.exports = {
     const voices = [];
     const sends = [];
     for (const c of s.cues.sounds) {
-      const v = voice(ctx, R, c.name, c.frame / timeline.hz, c.voice);
+      const at = c.frame / timeline.hz;
+      const v = c.ambience ? ambience(ctx, R, c.name, at, c.ambience) : voice(ctx, R, c.name, at, c.voice);
       const send = ctx.createGain();
-      send.gain.value = c.wet === undefined ? SEND : c.wet;
+      send.gain.value = c.wet === undefined ? SEND + (1 - SEND) * ((c.voice && c.voice.distance) || 0) : c.wet;
       v.connect(send);
       voices.push(v);
       sends.push(send);

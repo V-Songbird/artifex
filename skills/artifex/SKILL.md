@@ -129,7 +129,7 @@ require('./core/field.js')   // sampleGrid, gradient, curl, warp, threshold,
 require('./core/time.js')    // span, ease, tween, shots, shotAt, spring,
                              // follow
 require('./core/layer.js')   // layer
-require('./core/sound.js')   // sumInto, voice, room
+require('./core/sound.js')   // sumInto, voice, ambience, room
 ```
 
 **`noise2` is value noise and `gradient2` is gradient noise.** The derivative of
@@ -584,14 +584,14 @@ solved trajectory.
   verdict. Report the block, its time and its measure; never delete, soften or
   filter a sound, or change any of the art, to satisfy a checker.
 
-### Voices, a room and a bed
+### Voices, a place and a room
 
 A bare oscillator blip sounds like a test tone. `core/sound.js` gives a voice
-in layers and a room for it to sound in; neither names an instrument, so the
-subject decides what they are.
+in layers, the ambience of a place and a room for them to sound in; none names
+an instrument, so the subject decides what they are.
 
 ```js
-const { sumInto, voice, room } = require('./core/sound.js');
+const { sumInto, voice, ambience, room } = require('./core/sound.js');
 const R = rng(state.seed);
 const v = voice(ctx, R, 'impact 3', seconds, {
   pitch: 220,                                   // the body's first partial, in hertz
@@ -603,6 +603,14 @@ const v = voice(ctx, R, 'impact 3', seconds, {
   level: 0.4, pan: -0.2,
   velocity: 0.7,   // 0..1: how hard it starts; softer is quieter and darker
   vary: 0.5,       // 0..1: this voice's own seeded pitch, level and decay
+  bend: [[0, -150], [0.1, 0]],                  // [seconds, cents]: the pitch glides as it sounds
+  vibrato: { depth: 10, rate: 5.5, delay: 0.3 }, // cents either way, times a second, from a delay
+  sweep: [[0, 800], [0.2, 5000], [1.5, 1200]],  // [seconds, hertz]: a low-pass that opens and closes
+  distance: 0.4,   // 0..1: far is quieter and darker; send it more to the room
+});
+const rain = ambience(ctx, R, 'rain', 0, {       // the place: a low bed and small events
+  length: 8, colour: 2800, band: 1.5, level: 0.004, drift: 0.3, fade: 1.5,
+  grains: { rate: 160, length: 0.012, chirp: 0.6, level: 0.045, spread: 24 }, // drops as rising bubbles
 });
 const hall = room(ctx, R, 'room', { size: 1.6 });     // a convolver of seeded noise
 ```
@@ -616,7 +624,16 @@ const hall = room(ctx, R, 'room', { size: 1.6 });     // a convolver of seeded n
   thinning, and let the picture follow the same curve. Set each event's
   `velocity` from its cause, such as its weight, speed or nearness, so an
   accent is both louder and brighter; give repeated events `vary` so no two
-  strike alike. A far sound is softer, darker and wetter than a near one.
+  strike alike.
+- **Let each note move while it sounds.** A held pitch at one colour is a
+  machine. Fall into a note or rise out of it with `bend`, let a held note
+  swing with `vibrato` after a delay, open and close its colour with `sweep`.
+  Take the motion from the cause: a closing bubble rises, a passing engine's
+  note drops as it goes, a gust opens and then closes.
+- **Put the sounds at their distances.** Set `distance` from the cause's
+  place: a far sound is quieter, darker and wetter than a near one. Its room
+  send should grow as its dry sound falls; the film scaffold does that when a
+  sound gives no `wet`. A thing that moves toward the viewer comes nearer.
   Check `sound.limited` in the export report: past about 4 dB the limiter is
   flattening your accents, so lower the loudest transients against the body.
 - **Name every voice by its cause**, such as `'drop 4'`: its noise is
@@ -629,9 +646,14 @@ const hall = room(ctx, R, 'room', { size: 1.6 });     // a convolver of seeded n
 - **Lay a bed under the effects.** A film whose sounds all start and stop on
   events has silence between them. Give each shot a bed: one or two voices
   with a slow attack, a hold across the shot and detuned partials, 10 to 20 dB
-  under the events, low in pitch or a band of tail noise, so the effects sit
-  on something. Change the bed where the shot changes, overlapping the two
+  under the events, low in pitch, so the effects sit on something. Change the bed where the shot changes, overlapping the two
   over its attack and decay rather than cutting.
+- **Give a place its ambience when it has one.** Rain, a stream, wind or a
+  street is heard as many small events more than as noise: build it with
+  `ambience` grains in the place's band, such as bubbles that rise as they
+  close for water, and keep its bed low and dark under them. A steady band of
+  noise at the level of the events is heard as white noise, not as a place;
+  keep an ambience 20 dB or more under the events. Not every shot has one.
 - **Every layer fades out over 80 ms** from -60 dB and stops, so a voice never
   ends in a click.
 
