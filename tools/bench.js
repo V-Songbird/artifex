@@ -27,7 +27,7 @@ const { drawFrame, playheads } = require('../core/render.js');
 const { VectorSurface } = require('../core/surface-vector.js');
 const EXAMPLES = require('../examples/index.js');
 
-const OUT = path.join(__dirname, '..', 'out');
+const OUT = require('./piece-input.js').outRoot();
 const BASELINE = path.join(OUT, 'bench.json');
 
 const REPS = Number(process.env.BENCH_REPS || 40);

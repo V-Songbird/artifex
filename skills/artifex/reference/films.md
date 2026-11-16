@@ -29,7 +29,7 @@ against; a brief that names its looks is the list. These four start it:
 
 - one noise family at every scale ([focal composition](stills.md#art-direction-preset-focal-composition));
 - a line that fades up through `globalAlpha` instead of arriving (same);
-- a flow field around a focus that turns botanical ([traps](../SKILL.md#traps));
+- a flow field around a focus that turns botanical ([traps](traps.md));
 - a story device a viewer names before it lands, such as spinning clock hands
   for time passing or a wilted flower that blooms again as the happy end: a
   beat sheet that names each stock device keeps it only where the film turns

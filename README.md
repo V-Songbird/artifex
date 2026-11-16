@@ -12,7 +12,7 @@ Use it for seeded compositions, animation with sound, and vector artwork. It doe
 
 ## Quick start
 
-Requires Node.js 22 or later; [`.nvmrc`](.nvmrc) pins the development version. PNG contact sheets and time strips (`--png`), `npm run film`, a PNG from `npm run still`, and replay of a PNG or film also need an installed Microsoft Edge. From a local checkout, run:
+Requires Node.js 22 or later; [`.nvmrc`](.nvmrc) pins the development version. PNG contact sheets and time strips (`--png`), `npm run film`, a PNG from `npm run still`, and replay of a PNG or film also need an installed Microsoft Edge, or Google Chrome or Chromium where Edge is absent. From a local checkout, run:
 
 ```shell
 npm run page

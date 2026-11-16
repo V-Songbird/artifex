@@ -111,7 +111,8 @@ function parseArgs(args) {
 
 /**
  * The piece to film and where its film goes: `{ name, external, file }`. A
- * registered example writes under the library's out/, an external piece beside
+ * registered example writes under out/ (the library's own from inside it, else
+ * the caller's, so an installed copy holds no output), an external piece beside
  * its module (a piece inside the library goes under out/pieces/ instead; see
  * docs/knowledge/command-line-tools.md#external-pieces), unless `--out` names
  * the file, relative to the caller's directory. `--style` is

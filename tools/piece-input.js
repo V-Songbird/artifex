@@ -96,7 +96,16 @@ function untracked(directory, within) {
 }
 
 /**
- * The folder a command writes `external`'s files to: the library's out/ for a
+ * The out/ folder a command run from `cwd` writes to: the library's own when
+ * `cwd` is inside the library (a clone), else `cwd`'s. An installed plugin is
+ * a copy its host replaces on update, so no output may land inside it.
+ */
+function outRoot(cwd = callerDirectory()) {
+  return path.join(inLibrary(cwd) === null ? cwd : ROOT, 'out');
+}
+
+/**
+ * The folder a command writes `external`'s files to: out/ (see outRoot) for a
  * registered example, beside an external piece, and under
  * out/pieces/<its folder>/ for a piece in a tracked folder of the library,
  * such as a test fixture, so no output lands in a tracked folder. A piece
@@ -104,12 +113,12 @@ function untracked(directory, within) {
  * at the top of out/ writes to out/pieces/, so it never replaces a registered
  * example's output.
  */
-function outputDirectory(external) {
-  if (!external) return path.join(ROOT, 'out');
+function outputDirectory(external, cwd = callerDirectory()) {
+  if (!external) return outRoot(cwd);
   const within = inLibrary(external.directory);
   if (within === null) return external.directory;
-  if (fold(within) === 'out') return path.join(ROOT, 'out', 'pieces');
-  return untracked(external.directory, within) ? external.directory : path.join(ROOT, 'out', 'pieces', within);
+  if (fold(within) === 'out') return path.join(outRoot(cwd), 'pieces');
+  return untracked(external.directory, within) ? external.directory : path.join(outRoot(cwd), 'pieces', within);
 }
 
 /**
@@ -117,10 +126,11 @@ function outputDirectory(external) {
  * `options` holds `piece`, `style` and `out`; `refuse(cause)` makes the
  * command's own error and `extension` (with its dot) ends the default file.
  * `--style` is refused with where the style's guide and mark functions are,
- * since a style draws nothing. A registered example writes under the library's
- * out/, an external piece beside its module and one in a tracked folder of the
- * library under out/pieces/<its folder>/; one at the top of out/ also writes
- * to out/pieces/ (see outputDirectory). `--out` names the file, relative to `cwd`.
+ * since a style draws nothing. A registered example writes under out/ (the
+ * library's from inside it, else `cwd`'s; see outRoot), an external piece
+ * beside its module and one in a tracked folder of the library under
+ * out/pieces/<its folder>/; one at the top of out/ also writes to out/pieces/
+ * (see outputDirectory). `--out` names the file, relative to `cwd`.
  * Without `--out`, a `--seed` joins the name as `-seed<n>`, as npm run seeds
  * names a strip, so a file at another seed never replaces the piece's own.
  */
@@ -132,7 +142,7 @@ function resolvePiece(options, cwd, refuse, extension) {
   else if (!Object.hasOwn(EXAMPLES, name)) throw refuse(`no example called "${name}". Known: ${Object.keys(EXAMPLES).join(', ')}. ${require('./styles.js').pieceHint(name)}`);
   if (external) name = external.names[0];
   const file = options.out !== null ? path.resolve(cwd, options.out)
-    : path.join(outputDirectory(external), (external ? external.stem : name) + (options.seed != null ? '-seed' + options.seed : '') + extension);
+    : path.join(outputDirectory(external, cwd), (external ? external.stem : name) + (options.seed != null ? '-seed' + options.seed : '') + extension);
   return { name, external, file };
 }
 
@@ -368,4 +378,4 @@ function loadExternal(input, cwd = callerDirectory(), { confine } = {}) {
   return Object.defineProperty({ entry, piece, names, source, moduleCount: ids.size, stem: outputStem(entry), directory: path.dirname(entry) }, 'modules', { value: modules });
 }
 
-module.exports = { callerDirectory, isPiecePath, outputStem, imports, loadExternal, inLibrary, realPath, slash, quote, quoteWord, hint, shown, outputDirectory, resolvePiece };
+module.exports = { callerDirectory, isPiecePath, outputStem, imports, loadExternal, inLibrary, realPath, slash, quote, quoteWord, hint, shown, outRoot, outputDirectory, resolvePiece };

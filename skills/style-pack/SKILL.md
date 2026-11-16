@@ -3,7 +3,7 @@ name: style-pack
 description: Turns a style the user likes into a style pack — a guide, a module of functions that draw the style's marks, and a proof of each function — that another person can install and use in pieces of their own. Use when asked to package, save, share, export or publish a style, or to make a style installable. Not for drawing in a style (use the artifex skill) or for installing or trusting someone else's pack.
 argument-hint: "<the style's name and the files that draw its marks>"
 license: MIT
-compatibility: Requires Node 22 or later and the artifex library on disk. Nothing is drawn in a browser.
+compatibility: Requires Node 22 or later and the whole Artifex plugin, not this skill folder alone; without core/piece.js above this file, install the plugin from https://github.com/V-Songbird/artifex. Nothing is drawn in a browser.
 metadata:
   version: "0.1.0"
 ---

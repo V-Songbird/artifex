@@ -19,5 +19,15 @@
     "canvas",
     "deterministic",
     "animation"
-  ]
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Artifex",
+        "category": "Design",
+        "logo": "./assets/icon.png",
+        "composerIcon": "./assets/icon.png"
+      }
+    }
+  }
 }

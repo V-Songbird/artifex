@@ -112,7 +112,7 @@ When the piece works from a reference that the user gave you and may use, such
 as their own photo or drawing, reading it by measure finds what the eye misses:
 a face drawn by eye drifts towards the template the hand knows.
 To match the reference itself rather than read its proportions, follow
-[replica mode](../SKILL.md#replica-mode).
+[replica mode](replica.md).
 
 - **Fit your landmarks to the reference's.** Read a few landmarks off the
   reference, in pixels: the eye centres, the tip of the nose, the corners of

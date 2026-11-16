@@ -34,7 +34,7 @@ const { readMp4 } = require('../core/film.js');
 const { svgManifest } = require('../core/surface-vector.js');
 const { describe } = require('../core/image.js');
 const EXAMPLES = require('../examples/index.js');
-const { loadExternal, callerDirectory, inLibrary, slash } = require('./piece-input.js');
+const { loadExternal, callerDirectory, inLibrary, slash, outRoot } = require('./piece-input.js');
 const { bundle, html } = require('./build-page.js');
 const { pngManifest, webmManifest, webmBlockTimes, ebmlHead } = require('../core/export.js');
 const { withEdge, waitFor, evaluate, evaluateInPieces, pageErrors, saveReport, TIMEOUT_MS, timeoutArg } = require('./check-browser.js');
@@ -1206,7 +1206,7 @@ async function replay(file, options = {}) {
   if (options.lag && type !== 'mp4') throw new Error(`replay: --lag scans an MP4 film's frames, and ${file} is ${type.toUpperCase()}`);
   const scan = options.lag ? scanSetup(bytes, manifest, options, cwd) : null;
   // Beside the report: <film name>-frames beside a film outside the library, else under out/.
-  const grab = options.saveFrames ? framesPlan(bytes, manifest, options.saveFrames, path.join(reportDirectory(file, cwd) ?? path.join(__dirname, '..', 'out'), path.basename(file) + '-frames')) : null;
+  const grab = options.saveFrames ? framesPlan(bytes, manifest, options.saveFrames, path.join(reportDirectory(file, cwd) ?? outRoot(cwd), path.basename(file) + '-frames')) : null;
   // The scan follows the replay, in pages of its own, and never changes its verdict.
   const saved = async (result) => ({ ...result, ...(grab && { frameFiles: grab.frames.map((f) => f.file) }), ...(scan && await scanned(scan, bytes, options)) });
   // A joined film takes a --piece for each external scene.
@@ -1430,14 +1430,14 @@ function parseArgs(args) {
   return out;
 }
 
-/** The folder for a replay's report: beside `file` when it lies outside the library, else undefined, which saveReport takes as the library's out/. */
+/** The folder for a replay's report: beside `file` when it lies outside the library, else undefined, which saveReport takes as out/ (the library's own from inside it, else the caller's; see outRoot). */
 function reportDirectory(file, cwd = callerDirectory()) {
   const where = path.resolve(cwd, file);
   return inLibrary(where) === null ? path.dirname(where) : undefined;
 }
 
 // Without --json the full report goes to replay-<file name>.json, beside the
-// file when it lies outside the library and under the library's out/ when it is
+// file when it lies outside the library and under out/ when it is
 // inside, so the output holds only the verdict, which names the first
 // difference, and its path.
 async function main(args = process.argv.slice(2), run = replay, dir) {

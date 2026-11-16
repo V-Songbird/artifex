@@ -116,7 +116,7 @@ each part on frames of a piece with a different subject.
 A reference photo shows the real material a style imitates, such as torn
 paper or thread. A style's guide lists its photos under **Reference photos**.
 Today only [papercraft](papercraft.md#reference-photos) has one. Outside
-[replica mode](../SKILL.md#replica-mode), take the material from a photo,
+[replica mode](../reference/replica.md), take the material from a photo,
 never its composition, subject or backdrop.
 
 A photo belongs in `references/<style>/` only when all of these hold. The test

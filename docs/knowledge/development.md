@@ -1,7 +1,7 @@
 ---
 type: knowledge
 summary: "Full reference for developing Artifex: every command with its flags, where the source lives, the rules every change needs, plugin metadata, and links to the detailed guides for the tools, verification and CI. AGENTS.md is the short map that routes here."
-related_files: ["package.json", ".nvmrc", "core/", "examples/index.js", "tools/", "tests/", "skills/artifex/SKILL.md", "skills/artifex/reference/", "skills/artifex/styles/catalog.md", "plugin.json", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json", "docs/knowledge/command-line-tools.md", "docs/knowledge/verification.md", "docs/knowledge/continuous-integration.md"]
+related_files: ["package.json", ".nvmrc", "core/", "examples/index.js", "tools/", "tests/", "skills/artifex/SKILL.md", "skills/artifex/reference/", "skills/artifex/styles/catalog.md", "plugin.json", ".claude-plugin/plugin.json", "tests/plugin-manifests.test.js", "tests/skill-limits.test.js", "docs/knowledge/command-line-tools.md", "docs/knowledge/verification.md", "docs/knowledge/continuous-integration.md"]
 ---
 
 # Developing Artifex
@@ -69,7 +69,7 @@ The benchmark uses a null surface to measure drawing calls without SVG emission.
 
 `npm run bench` writes or replaces `out/bench.json`. `BENCH_REPS` controls its sample count and defaults to 40. Preserve a baseline elsewhere before running a comparison you need to retain.
 
-For a focused contract check, run `node --test tests/piece.test.js`. A stopped `node --test` names only the file, even with `--test-timeout`; to name a hanging test, run each title alone with `--test-name-pattern` under a timeout. Generated pages, artwork, contact sheets, and benchmark results go under `out/`.
+For a focused contract check, run `node --test tests/piece.test.js`. A stopped `node --test` names only the file, even with `--test-timeout`; to name a hanging test, run each title alone with `--test-name-pattern` under a timeout. Generated pages, artwork, contact sheets, and benchmark results go under `out/`: the library's own when a command runs from inside the library, and the `out/` of the folder it runs from otherwise, so an installed plugin never holds output ([where output goes](command-line-tools.md#where-output-goes)).
 
 ## Rules for every change
 
@@ -132,9 +132,20 @@ Read [verifying changes](verification.md#focused-checks-by-area) for the tests t
 
 ## Plugin metadata
 
-[`plugin.json`](../../plugin.json), [`.claude-plugin/plugin.json`](../../.claude-plugin/plugin.json), and [`.codex-plugin/plugin.json`](../../.codex-plugin/plugin.json) describe the plugin. The two host-specific manifests are identical; the root manifest adds `$schema`.
+Two manifests describe the plugin:
 
-The [Claude marketplace catalog](../../.claude-plugin/marketplace.json) and [Codex marketplace catalog](../../.agents/plugins/marketplace.json) identify `artifex` with a local source of `./`. Keep these descriptions and versions consistent when editing plugin metadata. Parsing these files proves their structure, not installation or discovery in a running host.
+- [`plugin.json`](../../plugin.json) at the root, in the open Agent Plugins 1.0 format. Codex, Antigravity and Cursor read it. Its `extensions.com.openai.interface` block holds what Codex shows (display name and category), so there is no separate `.codex-plugin/plugin.json`: Codex reads that file only when the block is absent.
+- [`.claude-plugin/plugin.json`](../../.claude-plugin/plugin.json), the only manifest Claude Code reads.
+
+The [Claude marketplace catalog](../../.claude-plugin/marketplace.json) and [Codex marketplace catalog](../../.agents/plugins/marketplace.json) identify `artifex` with a source of `./`, the repository they sit in. There is no Gemini CLI manifest.
+
+The version is stated in both manifests, in `package.json` and in each skill's `metadata.version`; bump them together. Claude Code pins users to the manifest version, so a release that forgets one never reaches them. `node --test tests/plugin-manifests.test.js` fails when a name, version or description differs anywhere, and `node --test tests/skill-limits.test.js` fails when a `SKILL.md` body reaches 24,000 bytes (Antigravity loads no more) or its frontmatter breaks the Agent Skills limits.
+
+The icon is an Artifex piece, [`assets/icon.cjs`](../../assets/icon.cjs), saved as `assets/icon.png` (1024 px) and `assets/icon.svg`. Claude Code finds `assets/icon.png` by its path, and Codex reads the `logo` and `composerIcon` paths in its interface block. Antigravity shows a generic icon: it takes one only from a `logo` field, which the Agent Plugins 1.0 schema of the root manifest does not allow. After changing the piece, draw both files again with `npm run still -- assets/icon.cjs --out assets/icon.png` and the same command with `assets/icon.svg`, then check each with `npm run replay -- assets/icon.png --piece assets/icon.cjs`.
+
+The skills need the whole plugin: they find the library as the nearest folder above `SKILL.md` that holds `core/piece.js`, and a skill folder copied alone has none. Distribution is the Git repository only; a local-path install is for development, because a host may copy files Git does not track.
+
+Parsing these files proves their structure, not installation or discovery in a running host.
 
 [`AGENTS.md`](../../AGENTS.md) is the agents' map of the repository and links here; [`CLAUDE.md`](../../CLAUDE.md) imports it for Claude Code. Host settings and plugin installation are separate from the library's runtime requirements.
 

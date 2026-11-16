@@ -12,7 +12,7 @@ const { validate, solve, frameCount } = require('../core/piece.js');
 const { renderVector } = require('../core/render.js');
 const EXAMPLES = require('../examples/index.js');
 
-const OUT = path.join(__dirname, '..', 'out');
+const OUT = require('./piece-input.js').outRoot();
 const USAGE = 'usage: npm run examples';
 
 const args = process.argv.slice(2);
@@ -66,5 +66,5 @@ function render() {
   const timelines = rows.filter((r) => r.frames > 1);
   console.log(`\n${rows.length} examples, ${rows.filter((r) => r.declared.includes('vector')).length} reach a plotter, `
     + `${timelines.length} have a timeline (${timelines.reduce((a, r) => a + r.frames, 0)} frames in total).`);
-  console.log(`SVG written to ${path.relative(path.join(__dirname, '..'), OUT)}${path.sep}`);
+  console.log(`SVG written to ${path.relative(path.join(__dirname, '..'), OUT).startsWith('..') ? OUT : 'out'}${path.sep}`);
 }

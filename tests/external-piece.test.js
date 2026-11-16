@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
 const { spawnSync } = require('node:child_process');
-const { loadExternal, callerDirectory, outputStem } = require('../tools/piece-input.js');
+const { loadExternal, callerDirectory, outputStem, outRoot, outputDirectory, resolvePiece } = require('../tools/piece-input.js');
 const { bundle, html, checkParses, pageFile } = require('../tools/build-page.js');
 const { page } = require('../tools/contact-sheet.js');
 
@@ -278,6 +278,26 @@ test('page: a piece inside the library writes its page under out/pieces/, one ou
   const { project, file } = fixture(t);
   assert.equal(pageFile(loadExternal(file)), path.join(project, 'My piece-page.html'));
   assert.equal(pageFile(null), path.join(ROOT, 'out', 'index.html'));
+});
+
+test('output: run from a folder outside the library, the page and a registered example write to that folder\'s out/, never into the library', (t) => {
+  const { project, file } = fixture(t);
+  // An installed plugin is a copy its host replaces on update, so it must hold no output; a clone keeps its own out/.
+  assert.equal(outRoot(ROOT), path.join(ROOT, 'out'));
+  assert.equal(outRoot(path.join(ROOT, 'tools')), path.join(ROOT, 'out'), 'a folder inside the library still means the library\'s out/');
+  assert.equal(outRoot(project), path.join(project, 'out'));
+  assert.equal(outputDirectory(null, project), path.join(project, 'out'));
+  assert.equal(pageFile(null, project), path.join(project, 'out', 'index.html'));
+  const refuse = (cause) => new Error(cause);
+  assert.equal(resolvePiece({ piece: 'drift', style: null, out: null, seed: 7 }, project, refuse, '.png').file, path.join(project, 'out', 'drift-seed7.png'));
+  const inside = loadExternal(path.join(ROOT, 'tests', 'fixtures', 'gradient-film.cjs'));
+  assert.equal(outputDirectory(inside, project), path.join(project, 'out', 'pieces', 'tests', 'fixtures'), 'a piece in a tracked folder of the library goes under the caller\'s out/pieces/');
+  assert.equal(outputDirectory(loadExternal(file), project), project, 'an external piece still writes beside itself');
+  const before = fs.existsSync(path.join(ROOT, 'out', 'index.html')) ? fs.statSync(path.join(ROOT, 'out', 'index.html')).mtimeMs : null;
+  cli([path.join(ROOT, 'tools', 'build-page.js')], project);
+  assert.equal(checkParses(fs.readFileSync(path.join(project, 'out', 'index.html'), 'utf8')), true);
+  const after = fs.existsSync(path.join(ROOT, 'out', 'index.html')) ? fs.statSync(path.join(ROOT, 'out', 'index.html')).mtimeMs : null;
+  assert.equal(after, before, 'the library\'s own out/index.html was not written');
 });
 
 test('external piece paths use the npm caller only for this library page/seeds script', () => {

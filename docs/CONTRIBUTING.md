@@ -1,7 +1,7 @@
 ---
 type: knowledge
 summary: "Explains how to change Artifex and which public contracts and checks to update before submitting a contribution."
-related_files: ["core/piece.js", "core/render.js", "tests/negative.js", "tests/cli.test.js", "skills/artifex/SKILL.md", "plugin.json", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json"]
+related_files: ["core/piece.js", "core/render.js", "tests/negative.js", "tests/cli.test.js", "skills/artifex/SKILL.md", "plugin.json", ".claude-plugin/plugin.json"]
 ---
 
 # Contributing to Artifex

@@ -60,6 +60,31 @@ test('browser discovery reports an actionable missing-Edge error', async () => {
   assert.equal(await findEdge(process.execPath), process.execPath);
 });
 
+test('browser discovery looks for Edge first, then Chrome, then Chromium, on every platform', async (t) => {
+  const { browserCandidates } = require('../tools/check-browser.js');
+  const order = (list) => list.map((p) => (/edge/i.test(p) ? 'edge' : /chromium/i.test(p) ? 'chromium' : /chrome/i.test(p) ? 'chrome' : p));
+  const sorted = (kinds) => kinds.join().replace(/(\w+)(,\1)+/g, '$1');
+  const win = { 'ProgramFiles(x86)': 'X86', ProgramFiles: 'PF', LOCALAPPDATA: 'LOCAL' };
+  for (const [platform, env, count] of [['win32', win, 9], ['darwin', {}, 3], ['linux', {}, 9]]) {
+    const list = browserCandidates(env, platform);
+    assert.equal(list.length, count, platform);
+    assert.equal(sorted(order(list)), 'edge,chrome,chromium', platform + ': ' + list.join(' | '));
+  }
+  // A machine with Chrome and no Edge: the lookup finds Chrome; with neither, the error names all three.
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'artifex-browsers-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const env = { ProgramFiles: dir }, chrome = path.join(dir, 'Google', 'Chrome', 'Application', 'chrome.exe');
+  await assert.rejects(findEdge(undefined, env, 'win32'), (error) => error.message.startsWith('browser: no installed Microsoft Edge, Chrome or Chromium was found at '
+    + path.join(dir, 'Microsoft', 'Edge', 'Application', 'msedge.exe') + ' or ' + chrome + ' or ') && error.message.endsWith('; use --edge PATH or EDGE_PATH (no browser is downloaded)'));
+  await fs.mkdir(path.dirname(chrome), { recursive: true });
+  await fs.writeFile(chrome, '');
+  assert.equal(await findEdge(undefined, env, 'win32'), chrome);
+  const edge = path.join(dir, 'Microsoft', 'Edge', 'Application', 'msedge.exe');
+  await fs.mkdir(path.dirname(edge), { recursive: true });
+  await fs.writeFile(edge, '');
+  assert.equal(await findEdge(undefined, env, 'win32'), edge, 'Edge wins when both are installed');
+});
+
 test('a relative --edge or EDGE_PATH resolves from the folder npm was run in', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'artifex-edge-'));
   const fake = path.join(dir, 'msedge-fake');

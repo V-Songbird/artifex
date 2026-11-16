@@ -41,7 +41,7 @@ it open and lists the change under `Chosen, not given:`:
 - one noise family at every scale ([focal composition](#art-direction-preset-focal-composition));
 - a grain pass over the finished frame instead of texture on each mark (same);
 - a line that fades up through `globalAlpha` instead of arriving (same);
-- a flow field around a focus that turns botanical ([traps](../SKILL.md#traps)).
+- a flow field around a focus that turns botanical ([traps](traps.md)).
 
 ## Art-direction preset: focal composition
 
@@ -337,7 +337,7 @@ hue, or in alpha:
   same size.
 - **Greyed reads subtle and mature.** A hue with its chroma drained holds back
   and reads as restraint, age or calm. Drain the chroma alone, as
-  [the library section](../SKILL.md#what-the-library-gives-you) shows, so the
+  [the library notes](library.md#colour-and-tone) shows, so the
   value stays where the composition put it.
 - **Full chroma over a large area is loud and tiring.** It wears the eye out
   within seconds and leaves the focus nothing to rise above. Spend full chroma
@@ -635,7 +635,7 @@ approximates one generic press, not your printer: when the printer is known,
 also open the PNG in an image editor with that printer's profile and its gamut
 warning on; it settles a colour the generic view flags with an `excess` under
 0.03 (see the view's limits). Bring each other flagged colour in by chroma alone
-with `drain` from [the library section](../SKILL.md#what-the-library-gives-you),
+with `drain` from [the library notes](library.md#colour-and-tone),
 so lightness and hue stay. Check: the `--gamut` view's magenta marks lie outside the
 subject, or `gamut.excess` is exactly 0 (a rounded `gamut.share` of 0 can still
 hide a few outside pixels); the printer's gamut warning flags nothing in
@@ -686,7 +686,7 @@ pixel read), needs no reviewer. Each reviewer costs a subagent run.
   halo, a stray mark, which way a figure looks), and a measurement above a
   reviewer for a global amount (colour, line weight, texture).
 - **Score a replica by measurement.** How close a
-  [replica](../SKILL.md#replica-mode) sits to its reference is a global
+  [replica](replica.md) sits to its reference is a global
   amount: read `seeds --compare`'s `off` and `worst`, and ask a reviewer only
   about a local feature the numbers miss.
 - **Check a visual claim before acting on it.** Eye claims about a thin

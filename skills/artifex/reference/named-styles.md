@@ -90,7 +90,7 @@ To make a style no guide holds:
    for light and depth and [embroidery](../styles/embroidery.md) for fibre, and
    take their techniques, not their subjects.
 3. **Calibrate the marks on a replica** when the user gave a reference image
-   for the style. Follow [replica mode](../SKILL.md#replica-mode) steps 2 to 7, but draw
+   for the style. Follow [replica mode](replica.md) steps 2 to 7, but draw
    every region only through three mark functions you write: a line (outline
    or stroke), a fill (area) and an accent (highlight, texture, spatter or the
    like). Each round, tune the functions' parameters, such as width, wobble,
@@ -156,7 +156,7 @@ composing:
    most. It reports; you decide. It cannot see a small local feature, and its
    values compare only under one photo, point, scale and crop.
 3. Take the material and the style, never the photo's composition, subject or
-   backdrop. A [replica](../SKILL.md#replica-mode) copies an image; a style still takes
+   backdrop. A [replica](replica.md) copies an image; a style still takes
    only the material, even when a replica calibrates its marks.
 
 What studies of five surfaces beside their photos taught, in the order the

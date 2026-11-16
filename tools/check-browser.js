@@ -13,12 +13,12 @@ const { setTimeout: delay } = require('node:timers/promises');
 const { webmBlockTimes, filmVerdict, filmDrawnAgain } = require('../core/export.js');
 const { flashNote, WCAG } = require('../core/flash.js');
 const { LOUDNESS } = require('../core/film.js');
-const { loadExternal, slash, quote, hint, callerDirectory } = require('./piece-input.js');
+const { loadExternal, slash, quote, hint, callerDirectory, outRoot } = require('./piece-input.js');
 const { solve } = require('../core/piece.js');
 const { sample } = require('../core/image.js');
 
 const ROOT = path.resolve(__dirname, '..');
-const OUT = path.join(ROOT, 'out');
+const OUT = outRoot(); // the library's out/ in a clone, the caller's from outside it
 // A film that flashes on purpose, both ways, so the count is seen to work.
 const FLASH_FIXTURE = path.join(ROOT, 'tests', 'fixtures', 'flash-film.cjs');
 // A film drawn over and from an image it declares, so a declared image is seen
@@ -111,12 +111,30 @@ function parseArgs(args) {
   return options;
 }
 
+/**
+ * Where an installed browser is looked for, in order: every Microsoft Edge
+ * path first, then Google Chrome, then Chromium. All three speak the DevTools
+ * protocol the tools drive; Edge stays first because the checks are run on it.
+ */
+function browserCandidates(env = process.env, platform = process.platform) {
+  if (platform === 'win32') {
+    const dirs = [env['ProgramFiles(x86)'], env.ProgramFiles, env.LOCALAPPDATA].filter(Boolean);
+    return [['Microsoft', 'Edge', 'Application', 'msedge.exe'], ['Google', 'Chrome', 'Application', 'chrome.exe'], ['Chromium', 'Application', 'chrome.exe']]
+      .flatMap((parts) => dirs.map((dir) => path.join(dir, ...parts)));
+  }
+  if (platform === 'darwin') {
+    return ['/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      '/Applications/Chromium.app/Contents/MacOS/Chromium'];
+  }
+  return ['/usr/bin/microsoft-edge', '/usr/bin/microsoft-edge-stable', '/opt/microsoft/msedge/msedge',
+    '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/opt/google/chrome/chrome',
+    '/usr/bin/chromium', '/usr/bin/chromium-browser', '/snap/bin/chromium'];
+}
+
+/** The browser the tools drive: `--edge` or EDGE_PATH when given (any Chromium-family browser), else the first of browserCandidates on disk. */
 async function findEdge(explicit, env = process.env, platform = process.platform) {
-  const candidates = explicit ? [explicit] : env.EDGE_PATH ? [env.EDGE_PATH] : platform === 'win32'
-    ? [env['ProgramFiles(x86)'], env.ProgramFiles, env.LOCALAPPDATA].filter(Boolean)
-      .map((dir) => path.join(dir, 'Microsoft', 'Edge', 'Application', 'msedge.exe'))
-    : platform === 'darwin' ? ['/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge']
-      : ['/usr/bin/microsoft-edge', '/usr/bin/microsoft-edge-stable', '/opt/microsoft/msedge/msedge'];
+  const named = explicit || env.EDGE_PATH;
+  const candidates = named ? [named] : browserCandidates(env, platform);
   // A relative Edge path follows the npm-run rule of every other path argument.
   const caller = callerDirectory(process.cwd(), env);
   const tried = [];
@@ -125,7 +143,8 @@ async function findEdge(explicit, env = process.env, platform = process.platform
     if (await fs.stat(resolved).then((stat) => stat.isFile(), () => false)) return resolved;
     tried.push(resolved);
   }
-  throw new Error('browser: installed Microsoft Edge was not found at ' + tried.join(' or ') + '; use --edge PATH or EDGE_PATH (no browser is downloaded)');
+  throw new Error('browser: ' + (named ? 'installed Microsoft Edge was not found at ' : 'no installed Microsoft Edge, Chrome or Chromium was found at ')
+    + tried.join(' or ') + '; use --edge PATH or EDGE_PATH (no browser is downloaded)');
 }
 
 function untilAbort(promise, signal) {
@@ -1055,7 +1074,7 @@ function routeVerdict(options, film) {
  * tools/replay.js's replay and OUT in tests.
  */
 async function runBrowserCheck(options = {}, { edge = withEdge, exportFilm, replay, dir = OUT } = {}) {
-  const pagePath = options.pagePath || path.join(ROOT, 'out', 'index.html');
+  const pagePath = options.pagePath || path.join(OUT, 'index.html');
   const page = await fs.readFile(pagePath).catch((error) => {
     throw new Error('browser: cannot read ' + pagePath + '; run npm run page first: ' + error.message);
   });
@@ -1682,7 +1701,7 @@ async function main(args = process.argv.slice(2), run = runAll, dir = OUT) {
 if (require.main === module) main().catch((error) => { console.error(error.message); process.exitCode = 1; });
 
 module.exports = {
-  parseArgs, findEdge, connectCDP, evaluate, servePage, inspectPiece, inspectStill, pagePng, stillVerdict, filmsToExport, inspectFilm, runBrowserCheck, checkPage, replayFilms, requireReplays,
+  parseArgs, findEdge, browserCandidates, connectCDP, evaluate, servePage, inspectPiece, inspectStill, pagePng, stillVerdict, filmsToExport, inspectFilm, runBrowserCheck, checkPage, replayFilms, requireReplays,
   stopBrowser, stopRelaunched, removeProfile, main, saveReport, FORCED, retryBehindSchedule, crashPartway, sheetReady, sheetData, captureSheet, frameMatch, soundMatch, loudnessMatch, PAGE_LOUDNESS_MATCH, withEdge, waitFor, pageErrors, routeVerdict, redrawPhrase,
   evaluateInPieces, PIECE_CHARS, SHOT_BYTES, bandRows, sheetPieces, sheetCuts, writePieces, removeGoneSections, sheetParts, sheetClip, checkFlashFixture, checkImageFixture, imageMiss, TIMEOUT_MS, timeoutArg, SHEET_PROGRESS,
 };

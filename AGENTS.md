@@ -46,7 +46,8 @@ A JavaScript library and agent skill for making art from code: one seeded piece 
 | `site/` | The showcase site: `shots.js`, stage runtime, `pieces/` (its art shots), `demos/` (site demos of the built-in styles, each named after its style), `posters/`, `tests/`. |
 | `docs/apis/`, `docs/knowledge/` | Public contracts and guides. [Contributing](docs/CONTRIBUTING.md) and [security](docs/SECURITY.md) sit in `docs/`. |
 | `out/` | Generated pages, artwork, sheets, films and reports. Ignored by Git. |
-| `plugin.json`, `.claude-plugin/`, `.codex-plugin/`, `.agents/plugins/` | Plugin manifests and marketplace catalogs; keep them consistent ([plugin metadata](docs/knowledge/development.md#plugin-metadata)). |
+| `assets/` | The plugin's icon: its piece `icon.cjs` and the `icon.png` and `icon.svg` drawn from it. |
+| `plugin.json`, `.claude-plugin/`, `.agents/plugins/` | Plugin manifests and marketplace catalogs; `tests/plugin-manifests.test.js` keeps them consistent ([plugin metadata](docs/knowledge/development.md#plugin-metadata)). |
 
 One name can mean three files: `skills/artifex/styles/cad.js` is the style's mark functions, `site/demos/cad.js` its site demo, and `site/pieces/cad.cjs` a site art shot. Search with the folder.
 

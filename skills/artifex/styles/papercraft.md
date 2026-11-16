@@ -167,7 +167,7 @@ rather than grown ([draw the drawing](../reference/films.md#draw-the-drawing)).
   torn and crumpled sheets of paper on white, by varèche, CC0. Source and
   licence are in [`torn-paper.json`](references/papercraft/torn-paper.json).
 
-Outside [replica mode](../SKILL.md#replica-mode), use the photo for the
+Outside [replica mode](../reference/replica.md), use the photo for the
 material, never its composition. Compare these features
 with your piece: the torn edge profile, the flecks of fibre, the grain scale,
 and thin paper that lets the sheet beneath show through. The photo is crumpled;

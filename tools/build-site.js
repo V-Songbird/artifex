@@ -21,12 +21,12 @@ const path = require('node:path');
 const http = require('node:http');
 const zlib = require('node:zlib');
 const { bundle, reach, checkResolvable, wrap } = require('./build-page.js');
-const { loadExternal, shown } = require('./piece-input.js');
+const { loadExternal, shown, outRoot } = require('./piece-input.js');
 const { shots: cut } = require('../core/time.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const SITE = path.join(ROOT, 'site');
-const OUT = path.join(ROOT, 'out', 'site');
+const OUT = path.join(outRoot(), 'site');
 const EXPORTS = 'core/export.js';
 const USAGE = 'usage: npm run site [-- --serve [--port N]]';
 

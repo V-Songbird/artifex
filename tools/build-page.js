@@ -1159,9 +1159,9 @@ function checkParses(page) {
 
 const USAGE = 'usage: page [path/to/piece.cjs]';
 
-/** The page's file: out/index.html, or <stem>-page.html in the piece's outputDirectory. */
-function pageFile(external) {
-  return path.join(outputDirectory(external), external ? external.stem + '-page.html' : 'index.html');
+/** The page's file: out/index.html (the library's out/ from inside it, else the caller's), or <stem>-page.html in the piece's outputDirectory. */
+function pageFile(external, cwd) {
+  return path.join(outputDirectory(external, cwd), external ? external.stem + '-page.html' : 'index.html');
 }
 
 function main() {

@@ -6,7 +6,7 @@ related_files: ["tools/measure-reference.js", "tests/measure-reference.test.js",
 
 # Reference measurements
 
-`npm run measure -- <reference.png>` reads a PNG and reports what it measured as one JSON object. A piece fits its own shapes to these numbers. The report holds no pixels, picture, SVG or path to paste, so the piece is still solved, not traced. [Replica mode](../../skills/artifex/SKILL.md#replica-mode) says how a piece uses the report. [Measuring a reference image](../knowledge/command-line-tools.md#measuring-a-reference-image) explains how to run the command.
+`npm run measure -- <reference.png>` reads a PNG and reports what it measured as one JSON object. A piece fits its own shapes to these numbers. The report holds no pixels, picture, SVG or path to paste, so the piece is still solved, not traced. [Replica mode](../../skills/artifex/reference/replica.md) says how a piece uses the report. [Measuring a reference image](../knowledge/command-line-tools.md#measuring-a-reference-image) explains how to run the command.
 
 ## Report
 
@@ -53,7 +53,7 @@ Each outline has these fields:
 | --- | --- |
 | `points` | The simplified outline as `[x, y]` pairs. The loop is closed: the last point joins the first, which is not repeated. |
 | `area` | The area the outline encloses before simplification, in square pixels, rounded to 2 decimals. |
-| `hole` | `true` when the outline runs around a part of the region that has another colour or is transparent, such as the inside of a ring. To leave a transparent hole unpainted, follow [replica mode](../../skills/artifex/SKILL.md#replica-mode) step 4. |
+| `hole` | `true` when the outline runs around a part of the region that has another colour or is transparent, such as the inside of a ring. To leave a transparent hole unpainted, follow [replica mode](../../skills/artifex/reference/replica.md) step 4. |
 | `bbox` | `[x0, y0, x1, y1]`, the outline's bounds before simplification. |
 
 ## Coordinates and outline geometry
