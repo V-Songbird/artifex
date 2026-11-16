@@ -2112,9 +2112,11 @@ test('the browser check replays every film it exported, records its margins, and
     for (const [key, value] of saved) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
   }
   // The printed flags come from the very browser object the replay was handed, so they cannot drift from what ran.
-  const drifting = async (file, options) => { Object.assign(options.browser, { edge: path.join('C:', 'Drifted', 'msedge.exe'), timeoutMs: 45000 }); return replay(file, options); };
-  await assert.rejects(replayFilms(report, { edge: path.join('C:', 'Edge Beta', 'msedge.exe') }, { dir, replay: drifting }),
-    (error) => error.message.endsWith(' --edge "C:/Drifted/msedge.exe" --timeout-ms 45000'));
+  // Absolute on Windows and on Linux alike, as `beta` above.
+  const drifted = path.resolve(path.sep, 'Drifted', 'msedge.exe');
+  const drifting = async (file, options) => { Object.assign(options.browser, { edge: drifted, timeoutMs: 45000 }); return replay(file, options); };
+  await assert.rejects(replayFilms(report, { edge: beta }, { dir, replay: drifting }),
+    (error) => error.message.endsWith(' --edge "' + drifted.split(path.sep).join('/') + '" --timeout-ms 45000'));
   assert.deepEqual([report.films[0].replay.match, report.films[0].replay.pictureMarginDb], [true, 15.53]);
   const differs = report.films[1].replay;
   assert.deepEqual([differs.match, differs.pictureDb, differs.pictureMarginDb, differs.soundMarginDb, differs.detail],
