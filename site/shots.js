@@ -1,0 +1,52 @@
+// The site's shot list, in scroll order. Each shot is an ordinary Artifex
+// piece; `npm run site` resolves the list on whole frames of `hz`, so the
+// scroll position is one playhead for the whole site.
+//
+// Per shot: `name` (kebab-case, unique, used in recipe URLs), `piece` (path
+// from this file), and optionally `seam` (a transformation between two shots:
+// no still under reduced motion, hidden from assistive technology), `seconds`
+// (required for a still, refused for a timed piece, which lasts its own
+// duration), `tier: 'worker'` (drawn off the main thread), `still` (the
+// playhead shown under reduced motion, 1 by default), `poster` (an image drawn
+// from the same recipe), `title` and `text`.
+//
+// The intro, the bloom seam, the ink shot, the crack seam, the mirror shot,
+// the bend and portal seams, the trace and print seams, the CAD shot, the fold
+// and paint seams, the Kandinsky shot, the wall of every style, the unstick
+// seam, the cues, readout and settle shots, the contain seam and the box
+// shot are the site's art. The box shot's piece declares boxes: the stage
+// shows it at the visitor's box, and it is a worker-tier shot, because every
+// new box is solved again: in the worker a join or a drag holds up no frame.
+// The close seam and the home shot go on at the same box, and so in the
+// worker too: the box closes into an envelope, and the pen writes its recipe
+// on the label.
+'use strict';
+
+module.exports = {
+  hz: 30,
+  seed: 1,
+  shots: [
+    { name: 'intro', piece: './pieces/intro.cjs', heard: './pieces/intro-heard.cjs', text: 'A plotter pen writes the name, one line at a time. Scroll back and it lifts every line again: each frame is a function of a seed and a playhead.' },
+    { name: 'bloom', piece: './pieces/bloom.cjs', seam: true, text: 'A wide brush of clean water crosses the last line while its ink is still wet, and the ink blooms out into the water along its current.' },
+    { name: 'ink', piece: './pieces/ink.cjs', poster: './posters/ink.webp', title: 'Solved, not traced', text: "The brush takes up the ink blooming in the water and lays that one ink along the water's current: wide pale washes first, dark strokes last. Every stroke is walked through the same field; nothing is traced." },
+    { name: 'crack', piece: './pieces/crack.cjs', seam: true, text: "The ink dries and the film cracks: each crack runs between the cracks before it and meets them square, finer near the painting's focus, until the sheet is a partition." },
+    { name: 'mirror', piece: './pieces/mirror.cjs', poster: './posters/mirror.webp', title: 'Structure is the subject', text: 'The torn pieces lift off the table. Three mirrors stand on the sheet, and the triangle between them repeats by reflection, ring by ring, into the wallpaper group their angles make.' },
+    { name: 'bend', piece: './pieces/bend.cjs', seam: true, text: 'The three mirrors, pinned at their corners, bow inwards. The wallpaper turns hyperbolic, its reflections crowding without end towards one circle, and the mirrors turn together, as a kaleidoscope is turned.' },
+    { name: 'portal', piece: './pieces/portal.cjs', seam: true, text: 'A page torn from a notebook, a bird doodled on it in ballpoint, is slid in under a mirror, and the kaleidoscope carries it into every reflection. The camera goes into one mirror, to its reflection of the page.' },
+    { name: 'trace', piece: './pieces/trace.cjs', seam: true, text: 'The mirror lets go and the page lies flat. Drafting film goes down over the doodle and every line is inked square: the branch along a T-square, the legs and the beak against a set square, the eye round a template.' },
+    { name: 'print', piece: './pieces/print.cjs', seam: true, text: 'The page is pulled from under the film. A lamp exposes the cyanotype beneath, the film is lifted away, and water washes the print blue: the doodle is a blueprint.' },
+    { name: 'cad', piece: './pieces/cad.cjs', poster: './posters/cad.webp', title: 'One subject, ten media', text: 'The same bird crosses every medium. On the blueprint, the plotter from the first shot lays the CAD drawing a layer at a time: views, section, dimensions and fold lines, each in its own colour.' },
+    { name: 'fold', piece: './pieces/fold.cjs', seam: true, text: 'A knife cuts the plot out part by part. The parts rise onto their own layers, the wing folds on its phantom line, and the sheet tears into strips: papercraft.' },
+    { name: 'paint', piece: './pieces/paint.cjs', seam: true, text: 'A wide knife spreads a thick ground over the papercraft, and the paper soaks up its oil. A brush lays the paint on in short, thick strokes, each dragging a little of the last: the swirling background first, the bird last.' },
+    { name: 'kandinsky', piece: './pieces/kandinsky.cjs', poster: './posters/kandinsky.webp', title: 'Thick paint, scraped thin', text: "A palette knife drags the strokes off in long passes, smearing their colour across the ground, and spreads the bird's own paint into circles, arcs, bars and lines: the same bird, as a Kandinsky." },
+    { name: 'wall', piece: './pieces/wall.cjs', poster: './posters/wall.webp', still: 0.6, title: 'Ask for any style', text: 'A frame is lowered over the painting, and it lies among one framed work of every style in the library, the same bird drawn by each: papercraft, a 3D render, CAD, pixel art, embroidery, a sticker, voxels, a doodle, Kandinsky, impasto, a circuit board, watercolour, sumi-e, a star atlas, light painting and pen and pencil. The camera chooses one.' },
+    { name: 'unstick', piece: './pieces/unstick.cjs', seam: true, text: 'The paint the knife laid has dried. Each form cracks free round its edge and lifts off the ground, the forms on top first, a faint stain left where each was painted.' },
+    { name: 'cues', piece: './pieces/cues.cjs', poster: './posters/cues.webp', title: 'Motion, written', text: 'The loose forms play on cues someone wrote: the long lines slide into a staff, the big forms take their places as a band and play a phrase, each heard as it lands, hops or turns. Picture and sound read the same table.' },
+    { name: 'readout', piece: './pieces/readout.cjs', poster: './posters/readout.webp', title: 'The data decides the melody', text: 'A cursor runs along the staff, and as it reaches each place the next note hops up to the height its digit of pi gives, and sounds it. The seed decides only which form plays each note.' },
+    { name: 'settle', piece: './pieces/settle.cjs', poster: './posters/settle.webp', title: 'Forces find the rest', text: "The staff's chord shakes the forms loose. They fall, strike and pile at the foot of the frame: a fall solved once, so scrolling back replays it exactly." },
+    { name: 'contain', piece: './pieces/contain.cjs', seam: true, text: "The mat's bevel deepens into a box and the pile sinks to its floor. Then the box's sides close in, and the pile makes room." },
+    { name: 'box', piece: './pieces/box.cjs', tier: 'worker', title: 'Any box', text: "The box takes the shape of your window. Its sides slide out or in until it has your window's proportions, and the pile makes room or rises: the scene is solved again for the box, not stretched. Drag a wall, or resize the window." },
+    { name: 'close', piece: './pieces/close.cjs', seam: true, tier: 'worker', text: 'The backing paper slides out from under the frame, a side at a time, and folds over it: the box closes into an envelope.' },
+    { name: 'home', piece: './pieces/home.cjs', tier: 'worker', title: 'Take it home', text: 'The pen comes back and writes the recipe on the label: the seed and the box you are looking at. A file saved from this page carries the same recipe, so the piece can be drawn again from it. To make your own, install the plugin (in Claude Code: claude plugin marketplace add V-Songbird/artifex and then claude plugin install artifex@artifex; Copy install has both lines), and ask your agent for a piece.' },
+  ],
+};

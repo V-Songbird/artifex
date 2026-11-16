@@ -1,0 +1,1105 @@
+// The showcase stage: the site is one film, and the scroll position is its playhead.
+//
+// Each shot is an ordinary piece. The stage maps scrollY to a whole frame of the
+// site's shot list (shots and shotAt from core/time.js), maps that frame to the
+// shot's playhead, and draws only when the piece's own frame, the seed, the
+// parameters or the raster size change. It reads the scroll and never writes
+// it, except when the visitor starts "Play as film" or opens a recipe link;
+// its listeners are passive and nothing calls preventDefault.
+//
+// Two canvases at most: the shot on screen, and the next one, warmed before
+// its join so the join never shows a cold first frame. A shot draws in one of
+// three tiers: per frame on the main thread, once per change for a still, or
+// in a Worker on an OffscreenCanvas behind its poster. A shot whose frames run
+// over budget lowers its raster scale, down to one device pixel per CSS pixel,
+// and then moves to the worker tier. A cold draw, the first after a load, a
+// new solve or a scale change, is not held against it: what a piece makes
+// once is not what each frame costs. Under reduced motion each shot is one
+// still, in reading order, and seams are not shown.
+//
+// Silent until the visitor presses Listen (see listen below): then, scrolled,
+// each shot whose sound carries an ambience sounds it once the shot has
+// settled on screen, whatever the scroll does, crossfading into the next
+// shot's; in "Play as film" each soundtrack plays at its exact second.
+//
+// The helpers above boot() are pure, and site/tests runs them in Node.
+
+(function () {
+  'use strict';
+
+  const VIEWPORT_PER_SECOND = 0.6;      // scroll length of one second of film, in viewport heights
+  const PIXEL_CAP = 8294400;            // canvas pixels, the GPU preview's cap
+  const JUDGED = 20;                    // draws a scale is judged on
+  const OVER = 3;                       // of which this many over budget lower it
+  const SETTLE_MS = 150;                // a main-thread fallback draws once the scroll rests this long
+  const SETTLED_MS = 400;               // a shot on screen this long has settled: its ambience starts
+  const STILL_MS = 1000;                // the scroll at rest this long, the shot's soundtrack is built for "Play as film"
+  const CROSS = 1;                      // seconds one shot's ambience crossfades into the next's
+  const LOOP = 12;                      // seconds of ambience before it repeats
+  const RING = 3.5;                     // seconds rendered past the loop and folded back onto its start, so the repeat is seamless
+  const RAMP = 0.08;                    // seconds a soundtrack fades in or out over: never a cut
+  const LEAD = 0.1;                     // seconds ahead a film with sound is started, so its first sound is on time
+  const KEPT = 4;                       // soundtracks, and ambiences, kept rendered
+
+  /** Shot `cut` ({start, end}) shows playhead playheadAt(cut, f, time) at site frame f. */
+  function playheadAt(cut, f, time) {
+    const n = cut.end - cut.start, l = f - cut.start;
+    if (!time || n <= 1) return 0;
+    return time.loop ? l / n : l / (n - 1);
+  }
+
+  /** The site frame nearest to playhead t of shot `cut`: the inverse of playheadAt. */
+  function frameOf(cut, t, time) {
+    const n = cut.end - cut.start;
+    if (!time || n <= 1) return cut.start;
+    const l = Math.round(time.loop ? (t - Math.floor(t)) * n : Math.min(1, Math.max(0, t)) * (n - 1));
+    return cut.start + Math.min(n - 1, l);
+  }
+
+  /** The recipe a URL query names: shot index, playhead, seed, parameters and box; null where absent or invalid. */
+  function readRecipe(search, names) {
+    const q = new URLSearchParams(search), params = {};
+    const shot = names.indexOf(q.get('shot'));
+    const t = q.has('t') ? Number(q.get('t')) : NaN;
+    const seed = /^\d+$/.test(q.get('seed') || '') ? Number(q.get('seed')) : NaN;
+    const box = /^(\d{1,5})x(\d{1,5})$/.exec(q.get('box') || '');
+    for (const [k, v] of q) if (k.startsWith('p.') && k.length > 2 && v !== '' && Number.isFinite(Number(v))) params[k.slice(2)] = Number(v);
+    return {
+      shot: shot < 0 ? null : shot,
+      t: Number.isFinite(t) && t >= 0 && t <= 1 ? t : null,
+      seed: seed <= 0xffffffff ? seed : null,
+      params: shot < 0 ? {} : params,
+      box: shot >= 0 && box ? { w: Number(box[1]), h: Number(box[2]) } : null,
+    };
+  }
+
+  /** The query for a recipe, as the page writes its own: shot, seed, a four-place playhead, the box as WxH and p.<name>. */
+  function writeRecipe(r) {
+    const q = ['shot=' + encodeURIComponent(r.shot), 'seed=' + r.seed];
+    if (r.t !== null) q.push('t=' + r.t.toFixed(4));
+    if (r.box) q.push('box=' + r.box.w + 'x' + r.box.h);
+    for (const k of Object.keys(r.params)) q.push('p.' + encodeURIComponent(k) + '=' + encodeURIComponent(r.params[k]));
+    return '?' + q.join('&');
+  }
+
+  /**
+   * The box a piece that declares `boxes` is shown at, in design units: the
+   * box `chosen` (dragged, or named by a recipe) or else the whole view, each
+   * measured at the scale the piece's design box `size` fits the view at, so
+   * the design box keeps its place and size on screen and a wider or taller
+   * view adds room round it; held inside the declared ranges. Null for a
+   * piece without boxes, which keeps its design box, fitted. A chosen box
+   * with no height of its own (`h` null: one the visitor dragged) takes the
+   * view's height and is never wider than the view, so it follows a window
+   * that is resized; one a recipe names keeps both its sides.
+   */
+  function boxFor(size, boxes, view, chosen) {
+    if (!boxes) return null;
+    const css = Math.min(view.w / size.w, view.h / size.h), own = { w: view.w / css, h: view.h / css };
+    const want = !chosen ? own : chosen.h == null ? { w: Math.min(chosen.w, own.w), h: own.h } : chosen;
+    const hold = (v, [lo, hi]) => Math.min(hi, Math.max(lo, Math.round(v)));
+    return { w: hold(want.w, boxes.w), h: hold(want.h, boxes.h) };
+  }
+
+  /** The 95th percentile, nearest rank. */
+  function p95(xs) {
+    const s = xs.slice().sort((a, b) => a - b);
+    return s[Math.max(0, Math.ceil(0.95 * s.length) - 1)];
+  }
+
+  /**
+   * The raster scale a shot should draw at next: `scale` (a share of the full
+   * device resolution) unchanged while fewer than OVER of the last JUDGED
+   * draws run over the budget, three quarters of it when OVER or more do,
+   * never below one device pixel per CSS pixel, and 0 when nothing is left to
+   * lower: the worker tier.
+   */
+  function lower(scale, dpr, times, budget) {
+    if (times.length < JUDGED || times.slice(-JUDGED).filter((ms) => ms > budget).length < OVER) return scale;
+    const floor = Math.min(1, 1 / dpr);
+    return scale <= floor + 1e-9 ? 0 : Math.max(floor, scale * 0.75);
+  }
+
+  /**
+   * Judge a main-thread draw of shot `s` ({ scale, times, context }) that took
+   * `ms` in draw context `context`: the canvas, its size, the solve and the
+   * scale it drew with. The first draw in a new context, after a load, a new
+   * solve or a scale change, is cold; neither it nor a warm-up draw is judged.
+   * Returns the scale to draw at next, 0 for the worker tier.
+   */
+  function judgeDraw(s, context, ms, warm, dpr, budget) {
+    const cold = s.context !== context;
+    s.context = context;
+    if (warm || cold) return s.scale;
+    s.times.push(ms);
+    const next = lower(s.scale, dpr, s.times, budget);
+    if (next !== s.scale) s.times = [];
+    return next;
+  }
+
+  /** The canvas for a design box fitted inside a view: CSS scale, device scale k, and whole pixels, capped. */
+  function fit(size, view, dpr, scale, cap) {
+    const css = Math.min(view.w / size.w, view.h / size.h);
+    let k = css * dpr * scale;
+    if (size.w * k * size.h * k > cap) k = Math.sqrt(cap / (size.w * size.h));
+    return { css, k, w: Math.max(1, Math.round(size.w * k)), h: Math.max(1, Math.round(size.h * k)) };
+  }
+
+  /**
+   * What the status line says of film report `r`, as the page's film note does:
+   * its file name and flashNote's warning when it flashes more than three times
+   * in a second, and '' otherwise.
+   */
+  // An export's own refusal under the stage's tag and the shot's name, so the stage and the page say one thing of a still asked for a film.
+  function refusal(shot, cause) {
+    return 'stage: ' + shot + ': ' + cause;
+  }
+
+  /**
+   * What the status line says while a film export draws its frames again:
+   * onProgress's third argument, `restart`, is null until a pass that reported
+   * frames is dropped and the film drawn again from its first frame, and then
+   * says why. '' while the film is drawn once.
+   */
+  function restartNote(shot, done, total, restart) {
+    return restart ? shot + ': frame ' + done + ' of ' + total + ', ' + restart : '';
+  }
+
+  /**
+   * When a voice fading out is gone: asked at audio time `now` to fade over
+   * `seconds`, a voice not fading, or one that would be gone later than that,
+   * is gone at now + seconds; one already fading that is gone sooner keeps its
+   * end (null: nothing to do). A fade is made faster if asked, never slower.
+   */
+  function fadeEnd(fading, gone, now, seconds) {
+    return fading && gone <= now + seconds ? null : now + seconds;
+  }
+
+  /** How long the ambience sounding gives way to the next: CROSS, or RAMP for one already fading, so two cross at most. */
+  function giveWay(fading) {
+    return fading ? RAMP : CROSS;
+  }
+
+  function filmWarning(r, flashNote) {
+    const warning = flashNote(r.flashes);
+    return warning ? r.name + ':' + warning : '';
+  }
+
+  /**
+   * The shot on screen after shot `i` is seen there at `now` (milliseconds),
+   * given `on` ({ i, since }, or null), the shot seen before: `since` holds
+   * while the shot does and restarts when it changes, whichever way or however
+   * fast the scroll went, and the shot has `settled` once it has been on
+   * screen SETTLED_MS.
+   */
+  function onScreen(on, i, now) {
+    const since = on && on.i === i ? on.since : now;
+    return { i, since, settled: now - since >= SETTLED_MS };
+  }
+
+  /**
+   * Keeps a cache of renders, a Map of { buffer, failed } in the order they
+   * were asked for, to `kept` entries by dropping the oldest that has settled,
+   * rendered or failed. One still rendering is never dropped: a second ask
+   * would render it again beside the first.
+   */
+  function evict(cache, kept) {
+    for (const [key, entry] of cache) {
+      if (cache.size <= kept) return;
+      if (entry.buffer || entry.failed) cache.delete(key);
+    }
+  }
+
+  /** Drops a cache's failed renders, so the next approach to their shot renders again. */
+  function forget(cache) {
+    for (const [key, entry] of cache) if (entry.failed) cache.delete(key);
+  }
+
+  /**
+   * One channel of an ambience rendered `n` samples plus a ring, as a loop of
+   * `n` samples: what rings past the end is added back onto the start, so the
+   * loop repeats without a seam.
+   */
+  function fold(data, n) {
+    const out = data.slice(0, n);
+    for (let i = n; i < data.length; i++) out[(i - n) % n] += data[i];
+    return out;
+  }
+
+  /**
+   * Where shot `cut`'s soundtrack starts in a film that plays site frame `from`
+   * at audio time `t0`: at audio time `when`, `offset` seconds into it, and
+   * never before `t0` or `now`, so a soundtrack reached late starts where the
+   * film is.
+   */
+  function entry(cut, from, t0, hz, now) {
+    const at = t0 + (cut.start - from) / hz, when = Math.max(at, t0, now);
+    return { when, offset: when - at };
+  }
+
+  const helpers = { playheadAt, frameOf, readRecipe, writeRecipe, boxFor, p95, lower, judgeDraw, fit, filmWarning, restartNote, fadeEnd, giveWay, refusal, evict, forget, onScreen, fold, entry, VIEWPORT_PER_SECOND, PIXEL_CAP, JUDGED, OVER, SETTLED_MS, CROSS, LOOP, RING, RAMP };
+  if (typeof module === 'object' && module.exports) { module.exports = helpers; return; }
+
+  function boot() {
+    const req = __require('stage');
+    const P = req('core/piece.js'), R = req('core/render.js'), T = req('core/time.js');
+    const data = window.__siteData;
+    const film = T.shots(data.shots.map((s) => [s.name, s.seconds]), { hz: data.hz, frames: data.frames });
+    const last = data.frames - 1;
+    const budget = 1000 / data.hz - 4;
+    const doc = document.documentElement;
+    const measure = new URLSearchParams(location.search).get('measure') === '1';
+    const recipe = readRecipe(location.search, data.shots.map((s) => s.name));
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)');
+    const stageEl = document.getElementById('stage'), poster = document.getElementById('poster');
+    const status = document.getElementById('status'), playButton = document.getElementById('play'), listenButton = document.getElementById('listen');
+    let seed = recipe.seed === null ? data.seed : recipe.seed;
+    let mode = null, pending = 0, playing = null, visible = null, lastFrame = -1, direction = 1, lastScroll = 0;
+    let px = 1, worker = null, workerOk = typeof Worker === 'function' && typeof OffscreenCanvas === 'function'
+      && typeof HTMLCanvasElement.prototype.transferControlToOffscreen === 'function';
+    let urlTimer = 0, stillQueue = Promise.resolve(), observer = null;
+
+    const shots = data.shots.map((s, i) => Object.assign({}, s, {
+      index: i, cut: film[i], base: null, piece: null, box: null, loading: null, solved: null, solvedFor: null,
+      params: i === recipe.shot ? recipe.params : {}, scale: 1, times: [], context: null, stillFor: null,
+    }));
+
+    // What the site check reads. `writes` names every scroll write and why.
+    const stat = window.__stage = {
+      ready: false, mode: null, frames: data.frames, px: 1, seed, frame: -1, shot: null, draws: 0, log: [],
+      stills: 0, writes: [], lowered: [], worker: workerOk ? 'idle' : 'unavailable', force,
+      listen: { on: false, starts: [], fades: 0, playing: 0, rooms: [], ambient: 0 },
+    };
+
+    // --- canvases ---------------------------------------------------------
+    function canvas() {
+      const c = document.createElement('canvas');
+      c.setAttribute('role', 'img');
+      c.hidden = true;
+      return c;
+    }
+    const slots = [0, 1].map((n) => {
+      const slot = { n, gen: 0, canvas: canvas(), g: null, shot: -1, key: null, fit: null, offscreen: false, busy: false, next: null, drawn: false, timer: 0 };
+      stageEl.appendChild(slot.canvas);
+      return slot;
+    });
+
+    // A canvas handed to the worker cannot draw on the main thread again: replace it.
+    function reclaim(slot) {
+      const c = canvas();
+      c.hidden = slot.canvas.hidden;
+      c.setAttribute('aria-label', slot.canvas.getAttribute('aria-label') || '');
+      stageEl.replaceChild(c, slot.canvas);
+      if (slot.offscreen && worker) worker.postMessage({ slot: slot.n, release: true });
+      Object.assign(slot, { canvas: c, gen: slot.gen + 1, g: null, offscreen: false, busy: false, next: null, key: null, fit: null });
+    }
+
+    function assign(slot, i) {
+      if (slot.shot === i) return;
+      clearTimeout(slot.timer);
+      Object.assign(slot, { shot: i, key: null, drawn: false, next: null });
+      slot.canvas.setAttribute('aria-label', label(shots[i]));
+    }
+
+    function label(s) {
+      return s.label + ': ' + s.piece.name + ', seed ' + seed + (s.box ? ', box ' + s.box.w + ' by ' + s.box.h : '');
+    }
+
+    // --- the box ----------------------------------------------------------------
+    // A shot whose piece declares boxes is shown at the viewport's box, or at
+    // the box the visitor drags or a recipe names, through atBox: it is solved
+    // again for the box and recomposes rather than stretching. A box that
+    // changes while the visitor drags or resizes is taken once they rest, since
+    // each box is a new solve; until then the canvas keeps the box it has.
+    let chosen = null, reshaped = 0, boxTimer = 0, dragging = false;
+    const viewNow = () => ({ w: innerWidth, h: innerHeight });
+    /** The box shot s takes from the window alone, with no box chosen. */
+    const ownBox = (s) => boxFor(s.base.size, s.base.boxes, viewNow(), null);
+
+    function reshape(s) {
+      const box = boxFor(s.base.size, s.base.boxes, viewNow(), chosen);
+      if (!box || (s.box && s.box.w === box.w && s.box.h === box.h)) return;
+      const rest = SETTLE_MS - (performance.now() - reshaped);
+      if (s.box && (rest > 0 || dragging)) { clearTimeout(boxTimer); boxTimer = setTimeout(request, Math.max(rest, SETTLE_MS)); return; }
+      s.piece = P.atBox(s.base, box);
+      s.box = box;
+      for (const slot of slots) if (slot.shot === s.index) slot.canvas.setAttribute('aria-label', label(s));
+    }
+
+    // The box's controls, shown while a shot that declares boxes is on screen:
+    // a wall at either side of its canvas that the pointer drags, and a width
+    // slider for the keyboard. Either chooses a box narrower than the window;
+    // the full width goes back to following the window.
+    const boxControl = document.getElementById('boxcontrol'), boxInput = document.getElementById('box');
+    const walls = Array.from(document.querySelectorAll('.wall'));
+
+    function boxControls(slot) {
+      const s = slot && shots[slot.shot], on = !!(s && s.base.boxes && mode === 'film');
+      boxControl.hidden = !on;
+      for (const w of walls) w.hidden = !on;
+      if (!on) return;
+      const own = ownBox(s);
+      boxInput.min = s.base.boxes.w[0];
+      boxInput.max = own.w;
+      if (document.activeElement !== boxInput) boxInput.value = Math.min((chosen || own).w, own.w);
+      if (!dragging) {
+        const c = slot.canvas.style, left = parseFloat(c.left);
+        grips(left, left + parseFloat(c.width));
+      }
+    }
+
+    // The grips at x0 and x1, each kept a grip's half width inside the page, clear of any scrollbar.
+    function grips(x0, x1) {
+      const edge = document.documentElement.clientWidth - 12;
+      walls[0].style.left = Math.min(edge, Math.max(12, x0)) + 'px';
+      walls[1].style.left = Math.min(edge, Math.max(12, x1)) + 'px';
+    }
+
+    // Choose a box `w` design units wide, at the window's height: the window's own width follows the window again.
+    function choose(w) {
+      const s = shots[T.shotAt(film, frameNow()).index];
+      if (!s.base || !s.base.boxes) return;
+      const own = ownBox(s);
+      chosen = w >= own.w ? null : { w: Math.round(w), h: null };
+      reshaped = performance.now();
+      request();
+    }
+
+    boxInput.addEventListener('input', () => choose(Number(boxInput.value)));
+    walls.forEach((wall) => {
+      wall.addEventListener('pointerdown', (event) => { dragging = true; wall.setPointerCapture(event.pointerId); });
+      wall.addEventListener('pointermove', (event) => {
+        if (!dragging) return;
+        const s = shots[T.shotAt(film, frameNow()).index];
+        if (!s.base || !s.base.boxes) return;
+        // The walls move apart or together about the window's middle.
+        const half = Math.abs(event.clientX - innerWidth / 2), css = Math.min(innerWidth / s.base.size.w, innerHeight / s.base.size.h);
+        const w = Math.max(s.base.boxes.w[0] * css / 2, Math.min(innerWidth / 2, half));
+        grips(innerWidth / 2 - w, innerWidth / 2 + w);
+        choose((2 * w) / css);
+      });
+      const release = () => { if (!dragging) return; dragging = false; reshaped = performance.now(); request(); };
+      wall.addEventListener('pointerup', release);
+      wall.addEventListener('pointercancel', release);
+    });
+
+    // The slot's canvas fits the shot's box inside the viewport, centred: its design box, or the one reshape gives it.
+    function size(slot) {
+      const s = shots[slot.shot], dpr = devicePixelRatio || 1;
+      reshape(s);
+      const f = fit(s.piece.size, { w: innerWidth, h: innerHeight }, dpr, s.scale, PIXEL_CAP);
+      const style = slot.canvas.style, w = s.piece.size.w * f.css, h = s.piece.size.h * f.css;
+      style.width = w + 'px'; style.height = h + 'px';
+      style.left = (innerWidth - w) / 2 + 'px'; style.top = (innerHeight - h) / 2 + 'px';
+      if (slot.fit && slot.fit.w === f.w && slot.fit.h === f.h) return;
+      slot.fit = f; slot.key = null;
+      if (!slot.offscreen) { slot.canvas.width = f.w; slot.canvas.height = f.h; }
+    }
+
+    function show(slot) {
+      if (visible === slot) return;
+      visible = slot;
+      for (const x of slots) x.canvas.hidden = x !== slot;
+      poster.hidden = true;
+      if (slot) note(shots[slot.shot].label);
+      else boxControls(null);
+    }
+
+    function note(text) {
+      status.textContent = text + '  ·  seed ' + seed;
+    }
+
+    // The poster covers a worker-tier shot until its first frame is on screen.
+    function posterFor(slot) {
+      const s = shots[slot.shot];
+      poster.hidden = !(s.poster && !slot.drawn && visible === slot);
+      if (poster.hidden) return;
+      if (poster.getAttribute('src') !== s.poster) poster.src = s.poster;
+      poster.alt = label(s);
+      const c = slot.canvas.style;
+      Object.assign(poster.style, { left: c.left, top: c.top, width: c.width, height: c.height });
+    }
+
+    // --- pieces -------------------------------------------------------------
+    const scripts = {};
+    function script(src) {
+      return scripts[src] || (scripts[src] = new Promise((resolve, reject) => {
+        const el = document.createElement('script');
+        el.src = src;
+        el.onload = resolve;
+        el.onerror = () => reject(new Error('stage: could not load ' + src));
+        document.head.appendChild(el);
+      }));
+    }
+
+    function load(i) {
+      const s = shots[i];
+      if (!s.loading) {
+        s.loading = Promise.all(s.scripts.map(script)).then(() => {
+          s.base = s.piece = P.validate(req(s.id));
+          request();
+        });
+      }
+      return s.loading;
+    }
+
+    // A shot whose sound loads apart from its picture (`heard`): its sound's
+    // scripts, the first time Listen or an export asks, and then its piece
+    // carries the sound. Any other shot is heard as it is.
+    function hear(s) {
+      if (!s.heard || !s.piece) return Promise.resolve();
+      return s.hearing || (s.hearing = Promise.all(s.heard.scripts.map(script)).then(() => {
+        s.base = P.validate(Object.assign({}, s.base, { sound: req(s.heard.id).sound }));
+        s.piece = s.box ? P.atBox(s.base, s.box) : s.base;
+        request();
+      }, (error) => {
+        // Its sound could not be loaded: the shot stays silent, as one without sound is.
+        s.heard = null;
+        note(s.label + ': its sound could not be loaded: ' + (error.message || error));
+        request();
+      }));
+    }
+
+    /** Whether shot `s` still waits for its sound to load, so its silence is not yet its answer. */
+    const unheard = (s) => !!s.heard && !(s.piece && s.piece.sound);
+
+    function solved(s) {
+      const key = seed + JSON.stringify(s.params) + JSON.stringify(s.box);
+      if (s.solvedFor !== key) {
+        let out;
+        try { out = P.solve(s.piece, seed, s.params); }
+        catch (error) {
+          // A recipe's parameter the piece does not accept: drop it, as the page does.
+          if (!(error instanceof P.PieceError) || !Object.keys(s.params).length) throw error;
+          s.params = {};
+          return solved(s);
+        }
+        if (out.stages.error) throw new Error(s.name + ': build stage "' + out.stages.error.stage + '" threw: ' + out.stages.error.message);
+        s.solved = out; s.solvedFor = key;
+      }
+      return s.solved;
+    }
+
+    /** What shot i shows at site frame f: its playhead, the piece's own frame and the draw key. */
+    function wanted(i, f) {
+      const s = shots[i], t = playheadAt(s.cut, f, s.piece.time), frame = P.frameIndex(s.piece, t);
+      return { i, f, t, frame, key: [i, frame, seed, JSON.stringify(s.params), JSON.stringify(s.box)].join('|') };
+    }
+
+    // --- drawing --------------------------------------------------------------
+    function force(c) {
+      // Measuring: a pixel read through a new 1 x 1 GPU canvas makes the frame
+      // rasterize first; a canvas kept for reading would copy it all to the CPU.
+      const sink = new OffscreenCanvas(1, 1).getContext('2d');
+      sink.drawImage(c, 0, 0, 1, 1, 0, 0, 1, 1);
+      sink.getImageData(0, 0, 1, 1);
+    }
+
+    function record(slot, w, ms, warm, where, cold = false) {
+      const s = shots[slot.shot];
+      stat.draws++;
+      stat.log.push({ shot: s.index, frame: w.frame, site: w.f, seed, ms: +ms.toFixed(2), warm, cold, where, scale: +s.scale.toFixed(3), w: slot.fit.w, box: s.box && s.box.w + 'x' + s.box.h, at: performance.now() });
+      // Longer than the whole film, so a walk of it keeps its first shots' draws.
+      if (stat.log.length > data.frames + 2000) stat.log.splice(0, 1000);
+      slot.key = w.key; slot.drawn = true;
+      if (visible === slot) { posterFor(slot); stat.ready = true; }
+    }
+
+    function drawMain(slot, w, warm) {
+      if (slot.offscreen) { reclaim(slot); size(slot); }
+      const s = shots[slot.shot];
+      const g = slot.g || (slot.g = slot.canvas.getContext('2d'));
+      const a = performance.now();
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      R.drawFrame(g, s.piece, solved(s), w.t, { scale: slot.fit.k });
+      if (measure) force(slot.canvas);
+      const ms = performance.now() - a;
+      const context = [slot.n, slot.gen, slot.fit.w, slot.fit.h, s.solvedFor, s.scale].join('|');
+      record(slot, w, ms, warm, 'main', s.context !== context);
+      judge(s, context, ms, warm);
+    }
+
+    function drawWorker(slot, w, warm) {
+      if (slot.busy) { slot.next = { w, warm }; return; }
+      if (!worker) startWorker();
+      if (!slot.offscreen) {
+        if (slot.g) { reclaim(slot); size(slot); }
+        const off = slot.canvas.transferControlToOffscreen();
+        slot.offscreen = true;
+        worker.postMessage({ slot: slot.n, canvas: off }, [off]);
+      }
+      const s = shots[slot.shot];
+      slot.busy = { w, warm, shot: slot.shot };
+      worker.postMessage({ slot: slot.n, draw: {
+        id: s.id, scripts: s.scripts, seed, params: s.params, box: s.box, t: w.t, key: w.key, scale: slot.fit.k, w: slot.fit.w, h: slot.fit.h, measure,
+      } });
+    }
+
+    function startWorker() {
+      worker = new Worker('worker.js');
+      stat.worker = 'running';
+      worker.onmessage = (event) => {
+        const m = event.data, slot = slots[m.slot], sent = slot.busy;
+        slot.busy = false;
+        if (m.error) { fallBack('worker: ' + m.error); return; }
+        // The slot moved to another shot, or back to the main thread, meanwhile.
+        if (!sent || sent.shot !== slot.shot || !slot.offscreen) { request(); return; }
+        record(slot, sent.w, m.ms, sent.warm, 'worker');
+        const next = slot.next;
+        slot.next = null;
+        if (next && next.w.key !== slot.key) drawWorker(slot, next.w, next.warm);
+        request();
+      };
+      worker.onerror = (event) => fallBack('worker failed: ' + (event.message || 'error'));
+    }
+
+    // Where the worker route does not work, worker-tier shots draw on the main thread.
+    function fallBack(why) {
+      workerOk = false;
+      stat.worker = 'fell back: ' + why;
+      if (worker) worker.terminate();
+      worker = null;
+      for (const slot of slots) if (slot.offscreen) { reclaim(slot); if (slot.shot >= 0) size(slot); }
+      note('drawing on the main thread');
+      request();
+    }
+
+    function draw(slot, w, warm) {
+      const s = shots[slot.shot];
+      if (s.tier !== 'worker') { drawMain(slot, w, warm); return; }
+      if (workerOk) { drawWorker(slot, w, warm); return; }
+      // The fallback draws once the scroll rests, behind the poster, and never warms.
+      if (warm) return;
+      const rest = SETTLE_MS - (performance.now() - lastScroll);
+      clearTimeout(slot.timer);
+      if (rest > 0) slot.timer = setTimeout(request, rest);
+      else drawMain(slot, w, false);
+    }
+
+    // A shot over budget lowers its scale; with nothing left to lower it moves to the worker tier.
+    function judge(s, context, ms, warm) {
+      const next = judgeDraw(s, context, ms, warm, devicePixelRatio || 1, budget);
+      if (next === s.scale) return;
+      if (next === 0) { s.tier = 'worker'; stat.lowered.push({ shot: s.name, tier: 'worker' }); }
+      else { s.scale = next; stat.lowered.push({ shot: s.name, scale: +next.toFixed(3) }); }
+      request();
+    }
+
+    // --- the film -------------------------------------------------------------
+    function layout() {
+      px = stat.px = Math.max(1, innerHeight * VIEWPORT_PER_SECOND / data.hz);
+      document.getElementById('spacer').style.height = Math.round(last * px + innerHeight) + 'px';
+      for (const s of shots) document.getElementById('shot-' + s.name).style.top = Math.round(s.cut.start * px + innerHeight * 0.5) + 'px';
+    }
+
+    function frameNow() {
+      return Math.min(last, Math.max(0, Math.round(scrollY / px)));
+    }
+
+    function request() {
+      if (!pending) pending = requestAnimationFrame(paint);
+    }
+
+    function paint() {
+      pending = 0;
+      if (mode !== 'film') return;
+      const f = frameNow();
+      if (f !== lastFrame) { if (lastFrame >= 0) direction = f > lastFrame ? 1 : -1; lastFrame = f; }
+      const i = T.shotAt(film, f).index, s = shots[i];
+      stat.frame = f; stat.shot = s.name;
+      if (!s.piece) { load(i); show(null); note('loading ' + s.label); return; }
+      const slot = slots.find((x) => x.shot === i) || slots.find((x) => x !== visible) || slots[0];
+      assign(slot, i);
+      size(slot);
+      show(slot);
+      const w = wanted(i, f);
+      if (slot.key !== w.key) draw(slot, w, false);
+      posterFor(slot);
+      boxControls(slot);
+      settle(i);
+      warm(f);
+      clearTimeout(urlTimer);
+      urlTimer = setTimeout(writeUrl, 400);
+    }
+
+    // Load a neighbour's scripts two seconds of film ahead, and draw its first
+    // frame on the other canvas one second ahead, in the direction of travel.
+    function warm(f) {
+      const j = T.shotAt(film, f).index + direction;
+      if (j < 0 || j >= shots.length) return;
+      const s = shots[j], edge = direction > 0 ? s.cut.start : s.cut.end - 1;
+      const distance = Math.abs(edge - f);
+      if (distance > 2 * data.hz) return;
+      if (!s.piece) { load(j); return; }
+      if (!playing) ambient(j);
+      if (distance > data.hz) return;
+      const slot = slots.find((x) => x !== visible);
+      assign(slot, j);
+      size(slot);
+      const w = wanted(j, edge);
+      if (slot.key !== w.key && !(slot.busy && slot.busy.w.key === w.key)) draw(slot, w, true);
+    }
+
+    // --- listen ---------------------------------------------------------------
+    // Silent until the visitor presses Listen, which makes the audio context
+    // inside that gesture. From then on each shot whose piece declares sound
+    // has its soundtrack rendered, by the renderSound the exports use, once the
+    // scroll has rested on it for STILL_MS or as "Play as film" nears it, never
+    // mid-scroll, because building its graph is a long task; and its ambience, where its
+    // sound carries one (`sound.ambience(ctx, state, { loop })`), as the
+    // visitor scrolls near it, but never while the film plays, rendered LOOP
+    // seconds long and folded into a seamless loop. Scrolled, the shot on screen sounds
+    // its ambience once it has settled there for SETTLED_MS, and it goes on
+    // whatever the scroll does, at rest, backwards or fast, so no event is
+    // started, cut or scrubbed by the scroll; the next shot to settle
+    // crossfades in over CROSS, and a shot without an ambience fades it out.
+    // "Play as film" takes its clock from the audio clock and starts every
+    // soundtrack at its exact second.
+    let listener = null, listening = false, seen = null, settleTimer = 0, roomShot = -1;
+    const tracks = new Map(), airs = new Map(), voices = [];
+    listenButton.hidden = !(typeof AudioContext === 'function' && typeof OfflineAudioContext === 'function');
+
+    /** Shot i's soundtrack, rendering or rendered ({ buffer }), once Listen is on; null for a piece without sound. */
+    function track(i) {
+      const s = shots[i];
+      if (listening && s.heard && !s.hearing) hear(s);
+      if (!listening || !s.piece || !s.piece.sound) return null;
+      const key = i + '|' + seed + JSON.stringify(s.params) + JSON.stringify(s.box);
+      let t = tracks.get(key);
+      if (!t) {
+        t = { buffer: null };
+        tracks.set(key, t);
+        evict(tracks, KEPT);
+        // A failed render stays, marked, so no frame asks again; forget drops it when another shot comes on screen.
+        render(s).then((buffer) => { t.buffer = buffer; request(); }, (error) => { t.failed = true; note(s.label + ': the soundtrack could not be rendered: ' + (error.message || error)); });
+      }
+      return t;
+    }
+
+    // Solved now, at the box the soundtrack is kept under, and rendered after.
+    function render(s) {
+      const piece = s.piece;
+      if (!piece.sound) return Promise.resolve(null);
+      let solve;
+      try { solve = solved(s); } catch (error) { return Promise.reject(error); }
+      return Promise.resolve().then(() => R.renderSound(piece, solve));
+    }
+
+    /** Shot i's ambience, rendering or rendered ({ buffer }), once Listen is on; null for a piece without one. */
+    function ambient(i) {
+      const s = shots[i];
+      if (listening && s.heard && !s.hearing) hear(s);
+      if (!listening || !s.piece || !s.piece.sound || !s.piece.sound.ambience) return null;
+      const key = i + '|' + seed + JSON.stringify(s.params) + JSON.stringify(s.box);
+      let a = airs.get(key);
+      if (!a) {
+        a = { buffer: null };
+        airs.set(key, a);
+        evict(airs, KEPT);
+        // A failed render leaves the shot without an ambience, so the one before it still fades.
+        air(s).then((buffer) => { a.buffer = buffer; request(); }, (error) => { a.failed = true; request(); note(s.label + ': the ambience could not be rendered: ' + (error.message || error)); });
+      }
+      return a;
+    }
+
+    // Rendered LOOP + RING seconds, as the soundtrack is, from the same solve, and folded into a loop of LOOP.
+    function air(s) {
+      const piece = s.piece;
+      if (!piece.sound || !piece.sound.ambience) return Promise.resolve(null);
+      let solve;
+      try { solve = solved(s); } catch (error) { return Promise.reject(error); }
+      const rate = 48000, n = LOOP * rate, ctx = new OfflineAudioContext(2, n + RING * rate, rate);
+      return Promise.resolve(piece.sound.ambience(ctx, solve.state, { loop: LOOP })).then(() => ctx.startRendering()).then((rendered) => {
+        const out = new AudioBuffer({ numberOfChannels: 2, length: n, sampleRate: rate });
+        for (let c = 0; c < 2; c++) out.copyToChannel(fold(rendered.getChannelData(c), n), c);
+        return out;
+      });
+    }
+
+    /** The audio time the visitor hears at performance time `ms`. */
+    function heard(ms) {
+      const ts = listener.getOutputTimestamp ? listener.getOutputTimestamp() : null;
+      if (ts && ts.performanceTime > 0) return ts.contextTime + (ms - ts.performanceTime) / 1000;
+      return listener.currentTime - (listener.outputLatency || 0) - (listener.baseLatency || 0) + (ms - performance.now()) / 1000;
+    }
+
+    // Played: shot i's soundtrack from `offset` seconds, at audio time `when`,
+    // rising over RAMP when started part way in, so it does not click.
+    // Scrolled (`room`): its ambience, looping, rising over CROSS from now.
+    function begin(i, buffer, when, offset, room = false) {
+      if (offset >= buffer.duration) return;
+      const src = listener.createBufferSource(), gain = listener.createGain(), v = { shot: i, src, gain, when, offset, room, fading: false };
+      src.buffer = buffer;
+      src.loop = room;
+      if (offset > 0 || room) { gain.gain.setValueAtTime(0, when); gain.gain.linearRampToValueAtTime(1, when + (room ? CROSS : RAMP)); }
+      src.connect(gain);
+      gain.connect(listener.destination);
+      src.onended = () => { gain.disconnect(); voices.splice(voices.indexOf(v), 1); count(); };
+      src.start(when, offset);
+      voices.push(v);
+      count();
+      const log = room ? stat.listen.rooms : stat.listen.starts;
+      log.push({ shot: shots[i].name, when, offset, at: performance.now(), playing: !!playing });
+      if (log.length > 200) log.splice(0, 100);
+    }
+
+    function count() {
+      stat.listen.playing = voices.filter((v) => !v.room).length;
+      stat.listen.ambient = voices.length - stat.listen.playing;
+    }
+
+    // Faded out over `seconds` and stopped: never a cut. One already fading
+    // fades faster if asked, never slower.
+    function fade(v, seconds = RAMP) {
+      const now = listener.currentTime, g = v.gain.gain, end = fadeEnd(v.fading, v.gone, now, seconds);
+      if (end === null) return;
+      if (!v.fading) stat.listen.fades++;
+      v.fading = true;
+      v.gone = end;
+      g.cancelScheduledValues(now);
+      g.setValueAtTime(g.value, now);
+      g.linearRampToValueAtTime(0, end);
+      v.src.stop(end);
+    }
+
+    function hush() {
+      roomShot = -1;
+      for (const v of voices) fade(v);
+    }
+
+    // Scrolled: once shot i has settled on screen, its ambience crossfades in
+    // over whatever was sounding, and goes on until another shot settles. Its
+    // soundtrack is built only once the scroll has stood still STILL_MS, never
+    // while it moves, so "Play as film" from a rest starts with it.
+    function settle(i) {
+      const now = performance.now();
+      // Another shot comes on screen: a render that failed is tried again the next time its shot does.
+      if (seen && seen.i !== i) { forget(tracks); forget(airs); }
+      seen = onScreen(seen, i, now);
+      if (!listening || playing) return;
+      let wait = Infinity;
+      if (now - lastScroll >= STILL_MS) track(i);
+      else wait = STILL_MS - (now - lastScroll);
+      if (roomShot !== i) {
+        const a = seen.settled ? ambient(i) : null;
+        if (!seen.settled) wait = Math.min(wait, SETTLED_MS - (now - seen.since));
+        else if (!unheard(shots[i]) && (!a || a.buffer || a.failed)) {
+          roomShot = i;
+          // Only the one sounding crossfades; an older one still fading goes over RAMP, so two cross at most.
+          for (const v of voices) if (v.room) fade(v, giveWay(v.fading));
+          if (a && a.buffer) begin(i, a.buffer, listener.currentTime, 0, true);
+        }
+      }
+      clearTimeout(settleTimer);
+      if (wait < Infinity) settleTimer = setTimeout(request, wait);
+    }
+
+    // Played as film: the shot on screen and the next start at their exact seconds once rendered.
+    function schedule(f) {
+      const i = T.shotAt(film, f).index;
+      for (const k of [i, i + 1]) {
+        if (k >= shots.length || playing.started.has(k) || shots[k].cut.start - f > 2 * data.hz) continue;
+        const t = track(k);
+        if (!t || !t.buffer) continue;
+        playing.started.add(k);
+        const e = entry(shots[k].cut, playing.from, playing.t0, data.hz, listener.currentTime);
+        begin(k, t.buffer, e.when, e.offset);
+      }
+    }
+
+    // The film's clock: the audio clock while listening and the context runs, else the page's.
+    function clock(now) {
+      if (!playing.started) return playing.from + Math.floor((now - playing.at) * data.hz / 1000);
+      return playing.from + Math.max(0, Math.floor((heard(now) - playing.t0) * data.hz));
+    }
+
+    // Re-anchor a playing film on the clock it now follows, from the frame it has reached.
+    function anchor(now, from = frameNow()) {
+      if (listening && listener.state === 'running') Object.assign(playing, { from, t0: heard(now) + LEAD, started: new Set() });
+      else Object.assign(playing, { from, at: now, t0: null, started: null });
+    }
+
+    function listen() {
+      if (!listener) listener = new AudioContext();
+      listening = stat.listen.on = !listening;
+      if (listening && listener.state === 'suspended') listener.resume();
+      if (!listening) hush();
+      listenButton.setAttribute('aria-pressed', String(listening));
+      note(listening ? 'listening' : 'sound off');
+      if (playing) { hush(); anchor(performance.now()); }
+      request();
+    }
+
+    stat.listen.render = (name) => {
+      const i = data.shots.findIndex((s) => s.name === name);
+      return load(i).then(() => hear(shots[i])).then(() => render(shots[i]));
+    };
+    stat.listen.ambience = (name) => {
+      const i = data.shots.findIndex((s) => s.name === name);
+      return load(i).then(() => hear(shots[i])).then(() => air(shots[i]));
+    };
+
+    // --- recipes --------------------------------------------------------------
+    function current() {
+      const f = frameNow(), s = shots[T.shotAt(film, f).index];
+      if (!s.piece) return null;
+      return { shot: s.name, seed, t: s.piece.time ? P.frameT(s.piece, wanted(s.index, f).t) : null, params: s.params, box: s.box };
+    }
+
+    function writeUrl() {
+      const r = mode === 'film' ? current() : null;
+      // Some documents refuse address-bar updates; the recipe is best effort.
+      if (r) try { history.replaceState(null, '', writeRecipe(r)); } catch (error) { /* best effort */ }
+    }
+
+    function restore() {
+      if (recipe.shot === null) return;
+      load(recipe.shot).then(() => {
+        const s = shots[recipe.shot];
+        // A recipe's box is the one chosen, unless it is the viewport's own, which then goes on following the window.
+        const own = ownBox(s);
+        if (recipe.box && own && (recipe.box.w !== own.w || recipe.box.h !== own.h)) chosen = recipe.box;
+        if (mode !== 'film') return;
+        stat.writes.push('recipe');
+        scrollTo(0, frameOf(s.cut, recipe.t === null ? 0 : recipe.t, s.piece.time) * px);
+      });
+    }
+
+    // --- exports ----------------------------------------------------------------
+    // The page's exports, from core/export.js in exports.js, loaded the first
+    // time a file is asked for, so the first load does not carry them. `opts`
+    // names a shot (the one on screen by default) and its playhead t (by
+    // default the one on screen, else the shot's still, else 0). Under reduced
+    // motion a call must name its shot.
+    let exporter = null;
+    const asked = {};
+    function exporting() {
+      // A load that failed is asked for again next time.
+      return exporter || (exporter = script(data.exports.script).then(() => req(data.exports.module), (error) => {
+        exporter = null;
+        delete scripts[data.exports.script];
+        throw error;
+      }));
+    }
+
+    function target(opts) {
+      // Under reduced motion the scroll is not a film frame, so it names no shot.
+      if (opts.shot === undefined && mode !== 'film') return Promise.reject(new Error('stage: under reduced motion, name the shot to export'));
+      const f = frameNow(), here = T.shotAt(film, f).index;
+      const i = opts.shot === undefined ? here : data.shots.findIndex((s) => s.name === opts.shot);
+      if (i < 0) return Promise.reject(new Error('stage: no shot is named ' + opts.shot));
+      return Promise.all([exporting(), load(i).then(() => hear(shots[i]))]).then(([E]) => {
+        const s = shots[i];
+        const t = opts.t !== undefined ? opts.t : i === here ? wanted(i, f).t : s.still || 0;
+        return { E, s, t, solve: solved(s) };
+      });
+    }
+
+    /** The film this browser can make of a shot: { format: 'mp4' | 'webm' | null, reason }, as the page offers it. */
+    function offer(opts = {}) {
+      return target(opts).then((x) => x.E.filmOffer(x.s.piece, asked));
+    }
+
+    /**
+     * A file of a shot, carrying its recipe: kind 'png' at opts.scale (1 by
+     * default), 'svg' where the piece declares vector, or 'film', the MP4 or
+     * WebM offer() names, with opts.scale, opts.bitrate and
+     * opts.onProgress(done, total, restart) as the page's film takes them; while
+     * `restart` says why the frames are drawn again, the status line says so too. Resolves to { name, blob }, a film to its report.
+     */
+    function file(kind, opts = {}) {
+      return target(opts).then((x) => {
+        const p = x.s.piece;
+        if (kind === 'png') {
+          const k = opts.scale === undefined ? 1 : opts.scale;
+          return x.E.png(p, x.solve, x.t, k).then((blob) => ({ name: x.E.fileName('png', x.s.name, x.solve.seed, k), blob }));
+        }
+        if (kind === 'svg') return { name: x.E.fileName('svg', x.s.name, x.solve.seed), blob: new Blob([x.E.svg(p, x.solve, x.t)], { type: 'image/svg+xml' }) };
+        if (kind !== 'film') throw new Error('stage: an export is png, svg or film, not ' + kind);
+        return x.E.filmOffer(p, asked).then((choice) => {
+          // A still has no film: the export's own refusal, which names PNG or SVG instead, under the stage's tag.
+          if (!choice.format) return Promise.resolve().then(() => x.E.mp4(p, x.solve, x.s.name)).catch((e) => { throw new Error(refusal(x.s.name, e.message)); });
+          if (choice.format === 'webm') return x.E.webm(p, x.solve, x.s.name);
+          // Frames drawn again show in the status line, with the reason, and the caller's onProgress hears every frame.
+          const onProgress = (done, total, restart) => {
+            const again = restartNote(x.s.name, done, total, restart);
+            if (again) note(again);
+            if (opts.onProgress) opts.onProgress(done, total, restart);
+          };
+          return x.E.mp4(p, x.solve, x.s.name, { scale: opts.scale, bitrate: opts.bitrate, onProgress });
+        }).then((r) => {
+          const warning = filmWarning(r, x.E.flashNote);
+          if (warning) note(warning);
+          return r;
+        });
+      });
+    }
+
+    stat.exports = { offer, file, module: exporting };
+
+    // --- reduced motion: stills in reading order --------------------------------
+    function stills() {
+      if (!observer) {
+        observer = new IntersectionObserver((entries) => {
+          for (const e of entries) if (e.isIntersecting) still(Number(e.target.dataset.shot));
+        }, { rootMargin: '100% 0px' });
+      }
+      for (const el of document.querySelectorAll('.still')) { observer.unobserve(el); observer.observe(el); }
+    }
+
+    function still(i) {
+      const s = shots[i], key = seed + JSON.stringify(s.params);
+      if (s.seam || s.stillFor === key) return;
+      s.stillFor = key;
+      const figure = document.querySelector('.still[data-shot="' + i + '"]');
+      stillQueue = stillQueue.then(() => load(i)).then(() => new Promise((resolve) => {
+        if (mode !== 'stills') { s.stillFor = null; resolve(); return; }
+        const img = figure.querySelector('img') || figure.appendChild(document.createElement('img'));
+        img.alt = label(s) + ', still';
+        const done = () => { stat.stills++; resolve(); };
+        if (s.poster) { img.onload = done; img.src = s.poster; return; }
+        // Drawn on a stage canvas, which reduced motion hides, and kept as an image.
+        const slot = slots[0];
+        if (slot.offscreen) reclaim(slot);
+        Object.assign(slot, { shot: -1, key: null, fit: null, drawn: false });
+        const width = Math.min(1100, innerWidth) * (devicePixelRatio || 1), k = width / s.piece.size.w;
+        slot.canvas.width = Math.round(width); slot.canvas.height = Math.round(s.piece.size.h * k);
+        const g = slot.g || (slot.g = slot.canvas.getContext('2d'));
+        g.setTransform(1, 0, 0, 1, 0, 0);
+        R.drawFrame(g, s.piece, solved(s), s.still, { scale: k });
+        slot.canvas.toBlob((blob) => {
+          if (img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
+          img.onload = done;
+          img.src = URL.createObjectURL(blob);
+        });
+      }));
+    }
+
+    // --- modes, play and controls -----------------------------------------------
+    function setMode() {
+      const next = reduce.matches && !playing ? 'stills' : 'film';
+      if (next === mode) return;
+      mode = stat.mode = next;
+      doc.classList.toggle('film', mode === 'film');
+      if (mode === 'stills') { show(null); hush(); note('reduced motion: stills'); stills(); return; }
+      for (const slot of slots) slot.key = null;
+      layout();
+      request();
+    }
+
+    function play() {
+      if (playing) { stop(); return; }
+      let from = 0;
+      if (mode === 'film') from = frameNow();
+      else {
+        // From the still nearest the top of the window.
+        const near = shots.filter((s) => !s.seam).map((s) => [Math.abs(document.getElementById('shot-' + s.name).getBoundingClientRect().top), s]);
+        near.sort((a, b) => a[0] - b[0]);
+        from = near[0][1].cut.start;
+      }
+      if (from >= last) from = 0;
+      playing = { from };
+      setMode();
+      playButton.textContent = 'Pause';
+      playButton.setAttribute('aria-pressed', 'true');
+      stat.writes.push('play');
+      scrollTo(0, from * px);
+      hush();
+      anchor(performance.now(), from);
+      requestAnimationFrame(tick);
+    }
+
+    function tick(now) {
+      if (!playing) return;
+      // A context that starts running, or stops, moves the film onto the other clock.
+      if (listening && !playing.started === (listener.state === 'running')) anchor(now);
+      const f = Math.min(last, clock(now));
+      if (f !== frameNow()) scrollTo(0, f * px);
+      if (playing.started) schedule(f);
+      if (f >= last) stop();
+      else requestAnimationFrame(tick);
+    }
+
+    function stop() {
+      if (!playing) return;
+      const at = shots[T.shotAt(film, frameNow()).index];
+      playing = null;
+      if (listening) hush();
+      playButton.textContent = 'Play as film';
+      playButton.setAttribute('aria-pressed', 'false');
+      setMode();
+      if (mode === 'stills') document.getElementById('shot-' + at.name).scrollIntoView();
+      // At rest again, the shot on screen sounds its ambience.
+      else request();
+    }
+
+    function interrupt(event) {
+      // The play and listen buttons act by themselves; anything else the visitor does stops the film.
+      if (playing && event.target !== playButton && event.target !== listenButton) stop();
+    }
+
+    playButton.addEventListener('click', play);
+    listenButton.addEventListener('click', listen);
+    document.getElementById('reroll').addEventListener('click', () => {
+      seed = stat.seed = (seed + 1) >>> 0;
+      if (listening) hush();
+      for (const slot of slots) { slot.key = null; if (slot.shot >= 0) slot.canvas.setAttribute('aria-label', label(shots[slot.shot])); }
+      if (mode === 'stills') stills();
+      note('re-rolled');
+      writeUrl();
+      request();
+    });
+    document.getElementById('copy').addEventListener('click', () => {
+      writeUrl();
+      const done = () => note('link copied'), failed = () => note('copy the address bar to share this frame');
+      if (navigator.clipboard) navigator.clipboard.writeText(location.href).then(done, failed); else failed();
+    });
+    // The recipe of the frame on screen, as text: what a saved file carries, to keep or to hand to an agent.
+    document.getElementById('recipe').addEventListener('click', () => {
+      const r = current();
+      if (!r) { note('the shot is still loading'); return; }
+      const done = () => note('recipe copied'), failed = () => note('recipe: ' + JSON.stringify(r));
+      if (navigator.clipboard) navigator.clipboard.writeText(JSON.stringify(r)).then(done, failed); else failed();
+    });
+    // The two commands that install the plugin in Claude Code from its repository (see the README).
+    document.getElementById('install').addEventListener('click', () => {
+      const lines = 'claude plugin marketplace add V-Songbird/artifex\nclaude plugin install artifex@artifex';
+      const done = () => note('install commands copied'), failed = () => note('install: ' + lines.replace('\n', ' ; '));
+      if (navigator.clipboard) navigator.clipboard.writeText(lines).then(done, failed); else failed();
+    });
+    // A file of the shot on screen, carrying its recipe: its picture at the frame shown, or its film.
+    let saving = false;
+    function take(kind) {
+      if (saving) { note('a file is still being made'); return; }
+      if (mode !== 'film') { note('under reduced motion, press Play as film, then save'); return; }
+      saving = true;
+      note(kind === 'film' ? 'drawing and encoding the film' : 'drawing the picture');
+      const opts = kind === 'film' ? { onProgress: (done, total) => { if (done % 30 === 0) note('film: frame ' + done + ' of ' + total); } } : {};
+      Promise.all([file(kind, opts), exporting()]).then(([r, E]) => {
+        E.save(r.blob, r.name);
+        note(kind === 'film' && r.frames ? E.filmSaved(r) : 'saved ' + r.name);
+      }).catch((error) => note(error.message || String(error))).then(() => { saving = false; });
+    }
+    document.getElementById('savepng').addEventListener('click', () => take('png'));
+    document.getElementById('savefilm').addEventListener('click', () => take('film'));
+    for (const type of ['keydown', 'pointerdown', 'wheel', 'touchstart']) addEventListener(type, interrupt, { passive: true });
+    addEventListener('scroll', () => { lastScroll = performance.now(); request(); }, { passive: true });
+    // A new window height changes how far a frame scrolls: the frame on screen keeps its place.
+    addEventListener('resize', () => {
+      reshaped = performance.now();
+      if (mode !== 'film') return;
+      const f = frameNow(), was = px;
+      layout();
+      if (px !== was) scrollTo(0, f * px);
+      request();
+    }, { passive: true });
+    reduce.addEventListener('change', setMode);
+
+    setMode();
+    load(recipe.shot === null ? 0 : recipe.shot);
+    restore();
+    if (mode === 'stills') stat.ready = true;
+  }
+
+  boot();
+})();

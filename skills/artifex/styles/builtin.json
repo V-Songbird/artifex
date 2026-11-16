@@ -1,0 +1,149 @@
+[
+  {
+    "name": "papercraft",
+    "title": "Papercraft",
+    "summary": "Layered paper collage: torn sheets with white cores and soft shadows, clean-cut shapes, flat colour and printed papers.",
+    "guide": "papercraft.md",
+    "module": "papercraft.js"
+  },
+  {
+    "name": "render-3d",
+    "title": "3D render",
+    "summary": "Soft-lit raymarched 3D: smooth blended forms with soft shadows, ambient occlusion, rim light and glossy highlights.",
+    "guide": "render-3d.md",
+    "module": "render-3d.js"
+  },
+  {
+    "name": "cad",
+    "title": "CAD drawing",
+    "summary": "Line work in layer colours on a dark model-space ground: orthographic views, hatched sections and computed dimensions in a stroke font.",
+    "guide": "cad.md",
+    "module": "cad.js"
+  },
+  {
+    "name": "pixel-art",
+    "title": "Pixel art",
+    "summary": "2D pixel art on a coarse grid: a small palette, Bayer dithering, one-pixel outlines and stepped shading.",
+    "guide": "pixel-art.md",
+    "module": "pixel-art.js"
+  },
+  {
+    "name": "embroidery",
+    "title": "Embroidery",
+    "summary": "Bright satin-stitch fills and couched strands, each with a dark edge and a sheen, on dark woven cloth.",
+    "guide": "embroidery.md",
+    "module": "embroidery.js"
+  },
+  {
+    "name": "sticker",
+    "title": "Sticker",
+    "summary": "Flat, bold-outlined vinyl art die-cut with a white border, one soft shadow and a gloss streak, sometimes peeling.",
+    "guide": "sticker.md",
+    "module": "sticker.js"
+  },
+  {
+    "name": "voxel",
+    "title": "Voxel",
+    "summary": "Isometric voxel blocks as in Minecraft: 16 x 16 texel faces lit only by orientation, culled and drawn back to front.",
+    "guide": "voxel.md",
+    "module": "voxel.js"
+  },
+  {
+    "name": "doodle",
+    "title": "Doodle",
+    "summary": "Ballpoint lines gone over twice, hatching instead of fills, bubble letters and a highlighter swipe, on notebook paper.",
+    "guide": "doodle.md",
+    "module": "doodle.js"
+  },
+  {
+    "name": "kandinsky",
+    "title": "Kandinsky",
+    "summary": "Haloed circles, rings, triangles, arcs, bars and crossing lines in glazed primaries on warm paper, after Kandinsky's Bauhaus work.",
+    "guide": "kandinsky.md",
+    "module": "kandinsky.js"
+  },
+  {
+    "name": "impasto",
+    "title": "Impasto",
+    "summary": "Thick oil dabs with lit and shadowed ridges, laid along a swirling flow and wrapping each form under one light.",
+    "guide": "impasto.md",
+    "module": "impasto.js"
+  },
+  {
+    "name": "circuit-board",
+    "title": "Circuit board",
+    "summary": "Copper in 45-degree runs under green solder mask, gold where the mask opens, white silkscreen and soldered parts, seen from above.",
+    "guide": "circuit-board.md",
+    "module": "circuit-board.js"
+  },
+  {
+    "name": "watercolour",
+    "title": "Watercolour",
+    "summary": "Transparent washes glazed in faint layers on cold-press paper, with soft and dried edges, pooled pigment, granulation and lifted lights.",
+    "guide": "watercolour.md",
+    "module": "watercolour.js"
+  },
+  {
+    "name": "sumi-e",
+    "title": "Sumi-e",
+    "summary": "Ink brush strokes pressed and lifted, running dry into streaks, in tones of one black on rice paper with much empty space.",
+    "guide": "sumi-e.md",
+    "module": "sumi-e.js"
+  },
+  {
+    "name": "star-atlas",
+    "title": "Star atlas",
+    "summary": "Stars as discs sized by magnitude on deep blue, a projected grid, and thin constellation lines over faint engraved figures.",
+    "guide": "star-atlas.md",
+    "module": "star-atlas.js"
+  },
+  {
+    "name": "light-painting",
+    "title": "Light painting",
+    "summary": "Long-exposure trails of hand-held light that only add, each a soft glow round a white-hot core, over a near-black night.",
+    "guide": "light-painting.md",
+    "module": "light-painting.js"
+  },
+  {
+    "name": "pen-and-pencil",
+    "title": "Pen and pencil",
+    "summary": "A sepia ballpoint line that swells, skips and pools, over coloured-pencil hatching or a loose scribble fill, broken by the tooth of creased cream paper.",
+    "guide": "pen-and-pencil.md",
+    "module": "pen-and-pencil.js"
+  },
+  {
+    "name": "manga",
+    "title": "Manga",
+    "summary": "Black ink on white: pressure pen lines, screentone dots, hatching, speed and focus lines, and drawings held on twos.",
+    "guide": "manga.md",
+    "module": "manga.js"
+  },
+  {
+    "name": "gouache",
+    "title": "Mid-century gouache",
+    "summary": "Opaque matte flats in a few colours per scene, crisp edges that break into dry-brush streaks, simple sky gradients, and dark front planes round a lit opening.",
+    "guide": "gouache.md",
+    "module": "gouache.js"
+  },
+  {
+    "name": "flat-cartoon",
+    "title": "Flat cartoon",
+    "summary": "Flat fills inside a closed ink line that swells, tapers and weighs on the shadow side, one hard cel shade per part, blush and white shines, and outlined sound-effect lettering.",
+    "guide": "flat-cartoon.md",
+    "module": "flat-cartoon.js"
+  },
+  {
+    "name": "print-plate",
+    "title": "Print plates",
+    "summary": "A print in separations: a plate per ink multiplied over paper, colours as overprints, whites as knockouts, dot screens at each ink's angle and a register offset per ink.",
+    "guide": "print-plate.md",
+    "module": "print-plate.js"
+  },
+  {
+    "name": "backlit-silhouette",
+    "title": "Backlit silhouettes",
+    "summary": "Flat sheets in front of a lit screen: translucent gels that tint the light and darken where they overlap, opaque cards that read as black with openings cut through, no shadows and no edges.",
+    "guide": "backlit-silhouette.md",
+    "module": "backlit-silhouette.js"
+  }
+]

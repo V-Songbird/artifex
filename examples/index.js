@@ -1,0 +1,32 @@
+// The example set. Idioms that break each other's assumptions.
+//
+// There is never exactly one, because one example is a template and a template
+// is a scope. None of these is the starter: a scaffolder emits something that
+// draws nothing in particular and says so.
+
+'use strict';
+
+module.exports = {
+  drift: require('./drift.js'),
+  specimen: require('./specimen.js'),
+  readout: require('./readout.js'),
+  cues: require('./cues.js'),
+  partition: require('./partition.js'),
+  contours: require('./contours.js'),
+  packing: require('./packing.js'),
+  pattern: require('./pattern.js'),
+  lsystem: require('./lsystem.js'),
+  attractor: require('./attractor.js'),
+  inversion: require('./inversion.js'),
+  cover: require('./cover.js'),
+  settle: require('./settle.js'),
+  'pixel-field': require('./pixel-field.js'),
+  refit: require('./refit.js'),
+  automaton: require('./automaton.js'),
+  growth: require('./growth.js'),
+  cascade: require('./cascade.js'),
+  drape: require('./drape.js'),
+  stride: require('./stride.js'),
+  'tidal-painting': require('./tidal-painting.js'),
+  'quince-and-shadow': require('./quince-and-shadow.js'),
+};

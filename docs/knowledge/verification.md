@@ -1,0 +1,244 @@
+---
+type: knowledge
+summary: "Which focused tests cover each area of the engine, what the Node suite, the installed-Edge browser check and its forced fallbacks establish, how frames are compared, and how the mutation suite judges a mutation; read before changing a check, a contract key, an invariant or an export."
+related_files: ["tests/", "tests/negative.js", "tests/negative-runner.test.js", "tests/negative-reporter.js", "tests/mutation-patches.test.js", "tests/check-browser.test.js", "tests/page-build-errors.test.js", "tests/page-a11y.test.js", "tools/check-browser.js", "tools/replay.js", "tests/replay.test.js", "core/film.js", "core/export.js", "core/webgpu-preview.js", "examples/pixel-field.js", "tests/webgpu-preview.test.js", "tests/page-preview.test.js", "tests/pixel-field.test.js", "tests/time.test.js", "tests/sound.test.js", "tests/finish.test.js", "core/image.js", "tests/image.test.js", "tests/fixtures/image-piece.cjs"]
+---
+
+# Verifying changes
+
+This page says which checks cover each area and what each kind of check establishes. The commands themselves are listed in [developing Artifex](development.md#commands).
+
+## Focused checks by area
+
+`examples/pixel-field.js` is the authored CPU/WGSL reference for optional pixel
+previews. Run `node --test tests/piece.test.js tests/webgpu-preview.test.js tests/page-preview.test.js tests/pixel-field.test.js`
+for its contract, lifecycle, recipe freshness and CPU pixel checks. GPU tests in
+Node use controlled devices; actual shader output, native device loss, canvas
+copies and CPU/GPU timing require installed Edge with usable WebGPU. Ordinary
+`npm run browser` keeps the CPU path and does not establish GPU availability.
+The backend's reported allocation proxy is not measured GPU memory.
+
+The example Recorder hashes real ImageData bytes. Generic seed, parameter and
+timeline checks render opted-in pixel examples at up to 64 pixels wide; the scale
+invariant compares that diagnostic size with eight times the size. Dedicated
+pixel tests cover raster values and scale behavior. The benchmark null surface
+allocates real pixel buffers and runs CPU computation while discarding upload;
+it cannot measure browser presentation or GPU speedup.
+
+The [geometry API](../apis/geometry.md) defines segment intersection and closest-point results, bounded open-polyline offsets, and their numerical limits. `pattern` consumes offsets and intersections; `packing` uses segment distance to keep interior dots clear of its outlines. Run `node --test tests/geom.test.js tests/geometry-consumers.test.js` for those contracts and consumers.
+
+[Authored time](../apis/piece-api.md#authored-time) defines spans, rate curves, tweens, shot lists cut on whole frames, and damped springs and followers. `drift` times its strokes with `span`; `readout` cuts a reading and a rest and schedules its notes from the same shots. Run `node --test tests/time.test.js` for those contracts; `tests/examples.test.js` checks that readout's notes and pictures agree on every frame.
+
+A piece's `finish` is drawn by `drawFrame` on surfaces with a canvas, after `draw`, as a function of the seed and the frame. Run `node --test tests/finish.test.js` for its validation, pass order, grade, grain, weave and flicker contracts on a stand-in surface; how it looks, and its cost on GPU and CPU canvases, need installed Edge. Run `node --test tests/film-fixtures.test.js` for the pixel checks in Node that `drawFrame` changes a frame for a finish a film fixture declares and for each part of it (grain, grade toning, grade black and white, flicker, vignette).
+
+A piece's [images](../apis/piece-api.md#images) are checked in Node by `node --test tests/piece.test.js tests/image.test.js` for the refusals, the copy each solve gets, the digest, the readers and `show` on stand-in surfaces; `tests/render.test.js` for an image piece's SVG of marks alone; `tests/replay.test.js` for the refusal of a file drawn with another image; `tests/cli.test.js` for `npm run image`; and `tests/external-piece.test.js` for an image module loaded beside an external piece, solved to the same bytes in the page as in Node. How an image looks once shown needs installed Edge: `npm run browser` draws [`tests/fixtures/image-piece.cjs`](../../tests/fixtures/image-piece.cjs), as below.
+
+`sumInto` in [`core/sound.js`](../../core/sound.js) sums the voices of every example with sound two at a time. Run `node --test tests/sound.test.js` for its tree; `tests/examples.test.js` checks that no input in an example's soundtrack takes more than two connections. Whether two renders are byte-identical needs installed Edge.
+
+The page builder discovers JavaScript modules in `core/` and `examples/`, then bundles them with a CommonJS loader. Its module-resolution and script-parsing checks catch structural build failures. Template-string content needs correct escaping before it becomes browser JavaScript.
+
+Address-bar synchronization is best effort: documents that reject `history.replaceState` still support selection, playback and exports, but cannot update shareable recipe URLs.
+
+When building a selected piece fails, the page preserves the original build diagnostic and clears its canvas and measurements. Playback and exports are disabled until a valid rebuild or selection succeeds; `read().error` retains the diagnostic and `manifest()` returns `null`. Direct video requests reject with that diagnostic instead of exporting partial state. Run `node --test tests/page-build-errors.test.js` for this error/recovery contract, and `node --test tests/page-a11y.test.js` for the page's accessible names, live regions, alert region and the wording of its notes; a screen-reader pass is not part of either.
+
+MP4 export runs through [`core/film.js`](../../core/film.js) with the browser encoders and decoder passed in, so `node --test tests/film.test.js` checks the writer, the reader, the file check, timestamps, colour tagging, the encoder route's test patterns and fallback, soundtrack length, the film length and soundtrack edit list, the loudness meter and the soundtrack's levelling, and the replay manifest against controlled encoders. Native encoding, decoding and playback need `npm run browser` or a browser.
+
+The levelling tests hold the limiter to -14 LUFS under -2 dBTP on synthesized drums, speech-like bursts and clicks, to its 12 dB depth, to meeting each peak ahead of it on both channels and from the first sample, and to its 50 ms release. To hear the limiter, export the MP4 film of [`tests/fixtures/drum-film.cjs`](../../tests/fixtures/drum-film.cjs) or [`tests/fixtures/speech-film.cjs`](../../tests/fixtures/speech-film.cjs) from its page, as for the [noise fixture](command-line-tools.md#replaying-a-saved-file), and replay it with `--piece`; the export's report gives `sound.limited`.
+
+Frame timing read in a browser measures rasterization only when the work is forced first, for example by copying one pixel with `drawImage` into a small memory canvas and reading that; a `getImageData` on the timed canvas forces it too, but moves a GPU-backed canvas to memory for good, so its later frames no longer rasterize as the film's do. A clock read after the drawing calls return measures their submission.
+
+## What verification establishes
+
+The Node suite checks selected contract, geometry, replay, frame-grid, SVG, and example properties. Its browser-facing tests use controlled surfaces and script inspection. They do not launch a browser or establish visual quality; [verification limits](verification-culture.md) says which evidence supports which claim.
+
+### Running the browser check
+
+`npm run browser` requires an installed Microsoft Edge. It uses native `fetch` and `WebSocket`, with no package dependency or browser download. It serves the built HTML snapshot on an OS-assigned loopback port and launches Edge with a unique temporary profile. Existing browser sessions and profiles are left alone.
+
+- **Options.** Pass options after `npm run browser --`. `--edge PATH` or `EDGE_PATH` selects another Edge installation; `--timeout-ms 60000` sets the startup/navigation/evaluation deadline (100–300000 ms), `--headed` shows the browser, `--force` forces one export fallback, `--allow-fallback` accepts a fallback colour route (both below), and `--json` prints the full JSON report before the summary line instead of writing it to a file.
+- **Output.** Without `--json` the command prints its summary line and then `report: ` with the absolute path of `out/browser.json` in the library, which each run replaces.
+- **Failures.** Cleanup has a separate bounded grace period and failures exit nonzero with diagnostics.
+
+Cleanup stops only the Edge process the check launched and its descendants, never Edge by executable name. On Windows it runs `taskkill /T /F` on that process and then waits up to 180 seconds for that process to exit, because a loaded machine can take minutes to end it; `taskkill`'s exit code and localized output decide nothing, because it also fails for a member that exited by itself. A kill command that cannot start fails cleanup. A process that is still running at the limit fails cleanup.
+
+The check then removes only its own `artifex-browser-*` profile under the system temporary directory, retrying busy or locked files for up to 120 seconds while stopped processes release them; a descendant that outlived Edge keeps the profile locked, so the removal then fails cleanup. When every check passed and only cleanup failed, the command still replays the run's films and prints its summary line, marked `cleanup failed`, and the report (or its path), and exits nonzero. A failed check prints no report and names its failure on standard error, with three exceptions: a film that `DIFFERS` on replay, a film whose replay finished but whose Edge failed to clean up, and any failure after the page's or the flash fixture's Edge failed only to clean up. In each case the command also prints the summary line and the report, as [replaying the exported films](#replaying-the-exported-films) describes.
+
+Edge can relaunch itself, so the process a tool starts may exit with code 0 within milliseconds while the browser it started keeps running. Every tool that starts Edge through `withEdge` treats that exit as a hand-off and waits up to 15 seconds for the browser's debugging port. If the port never opens, the tool fails with `Edge exited before completion (0)`. Once the port answers, `withEdge` asks the browser for its own process id with `SystemInfo.getProcessInfo`, because after a relaunch it is not the id of the process the tool started. If a connection was never made, cleanup closes the browser through the endpoint in its profile's `DevToolsActivePort`, because the started process is no longer the one to kill. It first tries the port and endpoint from a startup read whose `/json/version` request succeeded. When startup validated none, or the endpoint it tried refuses the connection, cleanup reads that file again every 50 milliseconds until it names a valid endpoint other than the one that refused, then tries that one. Reading, connecting and closing share one 3 second limit, so a file that is half-written, not yet written or not yet rewritten by a relaunched browser is still found and closed. If the browser's id differs from the started process's, cleanup then asks the browser's endpoint for its id again. Only when the endpoint still reports the same id does cleanup stop that process and its tree, and it waits for the process to exit. If the endpoint no longer answers or reports another id, cleanup stops nothing, because the id might now belong to an unrelated process. When no id was learned, because the deadline fired first or the `SystemInfo.getProcessInfo` lookup failed or took longer than its own 3 second limit, cleanup asks the endpoint again and stops the id it reports, unless that id is the started process's. Cleanup removes the profile last, after that wait, so a browser still holding its files cannot block the removal.
+
+### What the browser check requires
+
+The browser command selects every registered example and, for each one:
+
+- checks `read()`, each declared stage through `inspect()`, and `manifest()`;
+- confirms the HTTP recipe URL;
+- draws into a separate native canvas with `willReadFrequently: true` and reports nontransparent pixel counts, including backgrounds;
+- for a piece that declares `boxes`, sets a narrower box through `__artifex.setBox`, requires the page's canvas, `read()`, `manifest()` and address bar to name that box, and draws the piece natively at it.
+
+It then checks that a still PNG keeps unpainted pixels transparent. The check registers a 40 x 20 test piece for the moment that paints its left half and leaves its right half unpainted. It saves that piece's PNG twice: once through the drawing `npm run still` uses, and once through the page's own **PNG 1x** button, which saves through `png()` in `core/export.js`. The button's file is caught in the page, so no download starts. Each PNG must be 40 x 20 pixels, with alpha 255 in every painted pixel and alpha 0 in every unpainted one. A failure names the size or the alpha it found; for the button it starts `browser: the page's PNG 1x button:`. The report carries the measured alphas as `still` and `pagePng`.
+
+It then exports a film through `__artifex.film()` for every example that declares sound, or for the first with a timeline when none does. It also exports the first example that declares a `reframe` box timeline, unless that example is already chosen; this adds one film, not one per box. It decodes each film in the page. For each film it requires:
+
+- the page to offer that example's MP4 film and hide the WebM fallback;
+- the first, middle and last decoded frames to resemble their own drawn frames at least as closely as their neighbours (a held frame ties with an identical neighbour);
+- a declared soundtrack to decode to exactly the film's length, within one sample;
+- two more renders of the soundtrack in the page to hold the same bits in every sample, naming the channel, sample and both values of the first difference otherwise;
+- one of those renders, levelled in the page with `__artifex.level`, gain and limiter, to report the export's `measured`, `gain`, `limited`, `lufs`, `dbtp` and `short`;
+- the soundtrack to follow that levelled render for 1024 samples from its first sound, at 10 dB signal to error or better;
+- the soundtrack to measure -14 LUFS within 0.1 once decoded, or, quieter than that, peak no more than 0.1 dB under the -2 dBTP ceiling for AAC or 0.15 dB for Opus, and to decode under -1 dBTP, 1 dB above the ceiling, in any case;
+- the replay manifest found in the film's bytes to equal the page's recipe;
+- for a film drawn along a box timeline, the replay manifest to name the piece's `reframe` list, so `npm run replay` draws the film along it rather than at one box. Each frame's reference is drawn at the box that frame holds;
+- the export's [flash count](../apis/piece-api.md#the-exports-flash-count), carried in the film's report as `flashes`, to be present and to give no warning: no example's film may flash more than three times in one second.
+
+Each film must then match its recipe on replay, as [replaying the exported films](#replaying-the-exported-films) describes.
+
+A run without `--force` then exports the MP4 film of [`tests/fixtures/flash-film.cjs`](../../tests/fixtures/flash-film.cjs), a fixture that flashes on purpose, once, at its 960 x 540 design size, in a second Edge started the same way. Its count must find more than three general flashes and more than three red flashes, and the page must warn of them. This shows the count runs on real frames on the encoder route, which the Node tests with stand-in canvases cannot show. The report carries the fixture's count as `flashFixture`, and the summary line gives it as `the flash fixture's film warned of <n> general and <m> red flashes`. The fixture's film is then replayed like the examples' films, with the fixture as its piece, from `out/browser-flash-film.mp4`; its verdict is `flashFixture.replay`. A forced run skips the fixture: without H.264 no MP4 film can be made, and each forced run checks only its own fallback.
+
+A run without `--force` last checks [`tests/fixtures/image-piece.cjs`](../../tests/fixtures/image-piece.cjs), a fixture that shows an image made in code and draws discs sized by its tones. Each step starts its own Edge. The check saves the fixture's first frame as a PNG at its 320 x 180 design size, as `npm run still` does. At five pixels away from the marks, each channel must lie within 6 levels of the image as `sample` reads it there; a failure starts `browser: the image fixture's PNG` and names the pixel and both colours. The page that drew it must credit the image: `read().images` must list it with its size, channels, source and rights as the fixture declares them, and the shown **Images** group must name its source and rights; a failure starts `browser: the image fixture's page credits`. The PNG, written to `out/browser-image-piece.png`, must then match on replay. The check then exports the fixture's MP4 film, as `npm run film` does, to `out/browser-image-piece.mp4`, and replays it like the other films. The report carries both verdicts as `imageFixture.png` and `imageFixture.replay`, with `imageFixture.png.shows` false when the PNG missed its image, and the summary line adds `the image fixture's page credited its image, and its PNG showed it and replayed as matching, and its film was exported` followed by the film's replay verdict. Last, the check decodes a 3 x 1 PNG tagged gAMA 1.0 through `npm run image`'s decoder, which sends it to Edge; each channel must come back within 6 levels of its value converted to sRGB. A failure starts `browser: the image fixture: npm run image read a PNG tagged gAMA 1.0 as`, the report carries `imageFixture.decode.converted`, and the summary line adds `npm run image converted a gamma-tagged PNG to sRGB in Edge`. Any failure in this fixture still prints the summary line and saves `out/browser.json` with every verdict so far; a failure whose message does not already name the fixture starts `browser: the image fixture: `. When a step's Edge fails only to clean up, the failure message contains `browser: cleanup failed` and the summary ends `; cleanup failed`; any other failure ends it `; owned browser, server and profile cleaned up`. A forced run skips this fixture too.
+
+The loudness rule, `loudnessMatch`, also requires the export's report to carry `short` exactly when the level it encoded the soundtrack at is more than 3 LU under -14 LUFS; at exactly -17.00 LUFS it takes either, because that level is rounded and `short` is measured before rounding. Each film's sound report carries `short` and `limited` when the export gave them. `frameMatch`, `soundMatch` and `loudnessMatch` run in the page from their source text, and `node --test tests/check-browser.test.js` checks each of them, and that the page's film check acts on the loudness verdict, carries `short` and `limited`, and refuses a fresh levelling that reports otherwise than the export, against a controlled page. The same file checks the flash rules against a controlled page and a stand-in export of the fixture.
+
+Each film's report names the colour conversion route it took, and every MP4 film must take the encoder route, which installed Edge supports. Its fallbacks to the GPU or CPU conversion keep a film correct and only slow the export, so without this requirement a browser or code change that stopped the route would pass. On a machine without a usable GPU, `--allow-fallback` accepts either fallback; the report then carries `allowFallback: true`, and the summary line says `accepting a fallback colour route`.
+
+Page exceptions, console errors, failed checks and timeouts fail the command. This smoke check does not verify composition, cross-browser or physical-device behavior, or how a film plays on another device, and without `--force no-h264` it does not verify the WebM fallback or its timing. The ordinary Node suite and current CI do not require Edge.
+
+For browser or export changes, inspect actual rendered output and saved files. Check exported video frame counts and spacing from the encoded file. Automated numerical checks do not establish composition, layering, or usability.
+
+### Replaying the exported films
+
+After the page's checks pass and its Edge has closed, the check replays every film it exported, as `npm run replay` does, in a fresh Edge for each film. This happens in the default run and in every `--force` run, including the WebM film of `--force no-h264`. The default run also replays the flash fixture's film after exporting it, as `npm run replay -- out/browser-flash-film.mp4 --piece tests/fixtures/flash-film.cjs` does. The Edge that replays a film never takes the run's forced condition.
+
+The check writes each example's film to `out/browser-<name>.mp4`, or to `out/browser-<condition>-<name>.mp4` under `--force`, with `.webm` for a WebM film. The file stays there, so you can replay it again by hand with `npm run replay -- <file>`. Each film replayed replaces its file. A run that stops early, at a failed check or at a film that cannot be replayed or `DIFFERS`, writes none of the films after that point, so their files still hold an earlier run's films.
+
+A film that `DIFFERS` on replay fails the run with `browser: <name>: its film DIFFERS on replay: <reason>; replay <file> with npm run replay`. The films after it are not replayed, and when an example's film differs, the flash fixture's film is not exported. The check still writes the run's report, and the summary line says `and DIFFERS on replay` for that film. A film that replay cannot read fails the run with `cannot be replayed` and replay's own error. If the replay finishes but its Edge fails to clean up, the run fails with `was replayed, but the replay's Edge failed to clean up, so its verdict is unread`, and the check still writes the run's report. Each film replayed to a verdict, matching or differing, gets a `replay` entry in its report, and the flash fixture's goes in `flashFixture.replay`:
+
+| Field | Meaning |
+| --- | --- |
+| `match` | `true` when the film matches its recipe, `false` when it `DIFFERS`. |
+| `pictureDb`, `pictureMarginDb` | The worst compared frame's PSNR, and how far it lies over the 30 dB floor, negative when under it. Both are `null` when replay compared no frame, as when the browser cannot seek the film to its first frame. |
+| `soundDb`, `soundMarginDb` | The worst soundtrack block that replay judged by its codec's floor (25 dB for AAC, 15 dB for Opus), and how far it lies over that floor. Both are `null` for a film without sound, when no block was judged by that floor, or when replay did not find the soundtrack matching. Blocks judged by the rules for noise-like bands are not counted here; the `detail` text gives their figures. In an AAC or Opus film, a block with noise-like bands less than 1 dB over its codec's floor is judged by those rules too, so it is not counted here either. |
+| `ms` | How long that film's replay took. |
+| `file`, `detail` | The film's path and replay's full verdict. |
+
+The summary line adds, for each film, `and replayed as matching, its worst frame <n> dB over the floor and its worst sound block at or over the floor <m> dB over it`, leaving out the sound part when `soundMarginDb` is `null`; the flash fixture's count is followed by the same words for its film. That sound margin is never negative, because it counts only the blocks judged by the floor alone, which are at or over it. Replay judges a block under the floor, or a block of either codec with noise-like bands less than 1 dB over it, by its other rules, those for noise-like bands and for differences under the render's own noise, so the margin does not show how close those blocks came to failing; the `detail` text gives their figures.
+
+How much of a short noise burst, such as a footstep's crack, falls in one block depends on where the film's frames fall. So the same sound can code at 24.9 dB in one film and 25.2 dB in the next. If an AAC block has noise-like bands and lies less than 1 dB over the 25 dB floor, replay judges it by every rule for a block under the floor. This keeps the verdict and the margin from changing with that chance. Such a block fails when it fails any of those rules, including the one for the difference outside its noise-like bands, and its reason says `within 1 dB over the 25 dB floor for AAC`. When it passes, the `detail` text counts it among the noise-like blocks as `<n> of them within 1 dB over the floor`, and `soundMarginDb` leaves it out. A block without noise-like bands is still judged by the floor alone, at any margin. An Opus block with noise-like bands less than 1 dB over its 15 dB floor is judged the same way, because the Opus film of `tests/fixtures/noise-film.cjs`, replayed with its hi-hats 3 dB quieter, matched at 15.8 dB by the floor alone.
+
+An exported film whose bytes the page did not send back fails the run with `the page sent back none of its film's bytes, so it cannot be replayed`, rather than going unreplayed. A run that ends with any exported film, the flash fixture's included, holding no `replay` entry fails with `browser: <name>: its film was exported but never replayed`.
+
+When the page's Edge or the flash fixture's Edge finishes its work but fails only to clean up, the check still replays every film the run exported, the fixture's included, and only then fails with that cleanup failure. The report holds every verdict, and the summary line ends `cleanup failed`. If a film `DIFFERS` in such a run, the run fails with the `DIFFERS` message followed by the cleanup failure.
+
+Replaying makes the default run about 35 to 45 seconds longer, more than doubling it. This was measured over three default runs without replaying and three with it, taken in alternation, with the machine's CPU 18 to 69% busy when each run started. A whole `npm run browser` took 23 to 26 seconds without replaying and 58 to 71 seconds with it. In the slowest run with replaying, 71 seconds against 26 for the run after it, the seven replays (six examples' films and the flash fixture's) took 33 seconds, 3 to 6 seconds each. The other 12 seconds or so went to carrying the films' bytes back from the page and writing them out. The seven films take about 84 MB under `out/`.
+
+### How frames are compared
+
+Each checked frame is compared at 240 pixels wide with references drawn on the kind of canvas the export drew the film on: a GPU-backed canvas on every colour route where the browser has a GPU, because translucent drawing rasterizes differently on a canvas kept in memory. They are read through a separate small memory canvas, because reading a GPU-backed canvas with `getImageData` moves it to memory for good. Each read-back waits for the browser to finish drawing, about 3.5 ms per read in installed Edge whatever its size. So code that reads every frame stacks small frames and reads them at once, as [`core/flash.js`](../../core/flash.js) does.
+
+Each decoded frame is read through a `VideoFrame` made from the video element and closed once read, here and in `npm run replay`'s film comparison. Drawing the element itself can convert a software-decoded frame's colours away from the pixels it carries (see [WebM](output-formats.md#webm)). A decoded frame matches when it scores at least 30 dB PSNR against its own drawn frame and no neighbour scores higher. The report lists each checked frame's `psnrDb` and its closest neighbour's `neighbourDb`. When the browser does not finish seeking a film to a frame within 10 seconds, `npm run replay` stops comparing there and names that frame in its verdict as a difference: `frame <n> cannot be sought`.
+
+`npm run replay -- <film> --lag <other.mp4> --at <frame or s>`, optionally over `--region x,y,w,h`, decodes every frame of both films and measures how many frames a beat moved between two renders of one piece, from the correlation of their frame-to-frame change. It is a check beside the verdict, never part of it: it changes neither the verdict nor the exit code. [Command-line tools](command-line-tools.md#replaying-a-saved-file) gives the rules and thresholds.
+
+### Forced fallbacks
+
+`npm run browser -- --force <condition>` installs one condition in the page before it loads, through `Page.addScriptToEvaluateOnNewDocument`, and checks the fallback it causes on the first film the default run would export, or with `no-aac` on every film it would export, so that every limited soundtrack, as settle's and cues' are, is decoded as Opus too. The conditions take one thing away and leave the rest to Edge:
+
+- `no-aac` makes `AudioEncoder.isConfigSupported` refuse every `mp4a` configuration. Each film of an example that declares sound must carry an Opus soundtrack, pass the soundtrack checks above and, without `--allow-fallback`, take the encoder route as a default run's films do.
+- `no-webgl2` makes `getContext('webgl2')` return `null` on canvases and offscreen canvases. The film's report must name the CPU colour route, with or without `--allow-fallback`, and its decoded frames must pass the frame check. Without `--allow-fallback`, the film must also have been drawn on the GPU, as described in [the CPU route's canvas](#the-cpu-routes-canvas).
+- `gpu-crash` hides WebGL2 as `no-webgl2` does, so the film takes the CPU route, whose canvas the export watches for a lost GPU. Once the export has drawn a third of the frames of its first pass, the check crashes the GPU process of its own Edge through the DevTools command `Browser.crashGpuProcess`; no other Edge is touched. The film's report must say `contextLost: true`, meaning the export drew the film again in memory, and its decoded frames must pass the frame check. The report records the frame the crash came at as `crashedAt`. The run fails if the export ended before the crash, or if the film does not report its canvas lost, naming any `encoderError` the export reports. `--allow-fallback` changes neither requirement.
+- `no-h264` makes `VideoEncoder.isConfigSupported` refuse every `avc1` configuration. The page must offer the WebM film for the H.264 reason and hide MP4, and one recording through `__artifex.video()` must decode, last `frames / hz` seconds as the element reports it, pass the frame check, and hold every frame, evenly spaced, when its saved bytes are read in Node with `webmBlockTimes` and `filmVerdict` from `core/export.js`, the module the page records it with.
+
+#### The CPU route's canvas
+
+The CPU route asks for a canvas that is read back every frame (`willReadFrequently`). Installed Edge keeps such a canvas in memory. The export draws a cleared one-pixel default canvas into it before the first frame, and Edge then draws the whole film on the GPU instead. That is about three times faster, and it matches the reference frames, which are drawn on a default canvas. This is Chromium behaviour that no specification promises, so the export tests it on every CPU-route film.
+
+Before the first frame, the export draws a small translucent pattern three times: on the film canvas, on a default canvas and on a canvas kept in memory. Edge draws the pattern's blends and edges differently on the GPU and in memory, the same way every time. The export then clears the pattern and restores the canvas's state, so the film's frames do not change. The film's report names the result as `rasterizer`:
+
+| `rasterizer` | Meaning |
+| --- | --- |
+| `gpu` | The film canvas matched the default canvas and not the memory canvas. |
+| `memory` | The film canvas matched the memory canvas and not the default canvas. |
+| `null` | The pattern could not tell, because the default and memory canvases matched, as on a machine without a GPU; or the film came from a pass that was not tested. |
+
+For a film drawn once, the summary line adds `from frames drawn on the GPU` or `from frames drawn in memory` after the colour route. A `no-webgl2` run fails unless `rasterizer` is `gpu`, with `with WebGL2 hidden the film was drawn in memory, not on the GPU`, or `drawn where a test pattern could not tell the GPU from memory`. Three cases pass anyway:
+
+- `--allow-fallback`, for a machine without a usable GPU.
+- `contextLost: true`: the canvas lost its GPU and the export drew the film again in memory, on purpose.
+- An `encoderError` that names `video`: the video encoder failed and the export drew the film again in memory on a fresh encoder.
+
+That second, in-memory pass is not tested, so its report carries `rasterizer: null`. `contextLost` and `encoderError` tell it apart from a film that Edge drew in memory by itself.
+
+The film was drawn again in memory when `contextLost` is `true` or `encoderError` has a `video: ` entry, so a `video: ` entry alone is not the only sign. The other entries are not among the three cases. An `encoder route: ` entry means the encoder route was dropped after its first frame and the export drew the film again, converted on the GPU or CPU, which is not a redraw in memory. Its reason is the video encoder's error, frames the encoder returned short, a colour space other than limited-range BT.709, a last test pattern that did not come back as drawn, or an error the route threw. An `encoder probe: ` entry means the encoder route's video encoder failed on its first probe and the film was drawn once, converted, unless a `video: ` entry or `contextLost` shows that the conversion pass was drawn again in memory. With WebGL2 hidden the encoder route cannot start, so a `no-webgl2` or `gpu-crash` run's `encoderError` holds only `video: ` and `sound: ` entries. Entries are joined with `; ` in the order they were recorded. `encoder route: ...; video: ...` records a failure on both routes, and a `sound: ` entry can sit between two video entries, because the soundtrack is encoded alongside the frames. [Output formats](output-formats.md#which-failures-the-report-names) describes each value.
+
+The report keeps the first pass's reading as `rasterizerBeforeRedraw`. If that reading is `memory`, Edge had kept the canvas in memory before the loss or failure. The run then fails even after a context loss or a video encoder failure, with `with WebGL2 hidden the film was drawn in memory before it was drawn again there, not on the GPU`. `--allow-fallback` accepts it.
+
+The summary line also names a film that was drawn again. After the colour route it adds `drawn again in memory`, followed by the first pass's reading:
+
+- `after frames first drawn on the GPU`
+- `after frames first drawn in memory`
+- `after frames first drawn where a test pattern could not tell`, only in a `no-webgl2` run. A `null` reading means the test pattern could not tell only when the first pass was the CPU route's, as there. On another route no test pattern ran, and a `gpu-crash` run's summary leaves a `null` reading out, so the line says only `drawn again in memory`.
+
+This wording names the redraw and changes no verdict.
+
+A forced run checks every example as the default run does, names its condition in the report's `forced` field and its summary line, which starts `browser with AAC refused`, `browser with WebGL2 hidden`, `browser with H.264 refused` or `browser with the GPU process crashed mid-export`, and takes one condition at a time. A `gpu-crash` film's summary adds `the GPU process crashed at frame <n>` before the redraw wording above.
+
+The WebM recorder paces frames by the wall clock, and the page refuses a recording that fell behind its schedule, which heavy CPU load causes. The `no-h264` run then records again, at most three recordings in all, and names each refusal in the film's `refusals` and in the summary with the frames it held and whether the recorder or drawing ran late, as `late`; it fails at once on any other refusal, and on a third refusal. The recording the page accepts is judged as above.
+
+#### Crashing the GPU during a saved film
+
+To reproduce a GPU crash on one piece and keep the film, add `--crash-gpu <ms>` to `npm run film`:
+
+```sh
+npm run film -- cues --force no-webgl2 --crash-gpu 1500 --out out/cues-crash.mp4
+```
+
+The command starts the page's export, waits the given number of milliseconds, then crashes the GPU process of its own Edge through `Browser.crashGpuProcess`, the DevTools command that `npm run browser -- --force gpu-crash` also sends. No other Edge is touched. The value must be a whole number of milliseconds from 0 to 2147483647, the longest delay a Node timer keeps; a missing, negative, non-numeric or larger value is refused by name.
+
+The film and its report are saved as for any `npm run film`. The report adds `gpuCrash`, with `atMs`, the delay you gave, and `crashed`, which is `false` when the export ended before that time. The summary line says `GPU process crashed <ms> ms into the export`, or that the export ended first and nothing was crashed. An export that ends within one DevTools round trip of the crash still reports `crashed: true`, although the crash then reaches only the film's transfer back to Node, not the film itself.
+
+Only the CPU route's canvas is watched for a lost GPU, so add `--force no-webgl2` when you need the report to show `contextLost: true`. If the crash also stops the video encoder and the export notices the encoder's error first, the report shows a `video: ` entry with `contextLost: false` instead; the film is drawn again in memory either way. A crash while the GPU route converts the colour, as when WebGL2 is available but the encoder route was not used, fails the export with `film: the GPU lost the colour conversion part-way through the film. Nothing was saved.`: no film and no report are written. If the encoder's error is noticed first there, the report holds a `video: ` entry and the film is drawn again in memory and saved. Which failure comes first, on either route, is read from the code in [`core/film.js`](../../core/film.js), not observed in a browser. On the default encoder route, a crash that lands during the export can show as an `encoderError` entry instead, `encoder route: ` once the first frame is done or `encoder probe: ` before, and it can leave the export waiting until the `--timeout-ms` deadline. How long an export takes depends on the piece and the machine's load, so a given delay can land before or after the export ends.
+
+### The mutation suite
+
+The mutation suite copies `core/`, `examples/`, `skills/`, `tests/`, `tools/`, and `package.json` into temporary directories. Each mutation copies them again from the checkout when that mutation starts, so editing the checkout during a run makes every later mutation test the edited files.
+
+The suite's control requires exit 0 and a complete, nonempty Node TAP report. The control runs the whole suite and, through a second reporter, [`tests/negative-reporter.js`](../../tests/negative-reporter.js), lists the test file of every result. Each mutation then runs only the file that holds its expected test. A title that the control reported more than once, or never, has no single file, so its mutation runs the whole suite. Before any mutation, the control also runs each of those files alone, once. A file that does not pass alone gets a line starting `alone` that names it, and its mutations run the whole suite, because its own failure would otherwise pass for a catch.
+
+A mutation's run gets one of these verdicts:
+
+- **caught**, only when a completed exit-1 test run reports its named assertion;
+- **escaped**, when a completed run passes;
+- **misnamed**, when a completed run fails a different assertion;
+- **infrastructure failure**, here as for the control's run: launch errors, signals, unexpected exit codes, and incomplete or inconsistent TAP, including when some failures were printed before the process stopped.
+
+When the run of one file is escaped or misnamed, the mutation runs again on the whole suite, and that run gives the verdict, so a mutation that only another file's test catches is still reported as misnamed. A caught run of one file does not see the other files: a mutation that also breaks, hangs or floods the output of another file is still caught, where a whole-suite run would have reported the hang or the flood as an infrastructure failure. The verdict holds because Node runs each test file in its own process, and the file was seen passing alone before the mutation.
+
+The runner keeps process metadata and both output streams, reports infrastructure failures separately, and exits unsuccessfully. A control with failing tests prints each failed title with its TAP diagnostic: the assertion message, expected and actual values, and location. Misnamed and infrastructure lines print the same diagnostics for the failures they did see. Run `node --test tests/negative-runner.test.js` for bounded process and report regression checks.
+
+Every infrastructure result, for the control or a mutation, is kept under the run's temporary root in `infrastructure/control` or `infrastructure/m<index>`: `stdout.tap` holds the captured TAP stream, `stderr.txt` the standard error, and `result.json` the exit status, signal, error, failure reason, deadline, PID and the test files the run was given. The report line names that directory.
+
+Each mutated copy is removed as soon as its verdict is printed and its evidence kept, so a run holds the control and at most one mutated copy at a time; a copy that cannot be removed is reported as an infrastructure failure that names it. Final cleanup removes the control and anything left, and removes the temporary root only when nothing was kept; the summary then names the kept `infrastructure` directory.
+
+The runner's temporary root is named `artifex-neg-<runner pid>-*`. Each suite runs with `TEMP`, `TMP` and `TMPDIR` pointing to a `-t` directory beside its own copy (`control-t`, `m<index>-t`), which is removed with the copy, so fixtures and other temporary files a killed suite never removed go when the copy does. A run that is itself stopped before its cleanup leaves its root behind; the next run removes the copies of every such root whose runner process has exited. It never touches a root whose runner is still running, a root without a runner pid in its name, or anything else in the temporary directory. Kept `infrastructure` evidence is never removed automatically: it stays until someone deletes it, so a report's named path remains readable. A suite run directly with `node --test` and killed mid-test still leaves its fixtures in the system temporary directory. The names are short because Windows' `mkdtemp` and process working directories fail past 260 characters, and a runner test nests a whole run of its own inside a copy; with a `TEMP` of up to 120 characters, every path a run creates stays under that limit, which a runner test checks. Roots named `artifex-negative-<pid>-*` by earlier versions are not swept.
+
+A mutation's infrastructure result runs the same test files once more, for the report only. The line shows the second verdict as `retry, report only: <verdict>`, and a second infrastructure result is kept in `m<index>-retry`. The mutation still counts as an infrastructure failure whatever the retry shows, because a pass under the same load cannot prove the first run harmless and letting it change the verdict would hide load failures. The retry still tells a load-sensitive failure (retry caught) from one the mutation itself causes (retry infrastructure again). A control infrastructure result is kept but not retried: the run stops with exit code 2 either way.
+
+`npm run negative -- --file <path>` runs the control and only the mutations of that repository file, and `--expect <text>` only those whose expected test title contains the text. Repeating an option widens it; giving both requires both. The filter is checked before anything is copied, and one that matches no mutation exits 2 and names the filter.
+
+Every other mutation's patch text is still checked, so a stale mutation elsewhere still fails the run. A filtered run such as `npm run negative -- --expect <title>` prints a `MUTATION MISS` or `MUTATION AMBIG` line for each such stale patch before the control runs. Refresh a stale patch to the new text with the same intent.
+
+Selected mutations keep their full-run indices, verdicts, evidence paths and exit codes. The control line says how many of the registered mutations were selected and how many of them run only their expected test's file, and the summary line of a filtered run starts with `partial run`, so it cannot pass for the full suite. In PowerShell, forward the options with `npm.cmd`.
+
+`npm run negative -- --shard <k>/<n>` keeps the k-th of every n mutations in registry order, so shards `1/n` to `n/n` hold each mutation exactly once. It narrows `--file` and `--expect` by the mutation's full-run index, is given at most once, and is part of the filter a partial run names. Every shard runs the control and checks every patch text.
+
+You do not need the mutation suite to find a stale patch text. `npm test` also runs [`tests/mutation-patches.test.js`](../../tests/mutation-patches.test.js), which checks in well under a second that every registered mutation's patch text occurs exactly once in its file. When a patch text is missing or matches more than once, the test fails and lists each such mutation by its expected test title, followed by the runner's own `MUTATION MISS` or `MUTATION AMBIG` line. Inside the runner's own copies that test is skipped, because there one file is mutated on purpose.
+
+Expected mutation titles must be unique among all TAP results and exclude control characters and literal control escapes such as `\n`. Node 22 can encode distinct original titles identically. The runner reports ambiguous attribution as an infrastructure failure rather than claiming that the intended assertion failed.
+
+Each test-suite subprocess has a five-minute deadline.
+
+- **Override.** Set `ARTIFEX_NEGATIVE_TIMEOUT_MS` to an integer from 1 to 2147483647 to override it; zero does not disable the limit.
+- **On timeout.** The runner reports infrastructure failure, terminates only its owned Windows process tree or POSIX process group, and allows up to thirty additional seconds for teardown, because CPU load can delay `taskkill` itself by seconds.
+- **Judging the stop.** Only the suite process the runner started decides it: that process must have exited, or exit within five seconds of the kill ending. `taskkill`'s exit code and localized output decide nothing, because `taskkill` also fails when a tree member exits by itself mid-kill.
+- **Descendants.** Node runs each Windows child in a kill-on-close job, so the suite's own descendants end with it. One that kept running would still hold the copy, whose bounded removal then fails the run.
+- **Failed termination.** A kill command that cannot start is a termination failure, and failed termination remains an infrastructure error.
+- **Output and order.** Combined stdout and stderr are capped at 1 MiB. Mutation subprocesses run sequentially.
+- **Cleanup.** The runner always attempts cleanup of its own temporary copy before reporting its exit code. A stopped Windows process can hold that copy briefly after the runner sees it close, so cleanup retries busy or locked removals for up to ten seconds.

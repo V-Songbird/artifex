@@ -1,0 +1,6 @@
+interface:
+  display_name: "Artifex"
+  short_description: "Make seeded art from code: a page, PNG, SVG and an MP4 film with sound"
+  default_prompt: "Use $artifex to make a seeded piece from code and render it to a page and a film"
+  icon_small: "./assets/icon.png"
+  icon_large: "./assets/icon.png"

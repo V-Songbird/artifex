@@ -1,0 +1,79 @@
+name: Site
+
+# Started by hand only: nothing here runs on a push. The owner enables GitHub
+# Pages for the repository (source: GitHub Actions), sets any domain, and
+# starts each run.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: site
+  cancel-in-progress: false
+
+jobs:
+  browser:
+    name: Check the site in Edge
+    # The hosted Windows image has Microsoft Edge, which the site check drives.
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Build the showcase site
+        run: npm run site
+      # Its frame budgets are set for a reference machine with a GPU; a hosted
+      # runner draws in software, so a budget over its limit here does not stop
+      # the run. Every other finding is in the log to read before deploying.
+      - name: Check the built site in Edge
+        continue-on-error: true
+        run: node tools/check-site.js
+
+  build:
+    name: Build the site
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Build the showcase site
+        run: npm run site
+      - name: Run the site checks
+        run: npm run site:check
+      - name: Upload the site as the Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: out/site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: [browser, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Only this job may publish: it writes the Pages deployment and proves who it is to Pages.
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy the uploaded site
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

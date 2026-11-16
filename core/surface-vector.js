@@ -1,0 +1,616 @@
+// A vector surface: a Canvas2D-shaped drawing target that emits SVG.
+//
+// WHY IT IS SHAPED LIKE CANVAS2D. Because the platform already has a drawing
+// vocabulary and a piece written against it runs unchanged on a screen, in a
+// frame sequence, at print scale and on a plotter. Inventing a second vocabulary
+// would buy nothing and would have to be learned.
+//
+// WHAT IT REFUSES, AND WHY BY NAME. Raster operations cannot become paths. A
+// vector surface that quietly skipped them would hand back a file missing half
+// the picture. Every raster operation therefore throws, naming itself and
+// saying what to do instead, and so does setting a composite mode, a filter or
+// a shadow, which the paths cannot carry.
+//
+// THE ONE LIMIT WORTH STATING. Coordinates are baked into the current transform,
+// which is exact for lines and Béziers (affine-invariant). Elliptical arcs use
+// SVG A commands under similarities; other transforms keep cubic approximation.
+// Stroke WIDTH is scaled by
+// sqrt(|det|), so under a NON-UNIFORM scale a stroke that Canvas2D would draw
+// anisotropically comes out uniform. Plotters and print do not want anisotropic
+// strokes, so this is the right trade here -- but it is a difference, not a
+// rounding.
+
+'use strict';
+
+const RASTER_ONLY = {
+  drawImage: 'draw the geometry instead, draw an image under if (g.canvas) so the SVG keeps the marks alone, or declare outputs: ["raster"]',
+  putImageData: 'a pixel buffer has no path; declare outputs: ["raster"]',
+  getImageData: 'a vector surface has no pixels to read back',
+  createImageData: 'a vector surface has no pixels',
+  createPattern: 'repeat the geometry, or declare outputs: ["raster"]',
+  fillText: 'use a stroke font that returns coordinates, so the letter composes '
+          + 'with everything else that takes a path',
+  strokeText: 'use a stroke font that returns coordinates',
+  measureText: 'measure the stroke font\'s own advance widths',
+  createConicGradient: 'SVG has no conic gradient; approximate it with geometry',
+};
+
+// Compositing, filters and shadows change how a mark meets the pixels under
+// it, and the paths this surface writes carry none of them. A setter that
+// kept 'multiply' and read it back would hand over an SVG that differs from
+// its raster without a word. So each is taken only at the value that draws
+// nothing different, and any other throws, naming the property. A number
+// Canvas2D itself ignores (a negative or non-finite blur, a non-finite offset)
+// is ignored here too. A string other than the one taken is refused, a typo
+// included: this surface cannot tell a misspelt mode from one it cannot draw,
+// and naming either is better than guessing. A blur or an offset is refused
+// whatever the shadow's colour, so no setting order can reach a visible shadow;
+// shadowColor alone is kept at any value, since with no blur and no offset
+// Canvas2D draws no shadow whatever its colour. The state is only ever at its
+// initial value, so a getter returns that and nothing is stored or scoped.
+const RASTER_STATE = {
+  globalCompositeOperation: {
+    initial: 'source-over',
+    take: (v) => v === 'source-over',
+    hint: 'SVG paints each path over the last. Draw an overlap as its own shape in '
+        + 'the colour it should have, or declare outputs: ["raster"]',
+  },
+  filter: {
+    initial: 'none',
+    take: (v) => v === 'none',
+    hint: 'a filter works on pixels. Draw the softened or shifted geometry itself, '
+        + 'or declare outputs: ["raster"]',
+  },
+  shadowBlur: {
+    initial: 0,
+    take: (v) => !(Number(v) > 0 && Number(v) < Infinity),
+    hint: 'a blurred shadow is pixels, not a path. Draw the shadow as its own shape '
+        + 'under the mark, or declare outputs: ["raster"]',
+  },
+  shadowOffsetX: {
+    initial: 0,
+    take: (v) => !(Number.isFinite(Number(v)) && Number(v) !== 0),
+    hint: 'draw the shadow as its own shape, offset under the mark, or declare '
+        + 'outputs: ["raster"]',
+  },
+  shadowOffsetY: {
+    initial: 0,
+    take: (v) => !(Number.isFinite(Number(v)) && Number(v) !== 0),
+    hint: 'draw the shadow as its own shape, offset under the mark, or declare '
+        + 'outputs: ["raster"]',
+  },
+};
+
+/**
+ * Trim a number for output: short enough to keep files small, exact enough to
+ * plot.
+ *
+ * THE HOTTEST LINE IN THE WHOLE LIBRARY. Every coordinate of every point of
+ * every path goes through here twice, and a profile of a piece with a 600 kB
+ * document put 19.5% of the render inside this one function. It is worth the
+ * three extra lines.
+ *
+ * What costs the time is turning a DOUBLE into a string: the engine has to
+ * search for the shortest decimal that round-trips. Turning a small INTEGER into
+ * a string does not -- and after rounding to four places the value is an
+ * integer, scaled. So the string is assembled from that integer and the division
+ * never happens.
+ *
+ * String(-0) is already "0" in JavaScript, so no negative-zero guard is needed
+ * HERE, and an earlier one was dead code that no check could fail. That is a
+ * fact about String(), not a general rule, and reading it as one cost this
+ * project a bug: toFixed(6) renders -0 as "-0.000000", so the same pattern in a
+ * coordinate KEY does need the guard. The `i === 0` line below keeps the same
+ * promise for the same reason, explicitly rather than by luck.
+ */
+function n(v) {
+  if (!Number.isFinite(v)) throw new Error(`vector surface: non-finite coordinate ${v}`);
+  const i = Math.round(v * 1e4);
+  if (i === 0) return '0';                                   // covers -0 without a special case
+  if (i % 10000 === 0) return String(i / 10000);             // a whole number, which most are
+  const neg = i < 0;
+  const a = neg ? -i : i;
+  const whole = (a / 10000) | 0;
+  // Four digits, then the trailing zeros cut. padStart is on a string of at most
+  // four characters, so it costs nothing worth measuring.
+  let frac = String(a % 10000).padStart(4, '0');
+  while (frac.charCodeAt(frac.length - 1) === 48) frac = frac.slice(0, -1);
+  return `${neg ? '-' : ''}${whole}.${frac}`;
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+/** Multiply 2x3 affine matrices: apply `m` then `o`. */
+function mul(o, m) {
+  return [
+    o[0] * m[0] + o[2] * m[1],
+    o[1] * m[0] + o[3] * m[1],
+    o[0] * m[2] + o[2] * m[3],
+    o[1] * m[2] + o[3] * m[3],
+    o[0] * m[4] + o[2] * m[5] + o[4],
+    o[1] * m[4] + o[3] * m[5] + o[5],
+  ];
+}
+
+function apply(m, x, y) {
+  return [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+}
+
+/** Uniform scale factor of a matrix, for stroke width and dash lengths. */
+function scaleOf(m) {
+  return Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2]));
+}
+
+/** Similarities preserve perpendicular equal-length axes, including reflection. */
+function similarityOf(m) {
+  const largest = Math.max(Math.abs(m[0]), Math.abs(m[1]), Math.abs(m[2]), Math.abs(m[3]));
+  if (!(largest > 0) || !Number.isFinite(largest)) return null;
+  const a = m[0] / largest, b = m[1] / largest, c = m[2] / largest, d = m[3] / largest;
+  const x = a * a + b * b, y = c * c + d * d;
+  const tolerance = 32 * Number.EPSILON * Math.max(x, y);
+  if (Math.abs(x - y) > tolerance || Math.abs(a * c + b * d) > tolerance) return null;
+  return { scale: largest * Math.sqrt(x), reflected: a * d - b * c < 0 };
+}
+
+class Gradient {
+  constructor(kind, coords) { this.kind = kind; this.coords = coords; this.stops = []; }
+  addColorStop(offset, color) {
+    if (!Number.isFinite(offset) || offset < 0 || offset > 1) throw new Error('addColorStop: offset must be in [0,1]');
+    this.stops.push([offset, String(color)]);
+    return this;
+  }
+}
+
+function initialState() {
+  return {
+    m: [1, 0, 0, 1, 0, 0],
+    fillStyle: '#000000',
+    strokeStyle: '#000000',
+    lineWidth: 1,
+    lineCap: 'butt',
+    lineJoin: 'miter',
+    miterLimit: 10,
+    globalAlpha: 1,
+    lineDash: [],
+    lineDashOffset: 0,
+    shadowColor: 'rgba(0, 0, 0, 0)',
+  };
+}
+
+class VectorSurface {
+  /**
+   * @param {{w:number,h:number}} size  the design box
+   * @param {{background?:string, precision?:number}} [opt]
+   */
+  constructor(size, opt = {}) {
+    if (!size || !Number.isFinite(size.w) || !Number.isFinite(size.h)) {
+      throw new Error('VectorSurface: size must be { w, h }');
+    }
+    this.kind = 'vector';
+    this.width = size.w;
+    this.height = size.h;
+    this._bg = opt.background || null;
+    this._manifest = opt.manifest || null;
+
+    this._body = [];
+    this._defs = [];
+    this._defId = 0;
+    this._path = [];        // SVG path data, already in device space
+    this._start = null;     // subpath start, user space
+    this._cur = null;       // current point, user space
+    this._open = 0;         // groups opened at this state level
+
+    this._st = initialState();
+    this._stack = [];
+
+    for (const [op, hint] of Object.entries(RASTER_ONLY)) {
+      this[op] = () => {
+        throw new Error(`vector surface: ${op}() is a raster operation and has no path. ${hint}.`);
+      };
+    }
+  }
+
+  // ---- state -------------------------------------------------------------
+
+  save() {
+    this._stack.push({ st: Object.assign({}, this._st, { m: this._st.m.slice(), lineDash: this._st.lineDash.slice() }), open: this._open });
+    this._open = 0;
+    return this;
+  }
+
+  restore() {
+    while (this._open > 0) { this._body.push('</g>'); this._open--; }
+    const f = this._stack.pop();
+    if (f) { this._st = f.st; this._open = f.open; }
+    return this;
+  }
+
+  /**
+   * What a canvas reset() does: the bitmap clears, so every mark, gradient and
+   * clip group drawn so far is discarded, the save stack empties, the transform
+   * and every style return to their defaults and the current path is dropped.
+   * The SVG then holds the marks drawn after the reset, as the canvas does,
+   * and still opens with the background rect when the background option is
+   * set: that rect belongs to the export, not to the draw, so reset() keeps it.
+   */
+  reset() {
+    this._body = [];
+    this._defs = [];
+    this._defId = 0;
+    this._open = 0;
+    this._stack = [];
+    this._st = initialState();
+    return this.beginPath();
+  }
+
+  // ---- transform ---------------------------------------------------------
+
+  transform(a, b, c, d, e, f) { this._st.m = mul(this._st.m, [a, b, c, d, e, f]); return this; }
+  setTransform(a, b, c, d, e, f) { this._st.m = [a, b, c, d, e, f]; return this; }
+  resetTransform() { this._st.m = [1, 0, 0, 1, 0, 0]; return this; }
+  translate(x, y) { return this.transform(1, 0, 0, 1, x, y); }
+  scale(x, y) { return this.transform(x, 0, 0, y === undefined ? x : y, 0, 0); }
+  rotate(a) { const c = Math.cos(a), s = Math.sin(a); return this.transform(c, s, -s, c, 0, 0); }
+
+  /** Independent numeric Canvas-shaped snapshot, without DOMMatrix methods. */
+  getTransform() {
+    const [a, b, c, d, e, f] = this._st.m;
+    return { a, b, c, d, e, f };
+  }
+
+  // ---- path --------------------------------------------------------------
+
+  beginPath() { this._path = []; this._start = null; this._cur = null; return this; }
+
+  moveTo(x, y) {
+    const [X, Y] = apply(this._st.m, x, y);
+    this._path.push(`M${n(X)} ${n(Y)}`);
+    this._start = [x, y];
+    this._cur = [x, y];
+    return this;
+  }
+
+  lineTo(x, y) {
+    if (!this._cur) return this.moveTo(x, y);
+    const [X, Y] = apply(this._st.m, x, y);
+    this._path.push(`L${n(X)} ${n(Y)}`);
+    this._cur = [x, y];
+    return this;
+  }
+
+  bezierCurveTo(x1, y1, x2, y2, x, y) {
+    if (!this._cur) this.moveTo(x1, y1);
+    const m = this._st.m;
+    const [a, b] = apply(m, x1, y1);
+    const [c, d] = apply(m, x2, y2);
+    const [e, f] = apply(m, x, y);
+    this._path.push(`C${n(a)} ${n(b)} ${n(c)} ${n(d)} ${n(e)} ${n(f)}`);
+    this._cur = [x, y];
+    return this;
+  }
+
+  quadraticCurveTo(cx, cy, x, y) {
+    if (!this._cur) this.moveTo(cx, cy);
+    const [px, py] = this._cur;
+    // Exact degree elevation, so the vector output is the same curve the raster
+    // one draws rather than an approximation of it.
+    return this.bezierCurveTo(
+      px + (2 / 3) * (cx - px), py + (2 / 3) * (cy - py),
+      x + (2 / 3) * (cx - x), y + (2 / 3) * (cy - y),
+      x, y,
+    );
+  }
+
+  closePath() {
+    if (this._cur) { this._path.push('Z'); this._cur = this._start ? this._start.slice() : null; }
+    return this;
+  }
+
+  rect(x, y, w, h) {
+    this.moveTo(x, y); this.lineTo(x + w, y); this.lineTo(x + w, y + h); this.lineTo(x, y + h);
+    return this.closePath();
+  }
+
+  roundRect(x, y, w, h, radii = 0) {
+    // Present because hard-edged graphic work has no other way to make one, and
+    // dropping to a raw rectangle costs it every stroke and fill treatment the
+    // rest of the surface offers.
+    let r = Array.isArray(radii) ? radii.slice() : [radii, radii, radii, radii];
+    if (r.length === 1) r = [r[0], r[0], r[0], r[0]];
+    if (r.length === 2) r = [r[0], r[1], r[0], r[1]];
+    if (r.length === 3) r = [r[0], r[1], r[2], r[1]];
+    const lim = Math.min(Math.abs(w), Math.abs(h)) / 2;
+    r = r.map((v) => Math.max(0, Math.min(Number(v) || 0, lim)));
+    const [tl, tr, br, bl] = r;
+    this.moveTo(x + tl, y);
+    this.lineTo(x + w - tr, y); if (tr) this.arcTo(x + w, y, x + w, y + tr, tr);
+    this.lineTo(x + w, y + h - br); if (br) this.arcTo(x + w, y + h, x + w - br, y + h, br);
+    this.lineTo(x + bl, y + h); if (bl) this.arcTo(x, y + h, x, y + h - bl, bl);
+    this.lineTo(x, y + tl); if (tl) this.arcTo(x, y, x + tl, y, tl);
+    return this.closePath();
+  }
+
+  arc(cx, cy, r, a0, a1, ccw = false) {
+    return this.ellipse(cx, cy, r, r, 0, a0, a1, ccw);
+  }
+
+  ellipse(cx, cy, rx, ry, rot, a0, a1, ccw = false) {
+    // Similarities need only transformed radii, axis rotation and sweep. Other
+    // affine transforms retain user-space cubics; the approximation transforms
+    // exactly, although the cubic itself is not an exact ellipse.
+    let d = a1 - a0;
+    const TAU = Math.PI * 2;
+    if (ccw) { if (d > 0) d -= TAU * Math.ceil(d / TAU); if (d <= -TAU) d = -TAU; }
+    else { if (d < 0) d += TAU * Math.ceil(-d / TAU); if (d >= TAU) d = TAU; }
+    // Distinct angles an integer turn apart still trace the circumference.
+    // Only identical input angles describe an empty sweep.
+    if (d === 0 && a1 !== a0) d = ccw ? -TAU : TAU;
+
+    const cr = Math.cos(rot), sr = Math.sin(rot);
+    const P = (th) => {
+      const x = rx * Math.cos(th), y = ry * Math.sin(th);
+      return [cx + x * cr - y * sr, cy + x * sr + y * cr];
+    };
+    const D = (th) => {
+      const x = -rx * Math.sin(th), y = ry * Math.cos(th);
+      return [x * cr - y * sr, x * sr + y * cr];
+    };
+
+    const p0 = P(a0);
+    if (!this._cur) this.moveTo(p0[0], p0[1]); else this.lineTo(p0[0], p0[1]);
+    if (d === 0) return this;
+
+    const m = this._st.m;
+    const similarity = similarityOf(m);
+    const hasRadii = similarity && rx > 0 && ry > 0;
+    const arcRx = hasRadii ? n(rx * similarity.scale) : '0';
+    const arcRy = hasRadii ? n(ry * similarity.scale) : '0';
+    // A positive input radius can disappear at SVG serialization precision.
+    // Keep cubics when either emitted radius is zero, preserving the visible axis.
+    if (arcRx !== '0' && arcRy !== '0') {
+      const rotation = Math.atan2(m[1] * cr + m[3] * sr, m[0] * cr + m[2] * sr) * 180 / Math.PI;
+      const sweep = (d > 0) !== similarity.reflected ? 1 : 0;
+      // SVG omits an arc with coincident endpoints. Split whole circles and
+      // nearly whole turns whose endpoints coincide at serialization precision.
+      let count = Math.abs(d) === TAU ? 2 : 1;
+      if (count === 1 && Math.abs(d) > Math.PI) {
+        const start = apply(m, ...p0).map(n);
+        const end = apply(m, ...P(a0 + d)).map(n);
+        if (start[0] === end[0] && start[1] === end[1]) count = 2;
+      }
+      const large = Math.abs(d / count) > Math.PI ? 1 : 0;
+      const command = `A${arcRx} ${arcRy} ${n(rotation)} ${large} ${sweep} `;
+      for (let i = 1; i <= count; i++) {
+        const point = i === count && Math.abs(d) === TAU ? p0 : P(a0 + d * (i / count));
+        const [x, y] = apply(m, ...point);
+        this._path.push(`${command}${n(x)} ${n(y)}`);
+        this._cur = point;
+      }
+      return this;
+    }
+
+    const segs = Math.max(1, Math.ceil(Math.abs(d) / (Math.PI / 2)));
+    const step = d / segs;
+    const alpha = (4 / 3) * Math.tan(step / 4);
+    let th = a0;
+    for (let i = 0; i < segs; i++) {
+      const th2 = th + step;
+      const s = P(th), e = P(th2), ds = D(th), de = D(th2);
+      this.bezierCurveTo(
+        s[0] + alpha * ds[0], s[1] + alpha * ds[1],
+        e[0] - alpha * de[0], e[1] - alpha * de[1],
+        e[0], e[1],
+      );
+      th = th2;
+    }
+    return this;
+  }
+
+  arcTo(x1, y1, x2, y2, r) {
+    if (!this._cur) return this.moveTo(x1, y1);
+    if (!(r >= 0)) throw new Error('arcTo: radius must be non-negative');
+    const [x0, y0] = this._cur;
+    const a = [x0 - x1, y0 - y1];
+    const b = [x2 - x1, y2 - y1];
+    const la = Math.hypot(a[0], a[1]);
+    const lb = Math.hypot(b[0], b[1]);
+    if (la === 0 || lb === 0 || r === 0) return this.lineTo(x1, y1);
+    const ua = [a[0] / la, a[1] / la];
+    const ub = [b[0] / lb, b[1] / lb];
+    const cosT = Math.max(-1, Math.min(1, ua[0] * ub[0] + ua[1] * ub[1]));
+    if (cosT >= 1 - 1e-12 || cosT <= -1 + 1e-12) return this.lineTo(x1, y1); // collinear
+    const theta = Math.acos(cosT);
+    const tan = r / Math.tan(theta / 2);
+    const t1 = [x1 + ua[0] * tan, y1 + ua[1] * tan];
+    const t2 = [x1 + ub[0] * tan, y1 + ub[1] * tan];
+    const bis = [ua[0] + ub[0], ua[1] + ub[1]];
+    const lbis = Math.hypot(bis[0], bis[1]);
+    const dc = r / Math.sin(theta / 2);
+    const c = [x1 + (bis[0] / lbis) * dc, y1 + (bis[1] / lbis) * dc];
+    const a0 = Math.atan2(t1[1] - c[1], t1[0] - c[0]);
+    const a1 = Math.atan2(t2[1] - c[1], t2[0] - c[0]);
+    const cross = ua[0] * ub[1] - ua[1] * ub[0];
+    this.lineTo(t1[0], t1[1]);
+    return this.ellipse(c[0], c[1], r, r, 0, a0, a1, cross > 0);
+  }
+
+  // ---- gradients ---------------------------------------------------------
+
+  createLinearGradient(x0, y0, x1, y1) { return new Gradient('linear', [x0, y0, x1, y1]); }
+  createRadialGradient(x0, y0, r0, x1, y1, r1) { return new Gradient('radial', [x0, y0, r0, x1, y1, r1]); }
+
+  _paintRef(style) {
+    if (!(style instanceof Gradient)) return esc(String(style));
+    const id = `g${this._defId++}`;
+    const m = this._st.m;
+    // The gradient's coordinates are in USER space at paint time, and path
+    // coordinates are baked into device space, so the CTM goes on the gradient.
+    const gt = ` gradientTransform="matrix(${m.map(n).join(' ')})"`;
+    const stops = style.stops
+      .slice()
+      .sort((p, q) => p[0] - q[0])
+      .map(([o, c]) => `<stop offset="${n(o)}" stop-color="${esc(c)}"/>`)
+      .join('');
+    if (style.kind === 'linear') {
+      const [x0, y0, x1, y1] = style.coords;
+      this._defs.push(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${n(x0)}" y1="${n(y0)}" x2="${n(x1)}" y2="${n(y1)}"${gt}>${stops}</linearGradient>`);
+    } else {
+      const [x0, y0, r0, x1, y1, r1] = style.coords;
+      this._defs.push(`<radialGradient id="${id}" gradientUnits="userSpaceOnUse" fx="${n(x0)}" fy="${n(y0)}" fr="${n(r0)}" cx="${n(x1)}" cy="${n(y1)}" r="${n(r1)}"${gt}>${stops}</radialGradient>`);
+    }
+    return `url(#${id})`;
+  }
+
+  // ---- painting ----------------------------------------------------------
+
+  get fillStyle() { return this._st.fillStyle; }
+  set fillStyle(v) { this._st.fillStyle = v; }
+  get strokeStyle() { return this._st.strokeStyle; }
+  set strokeStyle(v) { this._st.strokeStyle = v; }
+  get lineWidth() { return this._st.lineWidth; }
+  set lineWidth(v) { this._st.lineWidth = v; }
+  get lineCap() { return this._st.lineCap; }
+  set lineCap(v) { this._st.lineCap = v; }
+  get lineJoin() { return this._st.lineJoin; }
+  set lineJoin(v) { this._st.lineJoin = v; }
+  get miterLimit() { return this._st.miterLimit; }
+  set miterLimit(v) { this._st.miterLimit = v; }
+  get globalAlpha() { return this._st.globalAlpha; }
+  set globalAlpha(v) { this._st.globalAlpha = v; }
+  get lineDashOffset() { return this._st.lineDashOffset; }
+  set lineDashOffset(v) { this._st.lineDashOffset = v; }
+  get shadowColor() { return this._st.shadowColor; }
+  set shadowColor(v) { this._st.shadowColor = v; }
+
+  // As on a canvas: a list with a negative or non-finite entry is ignored, and
+  // an odd-length list is stored doubled, so getLineDash reads back the same.
+  setLineDash(a) {
+    const d = Array.isArray(a) ? a.map(Number) : [];
+    if (d.some((v) => !(v >= 0) || v === Infinity)) return this;
+    this._st.lineDash = d.length % 2 ? d.concat(d) : d;
+    return this;
+  }
+  getLineDash() { return this._st.lineDash.slice(); }
+
+  fill(rule) {
+    if (!this._path.length) return this;
+    const a = this._st.globalAlpha;
+    const attrs = [
+      `d="${this._path.join('')}"`,
+      `fill="${this._paintRef(this._st.fillStyle)}"`,
+      rule === 'evenodd' ? 'fill-rule="evenodd"' : null,
+      a < 1 ? `fill-opacity="${n(a)}"` : null,
+    ].filter(Boolean);
+    this._body.push(`<path ${attrs.join(' ')}/>`);
+    return this;
+  }
+
+  stroke() {
+    if (!this._path.length) return this;
+    const st = this._st;
+    const k = scaleOf(st.m);
+    const a = st.globalAlpha;
+    const attrs = [
+      `d="${this._path.join('')}"`,
+      'fill="none"',
+      `stroke="${this._paintRef(st.strokeStyle)}"`,
+      `stroke-width="${n(st.lineWidth * k)}"`,
+      st.lineCap !== 'butt' ? `stroke-linecap="${esc(st.lineCap)}"` : null,
+      st.lineJoin !== 'miter' ? `stroke-linejoin="${esc(st.lineJoin)}"` : null,
+      st.lineJoin === 'miter' && st.miterLimit !== 10 ? `stroke-miterlimit="${n(st.miterLimit)}"` : null,
+      st.lineDash.length ? `stroke-dasharray="${st.lineDash.map((v) => n(v * k)).join(' ')}"` : null,
+      st.lineDash.length && st.lineDashOffset ? `stroke-dashoffset="${n(st.lineDashOffset * k)}"` : null,
+      a < 1 ? `stroke-opacity="${n(a)}"` : null,
+    ].filter(Boolean);
+    this._body.push(`<path ${attrs.join(' ')}/>`);
+    return this;
+  }
+
+  clip(rule) {
+    if (!this._path.length) return this;
+    const id = `c${this._defId++}`;
+    this._defs.push(
+      `<clipPath id="${id}"${rule === 'evenodd' ? ' clip-rule="evenodd"' : ''}><path d="${this._path.join('')}"/></clipPath>`,
+    );
+    this._body.push(`<g clip-path="url(#${id})">`);
+    this._open++;
+    return this;
+  }
+
+  clearRect() {
+    // Canvas2D clears to transparent. SVG has no eraser: a shape painted over
+    // is still in the file, and a plotter would draw it. Saying so is better
+    // than pretending it worked.
+    throw new Error(
+      'vector surface: clearRect() cannot erase -- SVG has no destination to '
+      + 'clear, and a plotter would still draw whatever is underneath. Paint the '
+      + 'ground first instead, or declare outputs: ["raster"].',
+    );
+  }
+
+  fillRect(x, y, w, h) { this.beginPath(); this.rect(x, y, w, h); return this.fill(); }
+  strokeRect(x, y, w, h) { this.beginPath(); this.rect(x, y, w, h); return this.stroke(); }
+
+  // ---- output ------------------------------------------------------------
+
+  /** The finished document. Safe to call more than once. */
+  /**
+   * Record the recipe this document was drawn from. It is written into the
+   * file's own <metadata>, so a plotter file or a print master that outlives
+   * the session it came from still says how to make it again.
+   */
+  setManifest(m) { this._manifest = m; }
+
+  toSVG() {
+    const close = '</g>'.repeat(this._open + this._stack.reduce((s, f) => s + f.open, 0));
+    const defs = this._defs.length ? `<defs>${this._defs.join('')}</defs>` : '';
+    const bg = this._bg
+      ? `<rect width="${n(this.width)}" height="${n(this.height)}" fill="${esc(this._bg)}"/>`
+      : '';
+    // JSON inside <metadata>, escaped like every other string that reaches this
+    // document. A file someone kept and a file someone re-rendered have to be
+    // the same file, and a picture with no recipe is the one that cannot be.
+    const meta = this._manifest
+      ? `<metadata id="artifex-manifest">${esc(JSON.stringify(this._manifest))}</metadata>`
+      : '';
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${n(this.width)}" height="${n(this.height)}" `
+      + `viewBox="0 0 ${n(this.width)} ${n(this.height)}">`
+      + meta + defs + bg + this._body.join('') + close
+      + '</svg>';
+  }
+
+  /** How many painted elements the document carries. A liveness floor for checks. */
+  get markCount() { return this._body.filter((s) => s.startsWith('<path')).length; }
+}
+
+// On the prototype, beside the other style accessors. A value is either
+// refused or leaves the state at its initial value, so the getter returns that.
+function shown(v) {
+  if (typeof v === 'string') return JSON.stringify(v);
+  try { return String(v); } catch { return Object.prototype.toString.call(v); }
+}
+
+for (const [key, { initial, take, hint }] of Object.entries(RASTER_STATE)) {
+  Object.defineProperty(VectorSurface.prototype, key, {
+    configurable: true,
+    get() { return initial; },
+    set(v) {
+      if (!take(v)) throw new Error(`vector surface: ${key} = ${shown(v)} is a raster operation and has no path. ${hint}.`);
+    },
+  });
+}
+
+/**
+ * The recipe an SVG's <metadata id="artifex-manifest"> holds, as toSVG writes
+ * it, or null for an SVG without one. Throws by name when it is not JSON.
+ */
+function svgManifest(svg) {
+  const found = /<metadata id="artifex-manifest">([^<]*)<\/metadata>/.exec(svg);
+  if (!found) return null;
+  const text = found[1].replace(/&(amp|lt|gt|quot);/g, (_, k) => ({ amp: '&', lt: '<', gt: '>', quot: '"' })[k]);
+  try { return JSON.parse(text); } catch (e) { throw new Error(`the SVG's artifex-manifest metadata is not JSON: ${e.message}`); }
+}
+
+module.exports = { VectorSurface, RASTER_ONLY, svgManifest };

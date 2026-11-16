@@ -1,0 +1,24 @@
+name: Bug report
+description: A command, an export or a piece field that does not do what the docs say.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command you ran, what you expected and what you got. Paste the message word for word.
+    validations:
+      required: true
+  - type: textarea
+    id: piece
+    attributes:
+      label: Smallest piece that shows it
+      description: The piece source, its seed and any parameters. A registered example name is enough when one shows it.
+      render: javascript
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, `node --version`, the browser and its version for a film, PNG or page problem, and the agent host if you used the skill.
+    validations:
+      required: true

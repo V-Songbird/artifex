@@ -1,0 +1,41 @@
+{
+  "recipe": {
+    "piece": "pieces/cad.cjs",
+    "seed": 1,
+    "t": 1,
+    "width": 1200,
+    "height": 800,
+    "type": "image/webp",
+    "quality": 0.82
+  },
+  "sources": {
+    "../skills/artifex/styles/kit.js": "30ffe34ac03451d65646e2f5d3870e987e460fcd79710fa4b91629fe87fdd797",
+    "core/colour.js": "21fb41835c359f30836f13b1711f1ba7577f9c805d5ebac697731f2a424f371e",
+    "core/field.js": "c1c8d1ea827ca82638ba39f2ee5bfac49323b4d123e7fcf278a62cfdabb36a5a",
+    "core/geom.js": "e3e21ed547d90f2038649ddfa928c111f6eeb744d420ddbe27554c08eab2f6a8",
+    "core/layer.js": "e049fe4e75e4e65a50af36d394c3fa718ff4a50621f9f6bc0ab05c792ec50d1d",
+    "core/num.js": "f0ae1c682945a48b284a78ea079a2510717d5b013e30b7548f33d768199a3455",
+    "core/rand.js": "8d8d11109d8b6271812535de899010f4c0ef90f0d48b58a293a31fa95306f203",
+    "core/robust-predicates.js": "3116ba65b729ab1cc4ad9e37a48625eb2a6fc884a72a36d46bdeb0e20bbcbbbb",
+    "core/sound.js": "e2865abcb3ed695bada147a0522012db4ef5b10690bac42d6f0292d3bdd51b6a",
+    "core/stroke-font.js": "7b62854d15db56b58820f7c144dd6336819afb220e5df4bd5e46ae2443dd12a9",
+    "core/time.js": "6e391ac7e0eacc51da1d96383fc6a1bb5735f5f4257ed3bcc28b401f351c60d3",
+    "demos/subject.js": "8869f43d8ac98e7aadcc11378b9f23cac1a885d54bb8366ffd2a420bc34f6bed",
+    "pieces/blueprint.js": "631823da54a22668b34d90459c9f69126ff8a343db10c8af5b6cbaa77069d491",
+    "pieces/brush.js": "4a4f72a6311bb5e0bbb60c500e1cc145a35e24cf790f659755f0047238c10d6c",
+    "pieces/cad.cjs": "4a0f99c133c6f42eb9bd62a1ee91ec2b7685d60faf8aeb2d066074dac3f8c149",
+    "pieces/cadsheet.js": "e185a072907717a2745c2b8a14c713487e4c454419463b585fec89192f45538e",
+    "pieces/draft.js": "065f12b492b1501395a0880528264f219e0a92e5e526564cd7a6f93b211ad25e",
+    "pieces/dry.js": "ec6f574db7a387b37ce66a9469e6ff507eeb69ba0c6eb92e1197fa4169834508",
+    "pieces/enter.js": "f6a44d4d29a3ec4cadc8d2b6d901554f5c5beec0c6fe3f794ef2a825b16fbeae",
+    "pieces/held.js": "3eb29f50174cc556a761332f6da4920977f08344fc6b09160fa442cde10266a5",
+    "pieces/inversion.js": "3fb209074a3d49aabef17428a4ae3f9160799c6996237d378a69535912a26b10",
+    "pieces/kaleido.js": "f19e1ebada461975b97341599bb92c79f4bc942be8235952f26ae33faf9b65cc",
+    "pieces/page.js": "81a88ccd05dd39a06f6f5565b8f3d138ad92cc7a5d9f7e425d6b0d4e013b9bea",
+    "pieces/paper.js": "b4896e9a5d1ad7bb1228d670c4ddbcaf7450a644ed17b0aa191ba243eaffa936",
+    "pieces/sounds.js": "039a2665d0e75bb20a0d55bf5d997db80405d1c423d1c1db37bf849d5a9e95f4",
+    "pieces/water.js": "e8419e2762bb6ecf5a3b6b5c1ad361d4cee892d5cd26acad6269aa6824ef0ed7",
+    "pieces/wordmark.js": "d2c7e70c520300125922ded90940ba0e8b98b2c0f397d55ca582304debaf4aaf"
+  },
+  "poster": "6a5b9b21de499a568f4bb02a56964c2117525470dfcf4d3747b4fe73fc5f611d"
+}
