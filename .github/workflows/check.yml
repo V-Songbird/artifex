@@ -39,6 +39,9 @@ jobs:
       - name: Run mutation checks
         # Through npm, which sets npm_execpath for tests that run npm themselves.
         run: npm run negative -- --shard ${{ matrix.shard }}/6
+        env:
+          # One suite run takes about six minutes on a hosted runner, over the 300 s default.
+          ARTIFEX_NEGATIVE_TIMEOUT_MS: 900000
 
   check:
     name: Check (ubuntu-latest)
