@@ -5,6 +5,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const vm = require('node:vm');
+const Module = require('node:module');
 const { MUTATIONS, patchProblem, SUITE_TEMP } = require('./negative.js');
 
 const ROOT = path.join(__dirname, '..');
@@ -25,6 +27,17 @@ test('every mutation patch text occurs exactly once in its file', { skip: inRunn
     return problem ? [`${m.expect}\n  ${problem}`] : [];
   });
   assert.deepEqual(stale, [], `${stale.length} mutation patch text(s) no longer match their file; update tests/negative.js`);
+});
+
+// A patch that leaves a script unparsable fails its whole test file before any
+// test runs, which the runner can only report as infrastructure.
+test('every mutated script still compiles', { skip: inRunnerCopy && 'inside a mutation runner copy' }, () => {
+  const broken = MUTATIONS.filter((m) => /\.c?js$/.test(m.file) && fs.existsSync(path.join(ROOT, m.file))).flatMap((m) => {
+    const src = fs.readFileSync(path.join(ROOT, m.file), 'utf8');
+    if (patchProblem(src, m)) return [];
+    try { new vm.Script(Module.wrap(src.replace(m.from, () => m.to).replace(/^#!.*/, '')), { filename: m.file }); return []; } catch (e) { return [`${m.why}\n  ${m.file}: ${e.message}`]; }
+  });
+  assert.equal(broken.length, 0, `${broken.length} mutation(s) leave a script that does not compile; update tests/negative.js:\n  ${broken.join('\n  ')}`);
 });
 
 // The mutation runner compares a failed title with its expect exactly, so an
