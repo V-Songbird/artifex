@@ -8,9 +8,11 @@
 // that holds the modules those same shots share, and each shot's own modules
 // go in its own script. The stage loads a shot's scripts as the visitor nears
 // the shot. core.js is bundle(): the module runtime, the library
-// modules the shots and the stage require, and a registry of the shots.
-// exports.js holds core/export.js and what it reaches beyond core.js; the
-// stage loads it the first time a visitor asks for a file.
+// modules the stage, the worker and the first shot require, and a registry
+// of the shots; a library module only later shots reach is split like their
+// own modules. exports.js holds core/export.js and what it reaches beyond
+// core.js, even a module a shot's script also holds, since either may load
+// first; the stage loads it the first time a visitor asks for a file.
 // data.js is the shot data the stage reads, a same-origin script rather than
 // text in the page. Nothing under a private directory is bundled or copied.
 //
