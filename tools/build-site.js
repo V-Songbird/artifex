@@ -215,7 +215,7 @@ function stylePage(template, c, piece, hosts) {
     params: Object.entries(piece.params || {}).map(([k, p]) => '<label>' + escape(p.meaning[0].toUpperCase() + p.meaning.slice(1)) + ' <input type="range" data-param="' + k + '"></label>').join('\n'),
     prompt: escape(promptOf(c)), install: installHtml(hosts),
   };
-  return template.replace(/<!-- ([a-z]+) -->/g, (all, k) => {
+  return template.replace(/<!-- style:([a-z]+) -->/g, (all, k) => {
     if (!(k in values)) throw new Error('site: style.html has the marker ' + all + ', which the build does not fill');
     return values[k];
   });
