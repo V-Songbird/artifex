@@ -121,7 +121,7 @@ test('site: the product page loads its hero alone first, with the teaching code 
   // The landing page's first load: the page, its theme, data, core.js, its runtime and the hero's scripts; never the film's stage.
   const first = ['index.html', 'theme.js', 'home.css', 'data.js', 'core.js', 'home.js', ...home.hero.scripts];
   assert.equal(result.firstLoad, first.reduce((sum, f) => sum + result.sizes[f], 0));
-  assert.deepEqual(html.match(/<script[^>]*>/g), ['<script src="theme.js">', '<script src="data.js">', '<script src="core.js">', '<script src="home.js">']);
+  assert.deepEqual(html.match(/<script[^>]*>/gi), ['<script src="theme.js">', '<script src="data.js">', '<script src="core.js">', '<script src="home.js">']);
   // The hero shares the intro's paper and wordmark; its sound and the teaching piece load apart.
   assert.ok(home.hero.scripts.some((f) => text(f).includes('drawWord')) && !home.hero.scripts.some((f) => text(f).includes('__def("core/sound.js"')));
   // Every region the page shows is the piece's own text, escaped; every README host is offered.
