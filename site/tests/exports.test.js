@@ -32,8 +32,8 @@ test('site: exports.js holds core/export.js and what it reaches beyond core.js, 
   assert.ok(exported.includes('core/export.js') && exported.includes('core/film.js'));
   assert.deepEqual(exported.filter((id) => core.includes(id)), [], 'a module defined in both');
   assert.deepEqual(core.concat(exported).filter((id) => id.startsWith('core/')).sort(), reach(core.concat('core/export.js')).filter((id) => id.startsWith('core/')).sort());
-  const first = ['index.html', 'data.js', 'site.css', 'core.js', 'stage.js', ...result.data.shots[0].scripts];
-  assert.equal(result.firstLoad, first.reduce((sum, f) => sum + result.sizes[f], 0), 'exports.js is not in the first load');
+  const first = ['film.html', 'data.js', 'site.css', 'core.js', 'stage.js', ...result.data.shots[0].scripts];
+  assert.equal(result.filmLoad, first.reduce((sum, f) => sum + result.sizes[f], 0), 'exports.js is not in the first load');
 });
 
 test('site: core/export.js runs from exports.js on top of core.js, and refuses an SVG a piece does not declare', (t) => {

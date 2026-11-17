@@ -902,6 +902,80 @@ async function flashing(client, context, base, shots, data) {
   return { seams: counted, failures };
 }
 
+/** The views the product page is checked at: the desktop reference and a phone's width. */
+const HOME_VIEWS = [{ name: 'desktop', width: 1280, height: 800, dpr: 1, cpu: 1 }, { name: 'phone', width: 390, height: 844, dpr: 3, cpu: 1 }];
+
+/** What the product page holds, read in the page: the hero drawn, the widgets, the theme, overflow. */
+function homeState() {
+  const c = document.getElementById('hero-canvas'), g = c.getContext('2d');
+  const px = g.getImageData(0, 0, c.width, c.height).data;
+  let dark = 0;
+  for (let i = 0; i < px.length; i += 4 * 97) if (px[i] + px[i + 1] + px[i + 2] < 240) dark++;
+  return {
+    hero: { width: c.width, height: c.height, inked: dark, params: __home.hero && __home.hero.params, seed: __home.hero && __home.hero.seed, t: __home.hero && __home.hero.t },
+    widgets: Object.keys(__home.widgets).sort(),
+    theme: document.documentElement.dataset.theme || null,
+    ground: getComputedStyle(document.documentElement).backgroundColor,
+    overflow: document.documentElement.scrollWidth - innerWidth,
+    errors: __home.errors.slice(), sounds: __home.sounds.slice(), listen: __home.listen,
+  };
+}
+
+/** The product page at each view: the hero draws and answers the pointer and the seed, every widget draws, the theme flips, Listen sounds the controls. */
+async function homePage(client, context, base) {
+  context.phase = 'home';
+  const failures = [], views = [];
+  const state = () => evaluate(client, '(' + homeState + ')()');
+  for (const view of HOME_VIEWS) {
+    await client.send('Emulation.setDeviceMetricsOverride', { width: view.width, height: view.height, deviceScaleFactor: view.dpr, mobile: false });
+    await client.send('Page.navigate', { url: base });
+    await waitFor(client, context, 'document.readyState === "complete" && !!window.__home && __home.ready && __home.hero.t === 1');
+    const first = await state();
+    const where = await evaluate(client, '(() => { const r = document.getElementById("hero-canvas").getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; })()');
+    await client.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: Math.round(where.x + where.w * 0.9), y: Math.round(where.y + where.h * 0.9) });
+    await evaluate(client, SETTLE);
+    const moved = await state();
+    await evaluate(client, 'document.getElementById("hero-seed").click()');
+    // The new seed's sheet, written to its end: the old one is already at playhead 1.
+    await waitFor(client, context, '__home.hero.seed !== ' + first.hero.seed + ' && __home.hero.t === 1');
+    const rolled = await state();
+    for (const name of ['seed', 'playhead', 'params', 'box', 'exports']) {
+      await evaluate(client, 'document.querySelector(\'[data-widget="' + name + '"]\').scrollIntoView()');
+      await waitFor(client, context, '!!__home.widgets[' + JSON.stringify(name) + '] || __home.errors.length > 0');
+    }
+    await evaluate(client, 'document.getElementById("theme").click()');
+    const flipped = await state();
+    await evaluate(client, 'document.getElementById("theme").click()');
+    const back = await state();
+    const out = { view: view.name, first, moved: moved.hero, rolled: rolled.hero, flipped: { theme: flipped.theme, ground: flipped.ground }, back: { theme: back.theme, ground: back.ground }, widgets: back.widgets, overflow: back.overflow, errors: back.errors };
+    const fail = (text) => failures.push('home ' + view.name + ': ' + text);
+    if (first.hero.inked < 20) fail('the hero canvas holds no writing (' + first.hero.inked + ' inked samples)');
+    if (JSON.stringify(moved.hero.params) === JSON.stringify(first.hero.params)) fail('the pointer over the hero changed no parameter');
+    if (rolled.hero.seed === first.hero.seed) fail('New seed kept seed ' + first.hero.seed);
+    if (back.widgets.length !== 5) fail('widgets drawn: ' + back.widgets.join(', '));
+    if (flipped.ground === first.ground || back.ground !== first.ground) fail('the theme toggle did not flip the ground and back: ' + [first.ground, flipped.ground, back.ground].join(' -> '));
+    if (back.overflow > 0) fail('the page is ' + back.overflow + ' px wider than the window');
+    if (back.errors.length || context.errors.length) fail('page errors: ' + back.errors.concat(context.errors).join('; '));
+    views.push(out);
+  }
+  // Listen: off until pressed, then a toggle sounds.
+  const before = await state();
+  if (before.listen || before.sounds.length) failures.push('home: sound before Listen was pressed');
+  await evaluate(client, 'document.getElementById("listen").click()');
+  await waitFor(client, context, '__home.sounds.length > 0 || /could not/.test(document.getElementById("status").textContent)');
+  await evaluate(client, 'document.getElementById("theme").click()');
+  const heard = await state();
+  if (!heard.sounds.includes('on') || !heard.sounds.some((s) => s === 'on' || s === 'off')) failures.push('home: Listen did not sound the controls: ' + JSON.stringify(heard.sounds));
+  // Reduced motion: the hero is drawn once, finished.
+  await client.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+  await client.send('Page.navigate', { url: base });
+  await waitFor(client, context, 'document.readyState === "complete" && !!window.__home && __home.ready');
+  const still = await evaluate(client, '({ t: __home.hero.t, draws: __home.heroDraws })');
+  if (still.t !== 1 || still.draws !== 1) failures.push('home: under reduced motion the hero drew ' + still.draws + ' times, ending at ' + still.t);
+  await client.send('Emulation.setEmulatedMedia', { features: [] });
+  return { views, listen: heard.sounds, reduced: still, failures };
+}
+
 /** The site check of `options.dir`; `edge` stands in for withEdge in a test. */
 async function runSiteCheck(options = {}, edge = withEdge) {
   const dir = options.dir || OUT;
@@ -924,17 +998,20 @@ async function runSiteCheck(options = {}, edge = withEdge) {
           client.onEvent((event) => { if (event.method === 'Network.requestWillBeSent' && (event.params.documentURL || '').startsWith(server.url)) requested.push(event.params.request.url); });
         }
         Object.assign(report, { browser: context.version && context.version.Browser, frames: data.frames, hz: data.hz, timeoutMs, shots: shots.map((s) => s.name) });
-        for (const view of REFERENCES) report.walks.push(await walk(client, context, view, server.url, shots));
+        // The film is film.html; the landing page, index.html, is the product page.
+        const film = server.url + 'film.html';
+        if (data.home) report.home = await homePage(client, context, server.url);
+        for (const view of REFERENCES) report.walks.push(await walk(client, context, view, film, shots));
         await client.send('Emulation.setCPUThrottlingRate', { rate: 1 });
-        report.reduced = await reduced(client, context, server.url, shots);
-        report.fallback = await fallback(client, context, server.url, shots);
-        report.recipe = await recipe(client, context, server.url, shots, data);
-        report.play = await play(client, context, server.url, data);
-        report.listen = await listening(client, context, server.url, shots, data);
-        report.exports = await exporting(client, context, server.url, shots);
-        report.boxes = await boxing(client, context, server.url, shots);
-        report.audit = await audit(client, context, server.url, shots);
-        report.flashes = await flashing(client, context, server.url, shots, data);
+        report.reduced = await reduced(client, context, film, shots);
+        report.fallback = await fallback(client, context, film, shots);
+        report.recipe = await recipe(client, context, film, shots, data);
+        report.play = await play(client, context, film, data);
+        report.listen = await listening(client, context, film, shots, data);
+        report.exports = await exporting(client, context, film, shots);
+        report.boxes = await boxing(client, context, film, shots);
+        report.audit = await audit(client, context, film, shots);
+        report.flashes = await flashing(client, context, film, shots, data);
         // Every request the site's pages made, through every phase: none leaves the site.
         const origin = new URL(server.url).origin, away = outside(requested, origin);
         report.requests = { count: requested.length, outside: away, failures: away.length ? ['requests: the site asked for ' + away.join(', ') + ', outside ' + origin] : [] };
@@ -955,7 +1032,7 @@ async function runSiteCheck(options = {}, edge = withEdge) {
 }
 
 const failuresOf = (report) => [...report.walks.flatMap((w) => w.failures),
-  ...['reduced', 'fallback', 'recipe', 'play', 'listen', 'exports', 'boxes', 'audit', 'flashes', 'requests'].flatMap((phase) => (report[phase] ? report[phase].failures : []))];
+  ...['home', 'reduced', 'fallback', 'recipe', 'play', 'listen', 'exports', 'boxes', 'audit', 'flashes', 'requests'].flatMap((phase) => (report[phase] ? report[phase].failures : []))];
 
 async function main(args = process.argv.slice(2)) {
   if (args.includes('--help') || args.includes('-h')) return console.log(USAGE);
@@ -977,4 +1054,4 @@ async function main(args = process.argv.slice(2)) {
 
 if (require.main === module) main().catch((error) => { console.error(error.message); process.exitCode = 1; });
 
-module.exports = { parseArgs, deadline, countDraws, judgeWalk, sinkWaits, syncLags, boxShots, boxing, outside, judgeAudit, runSiteCheck, main, REFERENCES, probe };
+module.exports = { homeState, HOME_VIEWS, parseArgs, deadline, countDraws, judgeWalk, sinkWaits, syncLags, boxShots, boxing, outside, judgeAudit, runSiteCheck, main, REFERENCES, probe };

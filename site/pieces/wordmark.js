@@ -25,7 +25,7 @@ const P = require('./paper.js');
 
 const WORD = 'ARTIFEX';
 const CAP = 130;          // cap height, design units
-const LINE = 4.8;         // the pen's line
+const LINE_W = 4.8;       // the pen's line
 const START = 0.3;        // seconds of bare paper before the pen comes down
 const FINISH = 3.85;      // the pen lifts off its last line at this second
 const DURATION = 4.5;     // the intro's length: the next shot takes up the ink's time from here
@@ -166,6 +166,8 @@ const STEPS = 4;
  * to some of the lines.
  */
 function drawWord(g, s, sec, only = s.lines) {
+  // A piece that declares them (the product page's hero) widens the pen's line and the paper's soak.
+  const LINE = LINE_W * ((s.params && s.params.weight) ?? 1), RIM = 3.6 * ((s.params && s.params.soak) ?? 1);
   const live = only.filter((l) => sec >= l.t0 - DWELL);
   // Each line: drawn so far, and the part old enough for a full rim.
   const parts = live.map((l) => ({ l, a1: drawn(l, sec), old: drawn(l, sec - SOAK) }));
@@ -187,13 +189,13 @@ function drawWord(g, s, sec, only = s.lines) {
 
   // The rim: ink the paper took in around each line, spreading as it soaks.
   g.strokeStyle = P.wash(0.08);
-  g.lineWidth = LINE + 3.6;
+  g.lineWidth = LINE + RIM;
   g.beginPath();
   for (const { l, old } of parts) trace(g, l, 0, old);
   g.stroke();
   rims.forEach((segs, b) => {
     if (!segs.length) return;
-    g.lineWidth = LINE + 3.6 * (b + 0.5) / STEPS;
+    g.lineWidth = LINE + RIM * (b + 0.5) / STEPS;
     g.beginPath();
     for (const [l, a, e] of segs) trace(g, l, a, e);
     g.stroke();
@@ -318,4 +320,4 @@ function feather(g, f, sec, root) {
   }
 }
 
-module.exports = { WORD, CAP, LINE, FINISH, DURATION, plot, drawWord, pointAt, whenAt, drawn, trace };
+module.exports = { WORD, CAP, LINE: LINE_W, FINISH, DURATION, plot, drawWord, pointAt, whenAt, drawn, trace };

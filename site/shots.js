@@ -25,6 +25,8 @@
 module.exports = {
   hz: 30,
   seed: 1,
+  // The product page's pieces: the hero, the teaching piece the widgets draw, and the interface sounds.
+  home: { hero: './pieces/hero.cjs', teach: './pieces/tides.cjs', ui: './pieces/ui.cjs' },
   shots: [
     { name: 'intro', piece: './pieces/intro.cjs', heard: './pieces/intro-heard.cjs', text: 'A plotter pen writes the name, one line at a time. Scroll back and it lifts every line again: each frame is a function of a seed and a playhead.' },
     { name: 'bloom', piece: './pieces/bloom.cjs', seam: true, text: 'A wide brush of clean water crosses the last line while its ink is still wet, and the ink blooms out into the water along its current.' },

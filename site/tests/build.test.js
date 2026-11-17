@@ -55,8 +55,9 @@ test('site: the real shot list builds, one script per shot, every module defined
   // Each shot's own script comes last.
   assert.deepEqual(data.shots.filter((s) => s.scripts[s.scripts.length - 1] !== 'shot-' + s.name + '.js').map((s) => s.name), []);
   const shared = (name) => data.shots.find((s) => s.name === name).scripts.filter((f) => f.startsWith('shared-')).map((f) => fs.readFileSync(path.join(out, f), 'utf8')).join('\n');
-  // The intro loads the paper and wordmark and nothing it does not draw.
-  assert.deepEqual(data.shots[0].scripts, ['shared-1.js', 'shot-intro.js']);
+  // The intro loads the paper and wordmark and nothing it does not draw: what the shots after it share,
+  // then what only the product page's hero shares with it.
+  assert.deepEqual(data.shots[0].scripts, ['shared-1.js', 'shared-2.js', 'shot-intro.js']);
   // Its sound loads apart from it: the heard piece's scripts hold the sounds, none of them the intro's own, and no other shot has one.
   const { heard } = data.shots[0];
   assert.deepEqual(data.shots.filter((s) => s.heard).map((s) => s.name), ['intro']);
@@ -100,13 +101,51 @@ test('site: the real shot list builds, one script per shot, every module defined
   // The voices' sound module loads with the shots that play them, not before the first shot.
   assert.ok(!bundled.includes('core/sound.js') && shared('unstick').includes('__def("core/sound.js"'), 'core/sound.js is in shot 4\'s shared script, not core.js');
   for (const s of data.shots) assert.ok(core.includes('module.exports["site-' + s.name + '"] = require(' + JSON.stringify(s.id) + ');'), s.name + ' is in the registry');
-  const html = fs.readFileSync(path.join(out, 'index.html'), 'utf8');
+  const html = fs.readFileSync(path.join(out, 'film.html'), 'utf8');
   assert.match(html, /<section class="shot seam" id="shot-close" data-shot="20" aria-hidden="true">/);
   assert.equal((html.match(/<figure class="still"/g) || []).length, 11, 'a still for each shot, none for the seam');
   // The data is a same-origin script, not text in the page: the page has no inline script.
   assert.deepEqual(html.match(/<script[^>]*>/g), ['<script src="data.js">', '<script src="core.js">', '<script src="stage.js">']);
   assert.equal(fs.readFileSync(path.join(out, 'data.js'), 'utf8'), 'window.__siteData = ' + JSON.stringify(data) + ';\n');
   assert.ok(result.firstLoad <= 150 * 1024, 'first load ' + result.firstLoad + ' bytes of brotli, over the 150 kB budget');
+  assert.ok(result.filmLoad <= 150 * 1024, 'the film\'s first load ' + result.filmLoad + ' bytes of brotli, over the 150 kB budget');
+});
+
+test('site: the product page loads its hero alone first, with the teaching code and the install cut at build time', (t) => {
+  const out = temp(t);
+  const result = build({ out });
+  const { home } = result.data;
+  assert.deepEqual(Object.keys(home).sort(), ['hero', 'teach', 'ui']);
+  const text = (f) => fs.readFileSync(path.join(out, f), 'utf8');
+  const html = text('index.html');
+  // The landing page's first load: the page, its theme, data, core.js, its runtime and the hero's scripts; never the film's stage.
+  const first = ['index.html', 'theme.js', 'home.css', 'data.js', 'core.js', 'home.js', ...home.hero.scripts];
+  assert.equal(result.firstLoad, first.reduce((sum, f) => sum + result.sizes[f], 0));
+  assert.deepEqual(html.match(/<script[^>]*>/g), ['<script src="theme.js">', '<script src="data.js">', '<script src="core.js">', '<script src="home.js">']);
+  // The hero shares the intro's paper and wordmark; its sound and the teaching piece load apart.
+  assert.ok(home.hero.scripts.some((f) => text(f).includes('drawWord')) && !home.hero.scripts.some((f) => text(f).includes('__def("core/sound.js"')));
+  // Every region the page shows is the piece's own text, escaped; every README host is offered.
+  const source = fs.readFileSync(path.join(SITE, 'pieces', 'tides.cjs'), 'utf8');
+  for (const line of ["boxes: { w: [360, 1600], h: [360, 900] },", "time: { duration: 6, hz: 30 },", "outputs: ['raster', 'vector'],"]) {
+    assert.ok(source.includes(line) && html.includes(line.replace(/'/g, "&#39;")) || html.includes(line), 'the page shows ' + line);
+  }
+  assert.ok(!/<!-- (code:|install)/.test(html), 'every marker is filled');
+  const readme = fs.readFileSync(path.join(SITE, '..', 'README.md'), 'utf8');
+  for (const host of ['Claude Code', 'Codex CLI']) assert.ok(readme.includes('With ' + host + ' installed:') && html.includes('<h3>' + host + '</h3>'), host);
+  // Each home piece loads and validates from core.js and its scripts, as home.js loads it.
+  for (const name of ['hero', 'teach', 'ui']) {
+    const context = vm.createContext({});
+    for (const f of ['core.js', ...home[name].scripts]) vm.runInContext(text(f), context);
+    assert.equal(vm.runInContext('__require("test")("core/piece.js").validate(__require("test")(' + JSON.stringify(home[name].id) + ')).name', context), 'site-' + (name === 'teach' ? 'tides' : name));
+  }
+});
+
+test('site: the teaching regions and the README install blocks are read as marked, and their absence fails by name', () => {
+  const { regions, installs } = require('../../tools/build-site.js');
+  assert.deepEqual(regions('a\n  // @site one\n  x: 1,\n    y: 2,\n  // @site end\n', 'p.cjs'), { one: 'x: 1,\n  y: 2,' });
+  assert.throws(() => regions('nothing marked', 'p.cjs'), /p\.cjs marks no \/\/ @site region/);
+  assert.deepEqual(installs('With Foo installed:\n\n```shell\nfoo add\n```\n'), [{ host: 'Foo', lines: 'foo add' }]);
+  assert.throws(() => installs('# no install'), /names no install commands/);
 });
 
 test('site: modules the same shots share go in one shared script; a module one shot needs stays in its script', (t) => {
@@ -134,9 +173,9 @@ test('site: modules the same shots share go in one shared script; a module one s
   assert.doesNotMatch(text('shared-2.js'), /module\.exports = [12];/);
   assert.match(text('shot-one.js'), /module\.exports = 2;/);
   // The first load holds the first shot's scripts alone.
-  const sizes = ['index.html', 'data.js', 'site.css', 'core.js', 'stage.js', 'shared-1.js', 'shot-one.js'].map((f) => result.sizes[f]);
+  const sizes = ['film.html', 'data.js', 'site.css', 'core.js', 'stage.js', 'shared-1.js', 'shot-one.js'].map((f) => result.sizes[f]);
   assert.equal(result.firstLoad, sizes.reduce((a, b) => a + b, 0));
-  assert.match(text('index.html'), /<p>a &lt; b &amp; &quot;c&quot;<\/p>/);
+  assert.match(text('film.html'), /<p>a &lt; b &amp; &quot;c&quot;<\/p>/);
 });
 
 test('site: core.js holds the library modules the shots and the stage require; a require it cannot see fails by name', (t) => {
@@ -230,7 +269,7 @@ test('site: the preview server serves the built files on loopback and nothing ou
 });
 
 test('site: the template keeps the markers the builder fills', () => {
-  const template = fs.readFileSync(path.join(SITE, 'index.html'), 'utf8');
+  const template = fs.readFileSync(path.join(SITE, 'film.html'), 'utf8');
   assert.ok(template.includes('<!-- shots -->') && template.includes('<!-- data -->'));
   assert.match(template, /<html lang="en">/);
 });
