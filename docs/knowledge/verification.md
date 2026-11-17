@@ -57,7 +57,7 @@ The Node suite checks selected contract, geometry, replay, frame-grid, SVG, and 
 
 `npm run browser` requires an installed Microsoft Edge. It uses native `fetch` and `WebSocket`, with no package dependency or browser download. It serves the built HTML snapshot on an OS-assigned loopback port and launches Edge with a unique temporary profile. Existing browser sessions and profiles are left alone.
 
-- **Options.** Pass options after `npm run browser --`. `--edge PATH` or `EDGE_PATH` selects another Edge installation; `--timeout-ms 60000` sets the startup/navigation/evaluation deadline (100–300000 ms), `--headed` shows the browser, `--force` forces one export fallback, `--allow-fallback` accepts a fallback colour route (both below), and `--json` prints the full JSON report before the summary line instead of writing it to a file.
+- **Options.** Pass options after `npm run browser --`. `--edge PATH` or `EDGE_PATH` selects another Edge installation; `--timeout-ms 60000` sets the deadline of each phase (100–300000 ms): startup, page navigation, each example, the stills and each film export each get it whole, and a phase that passes it fails by its name, such as `during film export refit`; `--headed` shows the browser, `--force` forces one export fallback, `--allow-fallback` accepts a fallback colour route (both below), and `--json` prints the full JSON report before the summary line instead of writing it to a file.
 - **Output.** Without `--json` the command prints its summary line and then `report: ` with the absolute path of `out/browser.json` in the library, which each run replaces.
 - **Failures.** Cleanup has a separate bounded grace period and failures exit nonzero with diagnostics.
 

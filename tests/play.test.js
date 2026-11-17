@@ -184,6 +184,83 @@ test('the log digest names the log: any change to it changes the digest', () => 
   assert.notEqual(play.digest(moved), play.digest(log));
 });
 
+test('a session keeps a copy of each sound cue its steps push, in order, and refuses a cue by shape', () => {
+  const { s } = playGame();
+  assert.deepEqual(s.sounds.map((c) => [c.tick, c.name]), [[3, 'mark 1'], [10, 'mark 2'], [14, 'mark 3']]);
+  // A copy: the state's own row may change afterwards without changing what is heard.
+  s.state.cues.sounds[0].impact.velocity = 0.1;
+  assert.equal(s.sounds[0].impact.velocity, 0.8);
+  const pushing = (row, build) => play.session({ ...FIXTURE, state: () => ({ cues: { sounds: build ? [row] : [] } }), play: { step: (st) => { if (!build) st.cues.sounds.push(row); } } }, 1);
+  const bad = (row, pattern, build = false) => assert.throws(() => pushing(row, build).advance([]), (e) => e instanceof PieceError && pattern.test(e.message), JSON.stringify(row));
+  const knock = { modes: [[440, 0.2, 1]] };
+  bad({ tick: 0, name: 'a', impact: knock }, /^play: sound cue 0, pushed at tick 1: its tick must be a whole number from the tick it was pushed in, 1, to 216000, got 0$/);
+  bad({ tick: 1, impact: knock }, /sound cue 0, pushed at tick 1: its name must be 1 to 64 characters/);
+  bad({ tick: 1, name: 'a' }, /it must hold exactly one of voice, pluck, impact, shaker, ambience, got none/);
+  bad({ tick: 1, name: 'a', impact: knock, pluck: { pitch: 220 } }, /got pluck and impact/);
+  bad({ tick: 1, name: 'a', impact: 'thud' }, /its impact must be the object impact\(\) takes/);
+  bad({ tick: 1, name: 'a', impact: knock, wet: 2 }, /its wet must be from 0 to 1, got 2/);
+  assert.throws(() => pushing({ tick: 0, name: 'a', impact: 'x' }, true), /^PieceError: play: sound cue 0, pushed at tick 0: its impact must be/);
+  // A cue the build pushes at tick 0 is heard, and one for a later tick may wait for it.
+  assert.equal(pushing({ tick: 0, name: 'bed', impact: knock }, true).sounds.length, 1);
+  assert.equal(pushing({ tick: 9, name: 'later', impact: knock }).advance([]).sounds[0].tick, 9);
+  const shrinking = play.session({ ...FIXTURE, state: () => ({ cues: { sounds: [{ tick: 0, name: 'a', impact: knock }] } }), play: { step: (st) => { st.cues.sounds.pop(); } } }, 1);
+  assert.throws(() => shrinking.advance([]), /^PieceError: play: state\.cues\.sounds only grows, and tick 1 left 0 of its 1 cues$/);
+  const notList = play.session({ ...FIXTURE, state: () => ({ cues: {} }), play: { step: (st) => { st.cues.sounds = 'knock'; } } }, 1);
+  assert.throws(() => notList.advance([]), /play: state\.cues\.sounds must be a list of sound cues/);
+});
+
+test('a session film renders its cues offline, each at its tick, dry and through one room; a silent session makes a silent film', () => {
+  const { fakeAudio } = require('./fake-media.js');
+  const saved = JSON.parse(JSON.stringify(playGame().s.save()));
+  const f = play.film(FIXTURE, saved);
+  assert.equal(typeof f.sound, 'function');
+  const { Context, record } = fakeAudio();
+  const ctx = new Context(2, 48000, 48000);
+  f.sound(ctx, solve(f).state, f.time);
+  const knocks = record.nodes.filter((n) => n.kind === 'bufferSource');
+  assert.deepEqual(knocks.map((n) => n.at), [3 / 60, 10 / 60, 14 / 60]);
+  assert.equal(record.nodes.filter((n) => n.kind === 'convolver').length, 1, 'one room for every wet cue');
+  // Every input takes at most two, so the render is the same every time.
+  const inputs = new Map();
+  for (const n of record.nodes) for (const t of n.to) inputs.set(t, (inputs.get(t) || 0) + 1);
+  assert.equal(Math.max(...inputs.values()), 2);
+  assert.equal(inputs.get(ctx.destination), 2);
+  // The same cues render the same graph again.
+  const again = fakeAudio();
+  f.sound(new again.Context(2, 48000, 48000), solve(f).state, f.time);
+  assert.equal(JSON.stringify(again.record.nodes.map((n) => [n.kind, n.at])), JSON.stringify(record.nodes.map((n) => [n.kind, n.at])));
+  const quiet = play.session(FIXTURE, 1);
+  quiet.advance([]);
+  assert.equal(play.film(FIXTURE, JSON.parse(JSON.stringify(quiet.save()))).sound, null);
+});
+
+test('reduced motion is the player\'s: draw sees it in the clock, the saved session keeps it, and its film draws with it', () => {
+  const seen = [];
+  const piece = { ...FIXTURE, draw: (g, st, t, clock) => seen.push(clock.reducedMotion) };
+  const s = play.session(piece, 1, {}, { reducedMotion: true });
+  s.advance([]);
+  drawFrame(recorder().surface, s.piece, s.solved, 1 / 60, { reducedMotion: s.reducedMotion });
+  drawFrame(recorder().surface, s.piece, s.solved, 1 / 60);
+  assert.deepEqual(seen, [true, false]);
+  const saved = JSON.parse(JSON.stringify(s.save()));
+  assert.equal(saved.reducedMotion, true);
+  assert.equal('reducedMotion' in play.session(FIXTURE, 1).save(), false, 'a session played with full motion saves no flag');
+  assert.equal(play.rerun(piece, saved).reducedMotion, true);
+  const f = play.film(piece, saved);
+  const solved = solve(f);
+  assert.equal(solved.manifest.session.reducedMotion, true);
+  seen.length = 0;
+  drawFrame(recorder().surface, f, solved, 0);
+  assert.deepEqual(seen, [true]);
+  // The fixture's hand holds still: two ticks draw alike under reduced motion and differ without it.
+  const still = play.session(FIXTURE, 1, {}, { reducedMotion: true });
+  const at = (q, k) => { const r = recorder(); drawFrame(r.surface, q.piece, q.solved, k / 60, { reducedMotion: q.reducedMotion }); return r.text(); };
+  assert.equal(at(still, 0), at(still, 1.5));
+  const moving = play.session(FIXTURE, 1);
+  assert.notEqual(at(moving, 0), at(moving, 1.5));
+  assert.throws(() => play.rerun(FIXTURE, { ...saved, piece: 'play-piece', reducedMotion: false }), /^PieceError: session: reducedMotion is true when the session was played with reduced motion, and absent otherwise$/);
+});
+
 test('a session makes a film: one frame per tick, each the frame the game drew, in any order, with the log in its manifest', () => {
   const { s, frames } = playGame();
   const saved = JSON.parse(JSON.stringify(s.save()));

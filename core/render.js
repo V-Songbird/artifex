@@ -21,6 +21,8 @@ const { weave, develop } = require('./finish.js');
  *
  * `scale` is device units per design unit. Any positive finite scale is valid;
  * the destination surface determines the available output resolution.
+ * `reducedMotion` tells a piece with play, through its clock, that idle motion
+ * should hold still.
  *
  * Note for authors: do not multiply every stochastic frequency by `scale`.
  * Macro composition must be invariant under resolution; only micro-detail
@@ -30,7 +32,7 @@ function drawFrame(surface, piece, solved, t, opt = {}) {
   const scale = opt.scale === undefined ? 1 : opt.scale;
   if (!Number.isFinite(scale) || scale <= 0) throw new Error('render: scale must be a positive finite number');
   const tt = frameT(piece, t);
-  const clock = clockAt(piece, t);
+  const clock = clockAt(piece, t, opt);
   // A declared finish needs pixels; a surface without a canvas gets the marks.
   const film = !!(piece.finish && surface.canvas);
   if (surface.save) surface.save();

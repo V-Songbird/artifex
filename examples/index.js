@@ -29,4 +29,5 @@ module.exports = {
   stride: require('./stride.js'),
   'tidal-painting': require('./tidal-painting.js'),
   'quince-and-shadow': require('./quince-and-shadow.js'),
+  noughts: require('./noughts.js'),
 };

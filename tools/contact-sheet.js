@@ -57,7 +57,7 @@ const { playheads, drawFrame } = require('../core/render.js');
 const { VectorSurface } = require('../core/surface-vector.js');
 const { filmScale } = require('../core/film.js');
 const { project } = require('../core/armature.js');
-const { callerDirectory, isPiecePath, loadExternal, shown, outputDirectory, hint } = require('./piece-input.js');
+const { callerDirectory, isPiecePath, loadExternal, shown, outputDirectory, hint, slash } = require('./piece-input.js');
 const { pieceHint, styleCause } = require('./styles.js');
 const { decodePng } = require('./measure-reference.js');
 
@@ -2750,6 +2750,7 @@ function drawSound(g, pic, layout) {
  * frame's joint faults, and the layout every fault of the film.
  */
 function planStrip(p, strip, inPage = false) {
+  if (p.play) throw refuse(`${p.name} is interactive, so its frames come from a session somebody played; save one in the page and add --session <file>`);
   if (!p.time && !(strip.at && strip.at.every((s) => s === 0))) {
     throw refuse(`${p.name} is a still; a time strip needs a timeline, and --at 0 shows the still itself`);
   }
@@ -2898,19 +2899,43 @@ function planStrip(p, strip, inPage = false) {
   return layout;
 }
 
-function pieceOf(name, external = null, box = null) {
+// With `session`, a strip's saved session read by readSession, the piece is that session's film.
+function pieceOf(name, external = null, box = null, session = null) {
   const pieces = external ? Object.fromEntries([[external.piece.name, external.piece]]) : EXAMPLES;
   if (!Object.hasOwn(pieces, name)) {
     throw refuse(`no example called "${name}". Known: ${Object.keys(EXAMPLES).join(', ')}. ${pieceHint(name)}`);
   }
+  if (session) return session.film;
   // A box the piece does not accept is refused here, by name, before a page is written.
   const p = validate(pieces[name]);
   if (!box) return p;
   try { return atBox(p, box); } catch (e) { throw refuse(e.message.replace(/^atBox: /, '')); }
 }
 
+/**
+ * The saved session `strip.session.path` names, read from `cwd` and checked as
+ * a session of `name`: { path, file, name, film }, `film` its film (core/play.js),
+ * kept out of the strip's JSON. A file that is missing, not JSON or not a
+ * session of the piece is refused by name.
+ */
+function readSession(strip, name, external, cwd) {
+  const where = path.resolve(cwd, strip.session.path);
+  let text;
+  try { text = fs.readFileSync(where, 'utf8'); } catch (e) {
+    throw refuse(e.code === 'ENOENT' ? `--session: no session file at ${slash(where)}; name the file the page's save session wrote` : `--session: cannot read ${shown(where)}: ${e.message}`);
+  }
+  let file, film;
+  try { file = JSON.parse(text); } catch (e) { throw refuse(`--session: ${shown(where)} is not JSON: ${e.message}`); }
+  const base = path.basename(where);
+  try { film = require('../core/play.js').film(pieceOf(name, external), file, base); } catch (e) {
+    if (e.name !== 'PieceError') throw e;
+    throw refuse('--session: ' + e.message);
+  }
+  return Object.defineProperty({ path: strip.session.path, file, name: base }, 'film', { value: film });
+}
+
 function sheetPlans(names, count, paramNames = [], external = null, box = null, strip = null, seeds = null) {
-  return names.map((name) => (strip ? planStrip(pieceOf(name, external, box), strip).cells
+  return names.map((name) => (strip ? planStrip(pieceOf(name, external, box, strip.session), strip).cells
     : planSheet(pieceOf(name, external, box), count, paramNames, seeds)));
 }
 
@@ -3005,7 +3030,7 @@ async function measureSound(file, timeoutMs = undefined, edge = withEdge) {
 function page(names, count, t, paramNames = [], external = null, box = null, strip = null, reference = null, seeds = null, views = null, soundReference = null, lightPage = false, planned = null) {
   if (!Number.isFinite(t)) throw refuse('playhead must be a finite number');
   // `planned`, the strip's layout already planned, saves building the piece again.
-  const layout = strip && (planned || planStrip(pieceOf(names[0], external, box), strip));
+  const layout = strip && (planned || planStrip(pieceOf(names[0], external, box, strip.session), strip));
   // A reference photo, cut by cropReference to the size of a 100% crop and shown
   // pixel for pixel as the first cell, so the material is compared at one scale.
   let photo = '';
@@ -3243,12 +3268,17 @@ ${layout && layout.pageShots ? `  // shotList as planStrip reads it, for the str
   var RULES = ${json(STRIP_RULES)};
   var REF = ${json(reference && { w: reference.w, h: reference.h })};
   var VIEWS = ${json(views)};
+  // A strip of a saved session draws that session's film in its piece's place.
+  var SESSION = ${json(strip && strip.session ? { file: strip.session.file, name: strip.session.name } : null)};
   var out = document.getElementById('out');
   var results = [];
   // The piece modules' load, each piece's setup, which adds its cells' piece
   // build and frame draw and a strip's flags right after itself, then the
   // sheet's results, each a { stage, run } run in order below.
-  var steps = [{ stage: 'piece module load', run: function () { EX = req('examples/index.js'); } }], PROGRESS = ${json(SHEET_PROGRESS)};
+  var steps = [{ stage: 'piece module load', run: function () {
+    EX = req('examples/index.js');
+    if (SESSION) { EX = Object.assign({}, EX); EX[NAMES[0]] = req('core/play.js').film(EX[NAMES[0]], SESSION.file, SESSION.name); }
+  } }], PROGRESS = ${json(SHEET_PROGRESS)};
   // Where add puts the next step: right after the step running.
   var cursor = 0;
   function add(step) { steps.splice(cursor++, 0, step); }
@@ -3853,7 +3883,7 @@ ${sound || reference ? `  var sheet = window.__sheet;
 }
 
 const USAGE = 'usage: seeds [piece] [count] [playhead] [--param a[,b] [--seed n | --seeds n,n,...]] [--box WxH | --reframe t:WxH,...] [--values] [--grey] [--colour-vision] [--gamut FOGRA39L.txt] [--light-page] [--png] [--json] [--timeout-ms N]'
-  + ' | seeds <piece> (--frames N | --at s,s,... | --shots [--cuts] | --contacts <list>) [--seed n] [--scale k] [--loupe [x,y] [--reference photo[@x,y] [--reference-scale k]]] [--sound [--sound-reference sound-file]] [--motion] [--box WxH | --reframe t:WxH,...] [--values] [--grey] [--colour-vision] [--gamut FOGRA39L.txt] [--light-page] [--part name=colour[+colour...]]... [--figure name=colour[+colour...]]... [--armature] [--sample x,y]... [--two-values dark,light] [--png] [--json] [--timeout-ms N]'
+  + ' | seeds <piece> (--frames N | --at s,s,... | --shots [--cuts] | --contacts <list>) [--seed n | --session file.session.json] [--scale k] [--loupe [x,y] [--reference photo[@x,y] [--reference-scale k]]] [--sound [--sound-reference sound-file]] [--motion] [--box WxH | --reframe t:WxH,...] [--values] [--grey] [--colour-vision] [--gamut FOGRA39L.txt] [--light-page] [--part name=colour[+colour...]]... [--figure name=colour[+colour...]]... [--armature] [--sample x,y]... [--two-values dark,light] [--png] [--json] [--timeout-ms N]'
   + ' | seeds --compare <render.png> <reference.png> [--threshold n] [--json]'
   + ' | seeds <piece> --plan [--seed n] [--json]';
 /** A refused argument: its cause, then the usage line. */
@@ -4019,7 +4049,7 @@ function parseArgs(args) {
   let paramNames = [];
   let seenParam = false, png = false, json = false, box = null;
   // A time strip: --frames or --at, and the --scale and --loupe it takes.
-  let frames = null, times = null, scale = null, loupe = null, shots = false, cuts = false, sound = false, motion = false, timeoutMs = null, reference = null, referenceScale = null, seed = null, contacts = null, seeds = null, soundReference = null;
+  let frames = null, times = null, scale = null, loupe = null, shots = false, cuts = false, sound = false, motion = false, timeoutMs = null, reference = null, referenceScale = null, seed = null, contacts = null, seeds = null, soundReference = null, session = null;
   // The views under each cell, of any sheet or strip.
   let values = false, grey = false, colourVision = false, gamut = false, lightPage = false, armature = false;
   // Each --part, and each --figure: a name and the colours its marks are painted with.
@@ -4112,6 +4142,11 @@ function parseArgs(args) {
       soundReference = args[++i];
       if (!/\.(wav|mp3|m4a|aac|ogg|opus|flac)$/i.test(soundReference || '')) throw refuse('--sound-reference needs a sound file: .wav, .mp3, .m4a, .aac, .ogg, .opus or .flac, got ' + (soundReference || 'nothing'));
     }
+    else if (arg === '--session') {
+      once(session, arg);
+      session = args[++i];
+      if (!session || session.startsWith('--')) throw refuse('--session needs the session file the page\'s save session wrote, such as noughts-4.session.json');
+    }
     else if (arg === '--part') named(arg, args[++i], parts, 'the colour its marks are painted with, such as red=#f00');
     else if (arg === '--figure') named(arg, args[++i], figures, 'the colours its painted fill and contour strokes use, such as body=#b07a5a+#2a2320');
     else if (arg === '--sample') {
@@ -4174,7 +4209,10 @@ function parseArgs(args) {
   const browser = { ...(timeoutMs !== null && { timeoutMs }), ...(lightPage && { lightPage }) };
   const views = values || grey || colourVision || gamut ? { values, grey, colourVision, gamut } : null;
   const strip = frames !== null || times !== null || shots || contacts !== null
-    ? { frames, at: times, scale, loupe, shots, sound, ...(motion && { motion }), ...(cuts && { cuts }), ...(contacts !== null && { contacts }), ...(seed !== null && { seed }), ...(parts.length && { parts }), ...(figures.length && { figures }), ...(armature && { armature }), ...(samples.length && { samples }), ...(twoValues && { twoValues }) } : null;
+    ? { frames, at: times, scale, loupe, shots, sound, ...(motion && { motion }), ...(cuts && { cuts }), ...(contacts !== null && { contacts }), ...(seed !== null && { seed }), ...(parts.length && { parts }), ...(figures.length && { figures }), ...(armature && { armature }), ...(samples.length && { samples }), ...(twoValues && { twoValues }), ...(session !== null && { session: { path: session } }) } : null;
+  if (session !== null && !strip) throw refuse('--session draws a saved session as a time strip; add --frames, --at, --shots or --contacts');
+  if (session !== null && seed !== null) throw refuse('give --seed or --session, not both: a session plays at the seed it was played at');
+  if (session !== null && box) throw refuse(`a session plays at the box it was played at; drop ${Array.isArray(box) ? '--reframe' : '--box'}`);
   if (armature && !strip) throw refuse('--armature reads the frames of a time strip; add --frames, --at, --shots or --contacts');
   if (twoValues && !strip) throw refuse('--two-values reads the frames of a time strip; add --frames, --at, --shots or --contacts');
   if (parts.length && !strip) throw refuse('--part reads the frames of a time strip; add --frames, --at, --shots or --contacts');
@@ -4236,7 +4274,9 @@ function sheetStem(names, paramNames, external, box = null, strip = null, seeds 
   const listName = list && caseSafe(list, list);
   const keys = caseSafe(paramNames.map((key) => encodeURIComponent(key).replace(/\*/g, '%2A').replace(/-/g, '%2D')).join('-'), JSON.stringify(paramNames));
   const suffix = (strip ? (strip.shots ? 'shots' + (strip.cuts ? '-cuts' : '') : list ? `contacts-${listName}` : strip.at ? 'at' : 'frames') + (strip.loupe ? '-loupe' : '') + (strip.seed != null ? `-seed${strip.seed}` : '') + (strip.sound ? '-sound' : '') + (strip.motion ? '-motion' : '') :paramNames.length ? `param-${keys}${seeds ? `-seeds${seeds.join('-')}` : ''}` : 'seeds')
-    + (Array.isArray(box) ? '-reframe' : box ? `-${box.w}x${box.h}` : '');
+    + (Array.isArray(box) ? '-reframe' : box ? `-${box.w}x${box.h}` : '')
+    // A strip of a saved session takes the session file's name, so two sessions never replace each other.
+    + (strip && strip.session ? '-' + caseSafe(path.basename(strip.session.path).replace(/(\.session)?\.json$/i, ''), path.basename(strip.session.path)) : '');
   // Views keep their own file, so a sheet with them never replaces the plain one;
   // they join with "+", which no encoded key or list name holds, so --grey never
   // names the sheet of a parameter called grey.
@@ -4318,6 +4358,8 @@ async function main(capture = captureSheet) {
   }
   const external = args.names.length === 1 && isPiecePath(args.names[0]) ? loadExternal(args.names[0]) : null;
   const names = external ? external.names : args.names;
+  // A saved session, found from the caller's directory, read and checked before anything is written.
+  if (strip && strip.session) strip.session = readSession(strip, names[0], external, callerDirectory());
   // A declared two-value film: --two-values, or else the line in an external piece's beat sheet.
   let valuesFrom = strip && strip.twoValues ? '--two-values' : null;
   if (strip && !valuesFrom && external && external.entry) {
@@ -4335,7 +4377,7 @@ async function main(capture = captureSheet) {
     await writePieces(stem + '.png', []);
     if (names.length > 1) await removeGoneSections(stem, []);
   }
-  const layout = strip && planStrip(pieceOf(names[0], external, box), strip, drawsInPage(args));
+  const layout = strip && planStrip(pieceOf(names[0], external, box, strip.session), strip, drawsInPage(args));
   for (const { frame, at } of (layout && layout.repeats) || []) {
     // Enough decimals that a rounded centre stays within a tenth of a frame of the true one.
     const d = Math.max(3, Math.ceil(Math.log10(layout.hz)) + 1), centre = (f) => +((f + 0.5) / layout.hz).toFixed(d);
@@ -4392,5 +4434,5 @@ module.exports = {
   page, parseArgs, printData, photoCrop, cropReference, measureSound, soundProfile, soundStems, shotGaps, silentSpans, SOUND_HELPERS, cellViews, styleStats, styleGap, styleText, frameGap, frameText, FRAME_THRESHOLD, FRAME_GRID, planSheet, sweepLabels, planStrip, pixelBounds, measureFrame, frameDetail, gridChange, stripFlags, trustedCell, STRIP_RULES,
   main, sheetPlans, sheetStem, sheetWidth, drawsInPage, refuseSheet, soundPicture, soundSummary, beatSummary, shotList, drawSound, SOUND_WAVE, SOUND_ROWS, USAGE, motionSummary, drawMotion, MOTION,
   contactList, CONTACT_WINDOW, MAX_CONTACTS, recordMarks, paintOrder, layerSwaps, partCover, figureFill, silhouette, PAINT, armatureList, jointFaults, armatureText, ARMATURE_RULES,
-  viewPlan, planText, planPage, parsePlan, cutPlan, cutOverlay, strayEdge, massShare, litArea, CUT_RULES, declaredValues, levelText, failureText,
+  viewPlan, planText, planPage, parsePlan, cutPlan, cutOverlay, strayEdge, massShare, litArea, CUT_RULES, declaredValues, levelText, failureText, readSession,
 };

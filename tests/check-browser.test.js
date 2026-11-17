@@ -1198,6 +1198,36 @@ test('cleanup kills a relaunched browser\'s process id only while that browser\'
   assert.equal(asked, 2, 'cleanup asked the browser endpoint again');
 });
 
+test('with phaseDeadline each phase gets the whole deadline, so a long run of quick phases passes and one slow phase fails by name', async (t) => {
+  const devtools = http.createServer((request, response) => {
+    response.setHeader('content-type', 'application/json');
+    if (request.url === '/json/version') response.end(JSON.stringify({ Browser: 'Fake/1' }));
+    else if (request.url === '/json/list') response.end(JSON.stringify([{ type: 'page', url: 'about:blank', webSocketDebuggerUrl: 'ws://127.0.0.1:1/devtools/page/fake' }]));
+    else response.writeHead(404).end();
+  });
+  await new Promise((resolve) => devtools.listen(0, '127.0.0.1', resolve));
+  t.after(() => devtools.close());
+  class Socket extends FakeSocket {
+    constructor(url) { super(url); queueMicrotask(() => this.open()); }
+    send(data) { this.reply({ id: JSON.parse(data).id, result: {} }); }
+  }
+  const run = (phaseDeadline, phases) => withEdge('<title>x</title>', {
+    edge: process.execPath, spawn: relaunching(devtools.address().port), WebSocket: Socket, timeoutMs: 1500, phaseDeadline,
+  }, async (client, context) => {
+    for (const [name, ms] of phases) {
+      context.phase = name;
+      // As the page's own work does, the wait ends when the deadline aborts it.
+      await require('node:timers/promises').setTimeout(ms, undefined, { signal: context.signal });
+    }
+    return 'done';
+  }).catch((error) => error.message);
+  // Four phases of 600 ms: 2.4 s in all, over the 1.5 s deadline, none over it alone.
+  const quick = [['film export a', 600], ['film export b', 600], ['film export c', 600], ['film export d', 600]];
+  assert.equal(await run(true, quick), 'done');
+  assert.equal(await run(false, quick), 'browser: timed out after 1500 ms during film export c');
+  assert.equal(await run(true, [['film export a', 300], ['film export hung', 4000]]), 'browser: timed out after 1500 ms during film export hung');
+});
+
 test('a deadline that fires before a relaunched browser\'s process id is learned still stops that browser and removes its profile', async (t) => {
   const devtools = http.createServer((request, response) => {
     response.setHeader('content-type', 'application/json');

@@ -266,7 +266,11 @@ const FIELDS = {
        + 'ticks a second, defaults to 60; inputs lists pointer, key or both, both by '
        + 'default; describe(state) returns one sentence of the state for a screen '
        + 'reader. draw gets the session time in seconds, tick / hz plus the part of a tick '
-       + 'already passed in the live page, tick / hz in an export. A session is a pure '
+       + 'already passed in the live page, tick / hz in an export, and clock.reducedMotion, '
+       + 'true when the session was played asking for reduced motion. step makes sound by '
+       + 'pushing cues onto state.cues.sounds, { tick, name, wet } with one of voice, pluck, '
+       + 'impact, shaker or ambience; the page plays them live and a session film renders '
+       + 'them. A session is a pure '
        + 'function of seed, parameters and the input log it records, so a saved session '
        + 'makes its film and stills again. Takes no time, sound, preview or boxes.',
   },
@@ -340,7 +344,7 @@ function validate(piece) {
     out.play = { hz: p.hz === undefined ? 60 : p.hz, inputs: (p.inputs || INPUTS).slice(), step: p.step, describe: p.describe || null };
     // A session is as long as somebody plays it, and one draw serves the live page and every export.
     if (out.time) throw new PieceError('play: an interactive piece runs as long as its session, so it takes no time; drop time, or drop play for a film');
-    if (out.sound) throw new PieceError('sound: a piece with play has no fixed length for a soundtrack to fill; drop sound');
+    if (out.sound) throw new PieceError('sound: a piece with play has no fixed length for a soundtrack to fill; drop sound, and push sound cues onto state.cues.sounds from play.step instead');
     if (out.preview) throw new PieceError('preview: a piece with play draws live and in its exports with one draw, so it takes no GPU preview; drop preview');
     // A session replays at the box it was played at, and a box chosen mid-game would restart it.
     if (out.boxes) throw new PieceError('boxes: a piece with play draws at its own size, so every session replays at the box it was played at; drop boxes');
@@ -523,13 +527,15 @@ function frameT(piece, t) {
  * Everything a piece may know about where it is in its own timeline.
  *
  * Derive frame indices and timing from the validated timeline so simulations
- * do not need a second copy of its duration or draw rate.
+ * do not need a second copy of its duration or draw rate. `opt.reducedMotion`
+ * reaches only a piece with play, as `clock.reducedMotion`.
  */
-function clockAt(piece, t) {
-  // A session's clock: the tick its time falls in, and the tick rate.
+function clockAt(piece, t, opt = {}) {
+  // A session's clock: the tick its time falls in, the tick rate, and whether
+  // the session was played asking for reduced motion, so idle motion holds still.
   if (piece.play) {
     const tick = Math.floor(t * piece.play.hz + 1e-9);
-    return { frame: tick, tick, seconds: t, hz: piece.play.hz };
+    return { frame: tick, tick, seconds: t, hz: piece.play.hz, reducedMotion: !!opt.reducedMotion };
   }
   const frames = frameCount(piece);
   const frame = frameIndex(piece, t);

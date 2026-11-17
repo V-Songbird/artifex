@@ -244,7 +244,7 @@ require('artifex/core/medium.js')  // medium, pigment (a sheet that watercolour 
   // tilt, dry, paint, knife; raster only)
 require('artifex/core/sound.js')   // sumInto, voice, ambience, room, pluck, impact, shaker, ducking, duck, hertz
 require('artifex/core/play.js')    // session, rerun, checkSession, digest, film,
-  // MAX_EVENTS, MAX_TICKS (sessions of play)
+  // cueNode, renderCues, MAX_EVENTS, MAX_TICKS (sessions of play)
 require('artifex/core/stroke-font.js') // text, width, display, metrics, glyph, missing,
   // runCount, faces, KERN, GLYPHS, ascent, descent, leading
   // (polyline lettering in seven faces)
@@ -342,7 +342,7 @@ them unchanged, except that a vector surface refuses raster operations by name.
 
 A piece that answers a person declares `play` instead of `time`; a session is
 a pure function of seed, parameters and input log, and `film` or `still` with
-`--session` make its files. Read [interactive pieces](../../docs/apis/piece-api.md#interactive-pieces) first.
+`--session` make its files. Read [interactive pieces](reference/interactive.md) first.
 
 ## Sound
 

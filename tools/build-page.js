@@ -27,12 +27,17 @@ function modules() {
     .filter((f) => f.endsWith('.js'))
     .sort()
     .map((f) => dir + '/' + f);
+  const examples = files('examples').filter((f) => f !== 'examples/index.js');
+  // The built-in style modules an example draws with, and the ones they require.
+  const styles = new Set();
+  const visit = (id) => {
+    for (const [, target] of requires(id)) {
+      if (target.startsWith('skills/artifex/styles/') && !styles.has(target)) { styles.add(target); visit(target); }
+    }
+  };
+  examples.forEach(visit);
   // index.js last: it requires the others.
-  return [
-    ...files('core'),
-    ...files('examples').filter((f) => f !== 'examples/index.js'),
-    'examples/index.js',
-  ];
+  return [...files('core'), ...[...styles].sort(), ...examples, 'examples/index.js'];
 }
 
 const MODULES = modules();
@@ -49,7 +54,7 @@ function checkResolvable(ids) {
   const have = new Set(ids);
   const bad = [];
   for (const id of ids) {
-    if (!MODULES.includes(id)) { bad.push(id + ' is asked for, but it is not a module in core/ or examples/'); continue; }
+    if (!MODULES.includes(id)) { bad.push(id + ' is asked for, but it is not a module in core/ or examples/, or a style module an example requires'); continue; }
     for (const [spec, target] of requires(id)) {
       if (!have.has(target)) bad.push(id + ' requires ' + spec + ' -> ' + target + ', which is not bundled');
     }
@@ -309,6 +314,7 @@ var gpuPreview = __req('core/webgpu-preview.js');
 var film = __req('core/film.js');
 var exporter = __req('core/export.js'), save = exporter.save;
 var playMod = __req('core/play.js');
+var sound = __req('core/sound.js'), rand = __req('core/rand.js');
 var EXAMPLES = __req('examples/index.js');
 
 var names = Object.keys(EXAMPLES);
@@ -632,7 +638,7 @@ function resolve() {
     // An interactive piece starts a session at tick 0, with an empty log, on its own solve.
     playSession = null;
     if (current.play) {
-      playSession = playMod.session(current, Number(document.getElementById('seed').value), overrides);
+      playSession = playMod.session(current, Number(document.getElementById('seed').value), overrides, { reducedMotion: reducedMotion() });
       solved = playSession.solved;
     } else solved = piece.solve(current, Number(document.getElementById('seed').value), overrides);
     err.textContent = '';
@@ -666,11 +672,50 @@ function resolve() {
 // once, at its session time: the tick plus the part of one already passed.
 var MAX_CATCHUP = 4;
 var playSession = null, playOrigin = 0, playQueue = [], playRaf = 0, tickHook = null, described = null;
+// The live sound of a session: how many of its cues have been played, its
+// seeded source and its room, made on the first cue that sends to it.
+var heardCues = 0, liveSource = null, liveRoom = null;
+
+// Asked once per session, so the saved session says how it was played.
+function reducedMotion() { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
+
+// A browser starts audio only inside a user gesture, so the first press or key makes the context.
+function wakeSound() {
+  if (typeof AudioContext !== 'function') return;
+  if (!listener) listener = new AudioContext();
+  if (listener.state === 'suspended') listener.resume();
+}
+
+// Plays each cue the session has pushed since the last tick, on the page's
+// context, through the functions the export renders it with: a preview of the
+// export, a few milliseconds late and unlevelled. Before the first gesture
+// there is no context, and the cues of that time pass unheard.
+function playCues(s) {
+  if (!listener || listener.state !== 'running') { heardCues = s.sounds.length; return; }
+  var hz = current.play.hz, now = listener.currentTime + (listener.outputLatency || listener.baseLatency || 0);
+  for (; heardCues < s.sounds.length; heardCues++) {
+    var row = s.sounds[heardCues];
+    try {
+      var v = playMod.cueNode(listener, liveSource, row, now + Math.max(0, row.tick - s.tick) / hz);
+      v.connect(listener.destination);
+      if (row.wet) {
+        if (!liveRoom) (liveRoom = sound.room(listener, liveSource, 'room')).connect(listener.destination);
+        var send = listener.createGain();
+        send.gain.value = row.wet;
+        v.connect(send);
+        send.connect(liveRoom);
+      }
+    } catch (e) { err.textContent = 'Sound cue ' + heardCues + ' (' + row.name + ') could not play: ' + String(e.message || e); }
+  }
+}
 
 function startPlay() {
   cancelAnimationFrame(playRaf);
   playQueue = [];
   described = null;
+  heardCues = playSession.sounds.length;
+  liveSource = rand.rng(solved.seed);
+  liveRoom = null;
   document.getElementById('describe').textContent = '';
   playOrigin = performance.now();
   if (!player) c.setAttribute('aria-label', currentName + ', seed ' + solved.seed + ': an interactive piece; press on it, or focus it and use the keys');
@@ -703,6 +748,7 @@ function playStep(now) {
     }
     if (tickHook) tickHook(s);
   }
+  playCues(s);
   if (!drawPlay(now)) return;
   playRaf = requestAnimationFrame(playStep);
 }
@@ -719,7 +765,7 @@ function drawPlay(now) {
   var part = Math.min(1, Math.max(0, ((now - playOrigin) * hz) / 1000 - s.tick));
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, c.width, c.height);
-  try { render.drawFrame(ctx, current, solved, (s.tick + part) / hz, { scale: view }); } catch (e) {
+  try { render.drawFrame(ctx, current, solved, (s.tick + part) / hz, { scale: view, reducedMotion: s.reducedMotion }); } catch (e) {
     err.textContent = String(e.message);
     if (!player) c.setAttribute('aria-label', currentName + ': no picture, the frame could not be drawn');
     stop();
@@ -750,6 +796,7 @@ function pointerInput(kind) {
     var r = c.getBoundingClientRect();
     if (!(r.width > 0 && r.height > 0)) return;
     if (kind === 'down') {
+      wakeSound();
       if (c.focus) c.focus();
       if (c.setPointerCapture && e.pointerId !== undefined) { try { c.setPointerCapture(e.pointerId); } catch (x) { /* a released pointer cannot be captured */ } }
     }
@@ -764,6 +811,7 @@ function keyInput(down) {
     if (!listens('key') || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
     if (PLAY_KEYS.indexOf(e.key) < 0 && String(e.key).length !== 1) return;
     e.preventDefault();
+    if (down) wakeSound();
     playQueue.push({ kind: 'key', key: e.key, down: down });
   };
 }
@@ -1199,7 +1247,10 @@ window.__artifex = {
       frames: render.playheads(current).length,
       error: err.textContent || null,
       preview: previewInfo,
-      play: playSession ? { tick: playSession.tick, hz: current.play.hz, inputs: playSession.log.length, describe: described } : null,
+      play: playSession ? {
+        tick: playSession.tick, hz: current.play.hz, inputs: playSession.log.length, describe: described,
+        cues: playSession.sounds.length, heard: heardCues, sound: listener ? listener.state : null, reducedMotion: playSession.reducedMotion,
+      } : null,
     };
   },
   // core/play.js, so a check can run a saved session again in this page.
