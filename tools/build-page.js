@@ -691,12 +691,14 @@ function playStep(now) {
   if (!s) return;
   var hz = current.play.hz;
   // Hidden, the page holds its tick: the time it was hidden never reaches the session.
-  if (document.hidden) playOrigin = now - (s.tick * 1000) / hz;
+  if (document.hidden) holdTick(now);
   var due = Math.floor(((now - playOrigin) * hz) / 1000) - s.tick;
   if (due > MAX_CATCHUP) { playOrigin += ((due - MAX_CATCHUP) * 1000) / hz; due = MAX_CATCHUP; }
   for (var i = 0; i < due; i++) {
+    // A step that throws, or a session at its cap, stops play; the ticks played so far stay saveable.
     try { s.advance(playQueue.splice(0)); } catch (e) {
-      failBuild('play.step threw at tick ' + (s.tick + 1) + ': ' + String(e.message || e));
+      err.textContent = 'Play stopped at tick ' + s.tick + ': ' + String(e.message || e) + '. Save session keeps the ticks played so far.';
+      cancelAnimationFrame(playRaf);
       return;
     }
     if (tickHook) tickHook(s);
@@ -704,6 +706,12 @@ function playStep(now) {
   if (!drawPlay(now)) return;
   playRaf = requestAnimationFrame(playStep);
 }
+
+// Holds the session at its tick as of now: time from here on starts after it.
+function holdTick(now) { if (playSession) playOrigin = now - (playSession.tick * 1000) / current.play.hz; }
+// A browser runs no animation frame while the page is hidden, so the hold is
+// also set as it hides and as it shows again: the hidden time never reaches the session.
+document.onvisibilitychange = function () { holdTick(performance.now()); };
 
 // Draws the session where it stands at the time now; false when the frame cannot be drawn.
 function drawPlay(now) {
@@ -718,7 +726,12 @@ function drawPlay(now) {
     return false;
   }
   document.getElementById('tickread').textContent = 'tick ' + s.tick + ', ' + s.log.length + ' inputs';
-  var said = s.describe();
+  var said;
+  try { said = s.describe(); } catch (e) {
+    err.textContent = 'play.describe threw at tick ' + s.tick + ': ' + String(e.message || e);
+    stop();
+    return false;
+  }
   // Announced when it changes, and only then.
   if (said !== null && said !== described) document.getElementById('describe').textContent = described = said;
   return true;

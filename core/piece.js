@@ -265,9 +265,10 @@ const FIELDS = {
        + 'units or { kind: key, key, down }; R is the addressed source of the seed. hz, '
        + 'ticks a second, defaults to 60; inputs lists pointer, key or both, both by '
        + 'default; describe(state) returns one sentence of the state for a screen '
-       + 'reader. draw gets the session time in seconds, tick / hz. A session is a pure '
+       + 'reader. draw gets the session time in seconds, tick / hz plus the part of a tick '
+       + 'already passed in the live page, tick / hz in an export. A session is a pure '
        + 'function of seed, parameters and the input log it records, so a saved session '
-       + 'makes its film and stills again. Takes no time, sound or preview.',
+       + 'makes its film and stills again. Takes no time, sound, preview or boxes.',
   },
 };
 
@@ -341,6 +342,8 @@ function validate(piece) {
     if (out.time) throw new PieceError('play: an interactive piece runs as long as its session, so it takes no time; drop time, or drop play for a film');
     if (out.sound) throw new PieceError('sound: a piece with play has no fixed length for a soundtrack to fill; drop sound');
     if (out.preview) throw new PieceError('preview: a piece with play draws live and in its exports with one draw, so it takes no GPU preview; drop preview');
+    // A session replays at the box it was played at, and a box chosen mid-game would restart it.
+    if (out.boxes) throw new PieceError('boxes: a piece with play draws at its own size, so every session replays at the box it was played at; drop boxes');
   }
   // A soundtrack is as long as the film, and a still has no film.
   if (out.sound && !out.time) {

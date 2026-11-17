@@ -24,14 +24,16 @@ function registry(module) {
   };
 }
 
-function openGame() {
+function openGame(modules = { 'examples/index.js': registry }) {
+  // The page's clock, which a test moves by hand.
+  const clock = { now: 0 };
   const page = fakePage({
-    modules: { 'examples/index.js': registry },
+    modules,
     // The canvas shows at twice its design box, so a press is halved into design units.
     fields: () => ({ disabled: false, getBoundingClientRect: () => ({ left: 10, top: 20, width: 160, height: 120 }), focus() {} }),
-    now: () => 0,
+    now: () => clock.now,
   });
-  return { ...page, c: page.elements.get('c'), el: (id) => page.document.getElementById(id) };
+  return { ...page, clock, c: page.elements.get('c'), el: (id) => page.document.getElementById(id) };
 }
 
 const press = (kind, x, y, more = {}) => ({ clientX: x, clientY: y, isPrimary: true, pointerId: 1, preventDefault() {}, ...more });
@@ -86,6 +88,67 @@ test('a stall plays at most four ticks, and a hidden page advances none', () => 
   document.hidden = false;
   frame(30050);
   assert.equal(api.read().play.tick, 10, 'the time the page was hidden reached the session');
+});
+
+test('a page hidden with no animation frames at all holds its tick from the moment it hides until it shows again', () => {
+  const { api, frame, document, clock } = openGame();
+  frame(50);
+  assert.equal(api.read().play.tick, 3);
+  // A real browser runs no frame while hidden: only the visibility events mark the gap.
+  clock.now = 50;
+  document.hidden = true;
+  document.onvisibilitychange();
+  clock.now = 60000;
+  document.hidden = false;
+  document.onvisibilitychange();
+  frame(60000);
+  assert.equal(api.read().play.tick, 3, 'the hidden minute reached the session as a burst on return');
+  frame(60050);
+  assert.equal(api.read().play.tick, 6);
+});
+
+test('a step that throws stops play with the error shown, and save session keeps every tick played before it', () => {
+  function throwing(module) {
+    module.exports = {
+      game: {
+        name: 'game', size: { w: 80, h: 60 }, seed: 3, state: () => ({ n: 0 }),
+        play: { step(s, inputs, tick) { if (tick === 3) throw new Error('board on fire'); s.n = tick; } },
+        draw(g, s) { g.fillRect(0, 0, s.n, 1); },
+      },
+    };
+  }
+  const { api, c, frame, el } = openGame({ 'examples/index.js': throwing });
+  c.onpointerdown(press('down', 30, 40));
+  frame(30);
+  assert.equal(api.read().play.tick, 1);
+  frame(40);
+  assert.equal(api.read().play.tick, 2);
+  c.onpointerdown(press('down', 50, 50));
+  frame(55);
+  assert.equal(api.read().play.tick, 2);
+  assert.equal(el('err').textContent, 'Play stopped at tick 2: board on fire. Save session keeps the ticks played so far.');
+  const saved = plain(api.saveSession());
+  // The press that landed in the failed tick is not in the log, so the file runs again cleanly.
+  assert.deepEqual(saved.log, [[1, 'down', 10, 10]]);
+  assert.equal(saved.ticks, 2);
+  assert.equal(api.play.rerun(api.examples.game, saved).tick, 2);
+  frame(500);
+  assert.equal(api.read().play.tick, 2, 'play went on after the step threw');
+});
+
+test('a describe that throws stops play with its error shown', () => {
+  function telling(module) {
+    module.exports = {
+      game: {
+        name: 'game', size: { w: 80, h: 60 }, state: () => ({}),
+        play: { step() {}, describe() { throw new Error('no words'); } },
+        draw(g) { g.fillRect(0, 0, 1, 1); },
+      },
+    };
+  }
+  const { api, el } = openGame({ 'examples/index.js': telling });
+  assert.equal(el('err').textContent, 'play.describe threw at tick 0: no words');
+  assert.equal(api.read().play.tick, 0);
 });
 
 test('the page re-runs its own saved session to the same state, and restart plays again from tick 0', () => {

@@ -71,6 +71,7 @@ test('a piece with play takes no timeline, soundtrack or GPU preview, refused by
   assert.throws(() => validate({ ...FIXTURE, sound() {} }), /^PieceError: sound: a piece with play has no fixed length for a soundtrack/);
   const preview = { kind: 'webgpu-pixels', wgsl: 'fn main() {}', uniforms: () => [] };
   assert.throws(() => validate({ ...FIXTURE, preview }), /^PieceError: preview: a piece with play draws live and in its exports with one draw/);
+  assert.throws(() => validate({ ...FIXTURE, boxes: { w: [80, 160], h: [60, 120] } }), /^PieceError: boxes: a piece with play draws at its own size, so every session replays at the box it was played at; drop boxes$/);
 });
 
 test('a session is a pure function of seed, parameters and input log: the same game draws the same frames', () => {
@@ -118,6 +119,10 @@ test('advance records each input in the log by tick, moves within a tick folded 
   assert.throws(() => fresh().advance({}), /play: advance takes a list of inputs/);
   const keysOnly = play.session({ ...FIXTURE, play: { ...FIXTURE.play, inputs: ['key'] } }, 1);
   assert.throws(() => keysOnly.advance([{ kind: 'down', x: 1, y: 1 }]), /play: input 0 is a pointer input and play-piece listens only to key/);
+  // A step that throws leaves the tick unplayed and its inputs out of the log.
+  const failing = play.session({ ...FIXTURE, play: { ...FIXTURE.play, step() { throw new Error('no'); } } }, 1);
+  assert.throws(() => failing.advance([{ kind: 'down', x: 1, y: 1 }]), /^Error: no$/);
+  assert.deepEqual([failing.tick, failing.log], [0, []]);
   // step gets copies: changing them changes nothing in the log.
   const piece = { ...FIXTURE, play: { ...FIXTURE.play, step(st, inputs) { inputs[0].x = 999; } } };
   const t = play.session(piece, 1);

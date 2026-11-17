@@ -416,7 +416,8 @@ test('film and still: --session plays a saved session, checked before Edge start
   for (const [run, args, cause] of [
     [() => film.parseArgs([PIECE, '--session', file, '--session', file]), [], 'film: give --session only once'],
     [() => still.parseArgs([PIECE, '--session', file, '--session', file]), [], 'still: give --session only once'],
-    [filmOf, ['--session', file, '--seed', '3'], 'film: give --seed or --session, not both: a session plays at the seed it was played at'],
+    [filmOf, [], 'film: play-piece is interactive, so its film comes from a saved session; pass --session <file> as the page\'s save session wrote it'],
+    [filmOf, ['--session', file, '--seed', '3'],'film: give --seed or --session, not both: a session plays at the seed it was played at'],
     [filmOf, ['--session', file, '--reframe', '0:160x120,1:160x120'], 'film: give --reframe or --session, not both: a session plays at the box it was played at'],
     [stillOf, ['--session', file, '--box', '80x60'], 'still: give --box or --session, not both: a session plays at the box it was played at'],
     [stillOf, ['--at', '1'], 'still: play-piece is interactive, so --at reads a saved session\'s time; pass --session <file> as the page\'s save session wrote it'],

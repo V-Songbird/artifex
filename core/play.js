@@ -87,8 +87,9 @@ function session(piece, seed, params) {
       if (tick > MAX_TICKS) throw refuse(`a session runs at most ${MAX_TICKS} ticks`);
       const rows = folded(inputs.map((input, i) => rowOf(input, i, tick, p)));
       if (s.log.length + rows.length > MAX_EVENTS) throw refuse(`a session's log holds at most ${MAX_EVENTS} inputs`);
-      s.log.push(...rows);
       p.play.step(solved.state, rows.map(inputOf), tick, R);
+      // Logged once the tick is played, so a step that throws leaves the log saveable at the last good tick.
+      s.log.push(...rows);
       s.tick = tick;
       return s;
     },
