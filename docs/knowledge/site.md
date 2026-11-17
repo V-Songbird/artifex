@@ -126,11 +126,11 @@ With the current shot list:
 - those six share the loose skins, the score and its voices in `shared-18.js`, and settle, contain and the box shot share the fall in `shared-19.js`;
 - the box shot, the close seam and the home shot share the box's drawing, and the last two the envelope.
 
-Splitting keeps the first load small and makes the whole site a little larger, because each file is compressed on its own: the first load is 69.9 kB of brotli and the whole site 819.0 kB, its posters and the exports included.
+Splitting keeps the first load small and makes the whole site a little larger, because each file is compressed on its own: the first load is 113.3 kB of brotli and the whole site 914.7 kB, its posters and the exports included.
 
 `core.js` is `bundle()` from [`tools/build-page.js`](../../tools/build-page.js) given a module list: the module runtime, the library modules in `core/` or `examples/` that `stage.js` and `worker.js` name in literal `req('…')` calls and that the first shot's modules require, every module those reach, and an `examples/index.js` registry of the shots' pieces alone. A library module that only later shots reach is split like the shots' own modules, into the shared script or the shot's script of the shots that reach it: `core/field.js`, which every art shot after the intro reaches, is in `shared-2.js`, and `core/sound.js` in `shared-4.js`. The list is derived at each build, never kept by hand; the page (`npm run page`) still bundles the whole library.
 
-`exports.js` holds [`core/export.js`](../../core/export.js), the exports the page and the site share, and every library module it reaches that `core.js` does not hold, such as `core/film.js`, without the module runtime; `data.js` names it and its module as `exports`. It is not part of the first load: the stage fetches it the first time a visitor asks for a file.
+`exports.js` holds [`core/export.js`](../../core/export.js), the exports the page and the site share, and every library module it reaches that `core.js` does not hold, such as `core/film.js`, without the module runtime; `data.js` names it and its module as `exports`. A library module that a shot's script also holds stays in both, because either script may load first; both copies are the same text, and the runtime keeps the first one it runs, so the second costs bytes only. It is not part of the first load: the stage fetches it the first time a visitor asks for a file.
 
 A list that leaves out a module one of its own requires, or names a module that is not in the library, is refused by name before anything is written, and a shot whose require the loader cannot read, such as a computed path, is refused naming its file.
 
@@ -279,7 +279,7 @@ The check does not establish: how the sound sounds (no one has listened to it fo
 
 ### The first load
 
-The first load is 69.9 kB of brotli, 80.1 kB under the 150 kB budget: `core.js` is 43.8 kB of it, the library modules the stage and the first shot require, `shared-1.js` 9.1 kB, the paper and wordmark, `stage.js` 12.5 kB, Listen's playback, its ambiences and the box controls included, and the page, its data, its style sheet and `shot-intro.js` the rest (see [what the build writes](#what-the-build-writes)). A `core.js` holding the whole library would put the first load over the budget. The whole site is 819.0 kB, the posters included, of which `exports.js` is 43.9 kB.
+The first load is 113.3 kB of brotli, 36.7 kB under the 150 kB budget: `core.js` is 85.2 kB of it, the library modules the stage and the first shot require, `shared-1.js` 9.1 kB, the paper and wordmark, `stage.js` 14.2 kB, Listen's playback, its ambiences and the box controls included, and the page, its data, its style sheet and `shot-intro.js` the rest (see [what the build writes](#what-the-build-writes)). A `core.js` holding the whole library would put the first load over the budget. The whole site is 914.7 kB, the posters included, of which `exports.js` is 47.6 kB.
 
 ### Kept copies
 
