@@ -20,6 +20,7 @@ const { withEdge, evaluate, waitFor, pageErrors, timeoutArg } = require('./check
 const { bundle, reach } = require('./build-page.js');
 const { loadExternal, realPath } = require('./piece-input.js');
 const { scan } = require('./js-comments.js');
+const { CARD } = require('./build-site.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const SHOTS = path.join(ROOT, 'site', 'shots.js');
@@ -95,7 +96,10 @@ function recipes(shots = SHOTS) {
     if (!hashes.has(f)) hashes.set(f, sha(stripComments(lineEndings(fs.readFileSync(f, 'utf8').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')))));
     return hashes.get(f);
   };
-  const named = config.shots.filter((s) => s.poster);
+  // A style card's poster is its demo at the card's poster width, as a shot with a still at playhead 1.
+  const styles = Object.entries((config.styles && config.styles.posters) || {})
+    .map(([name, poster]) => ({ name: 'style-' + name, piece: path.join(config.styles.demos, name + '.js'), poster, card: true }));
+  const named = config.shots.filter((s) => s.poster).concat(styles);
   if (!named.length) return { recipes: [], loaded: null };
   // One call loads every piece, so loadExternal decides which spellings are one file.
   const loaded = loadExternal(named.map((s) => s.piece), base);
@@ -108,10 +112,10 @@ function recipes(shots = SHOTS) {
       .concat(reach(library).map((id) => [id, path.join(ROOT, id)]));
     const sources = Object.fromEntries(files.sort(([a], [b]) => (a < b ? -1 : 1))
       .map(([key, f]) => [key, hashOf(f)]));
-    const { size } = piece;
+    const { size } = piece, width = s.card ? CARD : size.w;
     return {
       name: s.name, poster: path.resolve(base, s.poster), id: piece.name,
-      recipe: { piece: slash(path.relative(realBase, realPath(entry))), seed: config.seed, t: s.still ?? 1, width: size.w, height: size.h, type: TYPES[path.extname(s.poster).toLowerCase()], quality: QUALITY },
+      recipe: { piece: slash(path.relative(realBase, realPath(entry))), seed: config.seed, t: s.still ?? 1, width, height: Math.round(size.h * width / size.w), type: TYPES[path.extname(s.poster).toLowerCase()], quality: QUALITY },
       sources,
     };
   });

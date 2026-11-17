@@ -28,7 +28,7 @@ const contrast = (a, b) => { const [x, y] = [luminance(a), luminance(b)].sort((p
 // [text, ground, least ratio]: body text 4.5:1; the eyebrow, links and outputs are small text too.
 const PAIRS = [
   ['ink', 'ground', 4.5], ['quiet', 'ground', 4.5], ['ink', 'raised', 4.5], ['quiet', 'raised', 4.5],
-  ['accent', 'ground', 4.5], ['second', 'ground', 4.5], ['third', 'ground', 4.5],
+  ['accent', 'ground', 4.5], ['second', 'ground', 4.5], ['third', 'ground', 4.5], ['accent', 'raised', 4.5],
   ['accent-ink', 'accent', 4.5], ['ground', 'second', 4.5], ['ground', 'ink', 4.5],
   ['code-ink', 'code', 4.5], ['focus', 'ground', 3],
 ];

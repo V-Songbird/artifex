@@ -14,10 +14,11 @@ const { tornEdge, tornSheet, cutSheet, fibres, fold, script, newsprint } = requi
 
 const W = 1000; const H = 1000;
 
-// A strip hanging from the top edge, torn along y0.
-function tornStrip(g, R, name, y0, amp, fill) {
+// A strip hanging from the top edge, torn along y0, its white core showing
+// 3 to 3 + core units below the tear.
+function tornStrip(g, R, name, y0, amp, fill, core) {
   const edge = tornEdge(R, name, -40, W + 40, y0, amp);
-  tornSheet(g, R, name, edge, [[-40, -40], [W + 40, -40]], fill, { mottle: [0, 0, W, y0] });
+  tornSheet(g, R, name, edge, [[-40, -40], [W + 40, -40]], fill, { rim: [3, core], mottle: [0, 0, W, y0] });
 }
 
 function house(g, R, i, x, w, h, roof, fill) {
@@ -55,13 +56,14 @@ function house(g, R, i, x, w, h, roof, fill) {
 
 function draw(g, s) {
   const R = rng(s.seed);
+  const core = (s.params && s.params.core) ?? 9;
 
   // Each layer a clear step darker than the one beneath it.
   g.fillStyle = '#44529f';
   g.fillRect(0, 0, W, H);
-  tornStrip(g, R, 'low', 640, 16, '#323e88');
-  tornStrip(g, R, 'mid', 430, 14, '#242d6c');
-  tornStrip(g, R, 'high', 210, 12, '#181e4e');
+  tornStrip(g, R, 'low', 640, 16, '#323e88', core);
+  tornStrip(g, R, 'mid', 430, 14, '#242d6c', core);
+  tornStrip(g, R, 'high', 210, 12, '#181e4e', core);
 
   // Newsprint crescent moon.
   g.save();
@@ -159,4 +161,8 @@ function draw(g, s) {
   caption(g, 'PAPERCRAFT', font, 'rgba(239,230,210,0.85)');
 }
 
-module.exports = { name: 'papercraft', size: { w: 1000, h: 1000 }, seed: 2026, draw };
+module.exports = {
+  name: 'papercraft', size: { w: 1000, h: 1000 }, seed: 2026,
+  params: { core: { min: 1, max: 30, value: 9, meaning: 'How far the white paper core shows along each tear: low a thin even line, high a wide, ragged fibrous rim' } },
+  draw,
+};

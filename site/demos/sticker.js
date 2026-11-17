@@ -21,6 +21,7 @@ function turn(pts, cx, cy, a) {
 
 function draw(g, s) {
   const R = rng(s.seed);
+  const border = (s.params && s.params.border) ?? 26;
 
   mat(g, R, W, H);
 
@@ -51,7 +52,7 @@ function draw(g, s) {
 
   // The bird.
   const b = bird(500, 530, 230, -0.08);
-  dieCut(g, [b.tail, b.body, b.wing, b.beak], 26);
+  dieCut(g, [b.tail, b.body, b.wing, b.beak], border);
   inked(g, [b.tail], '#ff7a59', 3.5);
   g.fillStyle = '#ffcf5c';
   path(g, b.body);
@@ -120,4 +121,8 @@ function draw(g, s) {
   caption(g, 'STICKER', font, 'rgba(95, 80, 150, 0.9)');
 }
 
-module.exports = { name: 'sticker', size: { w: 1000, h: 1000 }, seed: 2026, draw };
+module.exports = {
+  name: 'sticker', size: { w: 1000, h: 1000 }, seed: 2026,
+  params: { border: { min: 8, max: 44, value: 26, meaning: 'Width of the white vinyl border die-cut round the bird: low trims it close, high leaves a wide margin' } },
+  draw,
+};

@@ -41,8 +41,9 @@ function draw(g, s) {
   g.save();
   if (R('look', 'face') >= 0.5) { g.translate(W, 0); g.scale(-1, 1); }
 
-  halo(g, 620, 370, 60, 250, P.halos[0], 0.35);
-  halo(g, 190 + sx, 190 + sy, 20, 95, P.halos[1], 0.35);
+  const glow = (s.params && s.params.halo) ?? 0.35;
+  halo(g, 620, 370, 60, 250, P.halos[0], glow);
+  halo(g, 190 + sx, 190 + sy, 20, 95, P.halos[1], glow);
   halo(g, 430, 600, 80, 260, P.halos[2], 0.14);
 
   // Long crossing lines.
@@ -114,4 +115,8 @@ function draw(g, s) {
   caption(g, 'KANDINSKY', font, 'rgba(27, 27, 31, 0.8)');
 }
 
-module.exports = { name: 'kandinsky', size: { w: 1000, h: 1000 }, seed: 2026, draw };
+const params = {
+  halo: { min: 0.1, max: 0.6, value: 0.35, meaning: 'Strength of the soft halos round the head and the floating spot: a faint wash to a strong glow' },
+};
+
+module.exports = { name: 'kandinsky', size: { w: 1000, h: 1000 }, seed: 2026, params, draw };

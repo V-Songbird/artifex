@@ -140,6 +140,51 @@ test('site: the product page loads its hero alone first, with the teaching code 
   }
 });
 
+test('site: a card and a page per built-in style, split apart from the film, each prompt written from its guide', (t) => {
+  const out = temp(t);
+  const result = build({ out });
+  const { styles } = result.data;
+  const builtin = JSON.parse(fs.readFileSync(path.join(SITE, '..', 'skills', 'artifex', 'styles', 'builtin.json'), 'utf8'));
+  assert.deepEqual(styles.map((s) => s.name), builtin.map((s) => s.name));
+  const text = (f) => fs.readFileSync(path.join(out, f), 'utf8');
+  const html = text('index.html');
+  assert.ok(!html.includes('<!-- styles -->') && html.indexOf('id="how"') < html.indexOf('id="styles"') && html.indexOf('id="styles"') < html.indexOf('id="film"'), 'the cards sit between how it works and the film');
+  // The cards' scripts are their own: no film script, and nothing in the product page's first load.
+  for (const s of styles) {
+    assert.ok(s.scripts.length && s.scripts.every((f) => /^styles?-[a-z0-9-]+\.js$/.test(f)), s.name + ': ' + s.scripts);
+    assert.ok(html.includes('href="style-' + s.name + '.html"') && result.files.includes('style-' + s.name + '.html'), s.name);
+    assert.equal(!!s.poster, html.includes('src="posters/style-' + s.name + '.webp"'), s.name + ' shows its poster when it has one');
+    assert.ok(Object.keys(s.params).length, s.name + ' declares parameters');
+    const page = text('style-' + s.name + '.html');
+    assert.ok(!/<!-- [a-z]+ -->/.test(page), s.name + ': every marker is filled');
+    assert.ok(page.includes('Use the Artifex style `' + s.name + '`') && page.includes(s.title), s.name + ': the prompt names it');
+    for (const k of Object.keys(s.params)) assert.ok(page.includes('data-param="' + k + '"'), s.name + ': a slider for ' + k);
+    // The card loads and validates from core.js and its scripts, as the worker loads it.
+    const context = vm.createContext({});
+    for (const f of ['core.js', ...s.scripts]) vm.runInContext(text(f), context);
+    assert.equal(vm.runInContext('__require("test")("core/piece.js").validate(__require("test")(' + JSON.stringify(s.id) + ')).name', context), s.name);
+  }
+  // The film's scripts are those it had: no card module moves its shared scripts.
+  assert.ok(result.files.filter((f) => /^shared-\d+\.js$/.test(f)).length >= 19);
+});
+
+test('site: a guide without its opening or its "What makes it read as" list, and a style without a demo, fail by name', (t) => {
+  const { guideOf, styleCards, promptOf } = require('../../tools/build-site.js');
+  const guide = '---\ntype: knowledge\n---\n\n# Foo\n\n## Contents\n\n- [A](#a)\n\nFoo is `bar`, in\n[two](x.md) lines.\n\n## What makes it read as foo\n\n- One mark,\n  wrapped.\n- Two.\n\n## Marks\n';
+  const got = guideOf(guide, 'foo.md');
+  assert.deepEqual(got, { intro: ['Foo is `bar`, in two lines.'], heading: 'What makes it read as foo', marks: ['One mark, wrapped.', 'Two.'] });
+  assert.equal(promptOf({ name: 'foo', title: 'Foo', summary: 'S.', ...got }), 'Use the Artifex style `foo` (Foo) for this piece: S.\n\nWhat makes it read as foo:\n- One mark, wrapped.\n- Two.\n\nWhat to draw: ');
+  assert.throws(() => guideOf('# Foo\n\nText.\n', 'foo.md'), /foo\.md has no "## What makes it read as" section/);
+  assert.throws(() => guideOf('# Foo\n\n## What makes it read as foo\n\n- A.\n', 'foo.md'), /foo\.md has no opening paragraph/);
+  assert.throws(() => guideOf('# Foo\n\nText.\n\n## What makes it read as foo\n\nNone.\n', 'foo.md'), /lists nothing/);
+  const dir = temp(t);
+  fs.writeFileSync(path.join(dir, 'builtin.json'), JSON.stringify([{ name: 'foo', title: 'Foo', summary: 'S.', guide: 'foo.md', module: 'foo.js' }]));
+  fs.writeFileSync(path.join(dir, 'foo.md'), guide);
+  assert.throws(() => styleCards({ demos: './demos' }, dir, dir), (e) => /the style foo has no demo/.test(e.message) && e.message.includes(path.join(dir, 'demos', 'foo.js')));
+  assert.throws(() => styleCards({ demos: './demos', posters: { bar: './a.webp' } }, dir, dir), /styles\.posters names bar, which is not a built-in style/);
+  assert.throws(() => styleCards({ demos: './demos', extra: 1 }, dir, dir), /unknown key\(s\) extra/);
+});
+
 test('site: the teaching regions and the README install blocks are read as marked, and their absence fails by name', () => {
   const { regions, installs } = require('../../tools/build-site.js');
   assert.deepEqual(regions('a\n  // @site one\n  x: 1,\n    y: 2,\n  // @site end\n', 'p.cjs'), { one: 'x: 1,\n  y: 2,' });

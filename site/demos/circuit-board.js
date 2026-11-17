@@ -48,7 +48,8 @@ function draw(g, s) {
   const U = [700, 790];
   const L = [600, railY];
   const traces = [];
-  const add = (pts, w = 7) => { traces.push({ pts, w }); return pts; };
+  const signal = (s.params && s.params.trace) ?? 7;
+  const add = (pts, w = signal) => { traces.push({ pts, w }); return pts; };
   add([[96, railY], [L[0] - 30, railY]], 20);
   add(route([[L[0] + 30, railY], [L[0] + 70, railY + 40], [L[0] + 70, U[1] - 84]]), 14);
   for (const leg of legs) add(leg, 9);
@@ -194,4 +195,8 @@ function draw(g, s) {
   g.restore();
 }
 
-module.exports = { name: 'circuit-board', size: { w: 1000, h: 1000 }, seed: 2026, draw };
+const params = {
+  trace: { min: 4, max: 10, value: 7, meaning: 'Width of the signal traces and their bus runs: fine tracks to heavy copper, the pour clearing round them' },
+};
+
+module.exports = { name: 'circuit-board', size: { w: 1000, h: 1000 }, seed: 2026, params, draw };

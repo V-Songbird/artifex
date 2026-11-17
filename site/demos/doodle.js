@@ -19,10 +19,11 @@ const marks = require('../../skills/artifex/styles/doodle.js');
 
 const { PAPER, BLUE, INKS, RED, MARKERS, page, highlight, bubble, write } = marks;
 const W = 1000; const H = 1000;
-// INK is the pen of the page being drawn; the scene's pen and hatching
-// default to it.
+// INK is the pen of the page being drawn and PASSES how often a hand goes
+// over a line; the scene's pen defaults to both and its hatching to INK.
 let INK = BLUE;
-const pen = (g, R, name, pts, close = false, ink = INK, width = 2.6, passes = 2) => marks.pen(g, R, name, pts, { close, ink, width, passes });
+let PASSES = 2;
+const pen = (g, R, name, pts, close = false, ink = INK, width = 2.6, passes = PASSES) => marks.pen(g, R, name, pts, { close, ink, width, passes });
 const hatch = (g, R, name, region, angle, spacing, ink = INK) => marks.hatch(g, R, name, region, { angle, spacing, ink });
 
 function starPath(cx, cy, r, rot = -Math.PI / 2) {
@@ -55,6 +56,7 @@ function note(g, R, name, x, y, size) {
 function draw(g, s) {
   const R = rng(s.seed);
   INK = INKS[Math.floor(R('look', 'ink') * INKS.length)];
+  PASSES = Math.round((s.params && s.params.passes) ?? 2);
   // Half the seeds mirror the drawing about x = 550, which keeps it between
   // the margin and the edge; words are drawn unmirrored at their mirrored place.
   const flip = R('look', 'face') >= 0.5;
@@ -187,4 +189,8 @@ function draw(g, s) {
   caption(g, 'DOODLE', font, INK, 128, 952, 14);
 }
 
-module.exports = { name: 'doodle', size: { w: 1000, h: 1000 }, seed: 2026, draw };
+module.exports = {
+  name: 'doodle', size: { w: 1000, h: 1000 }, seed: 2026,
+  params: { passes: { min: 1, max: 6, value: 2, meaning: 'How many times the pen goes over each main line: 1 draws clean single strokes, 6 a heavy, scribbled line' } },
+  draw,
+};

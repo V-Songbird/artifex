@@ -1,0 +1,26 @@
+{
+  "recipe": {
+    "piece": "demos/manga.js",
+    "seed": 1,
+    "t": 1,
+    "width": 600,
+    "height": 600,
+    "type": "image/webp",
+    "quality": 0.82
+  },
+  "sources": {
+    "../skills/artifex/styles/kit.js": "30ffe34ac03451d65646e2f5d3870e987e460fcd79710fa4b91629fe87fdd797",
+    "../skills/artifex/styles/manga.js": "95911785e826cdbe4cc0da7797e85771594077213632933c390ce7327bc6d7a4",
+    "core/geom.js": "e3e21ed547d90f2038649ddfa928c111f6eeb744d420ddbe27554c08eab2f6a8",
+    "core/layer.js": "e049fe4e75e4e65a50af36d394c3fa718ff4a50621f9f6bc0ab05c792ec50d1d",
+    "core/num.js": "f0ae1c682945a48b284a78ea079a2510717d5b013e30b7548f33d768199a3455",
+    "core/path.js": "2481b70f3dbd3a54b15bf54d90d2b4ebdfb8761a38d9b86ed2c5fbb467f9b204",
+    "core/rand.js": "8d8d11109d8b6271812535de899010f4c0ef90f0d48b58a293a31fa95306f203",
+    "core/robust-predicates.js": "3116ba65b729ab1cc4ad9e37a48625eb2a6fc884a72a36d46bdeb0e20bbcbbbb",
+    "core/stroke-font.js": "7b62854d15db56b58820f7c144dd6336819afb220e5df4bd5e46ae2443dd12a9",
+    "core/time.js": "6e391ac7e0eacc51da1d96383fc6a1bb5735f5f4257ed3bcc28b401f351c60d3",
+    "demos/manga.js": "8ae93a5ab83f997af0b41bd25d851f791a405e392ae67f6dc434260ff5878e3b",
+    "demos/subject.js": "8869f43d8ac98e7aadcc11378b9f23cac1a885d54bb8366ffd2a420bc34f6bed"
+  },
+  "poster": "3a1c27625cafc8e3997ebc169dd8bfabaa1f76fcb43f13eb2d5c3b7616fa6c2b"
+}

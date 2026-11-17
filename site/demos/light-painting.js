@@ -39,7 +39,8 @@ function draw(g, s) {
     [hand(R, 'wing', b.wing), (t) => mix('#ffd23d', '#ff8a3d', t)],
     [hand(R, 'tail', b.tail), (t) => mix('#40e0ff', '#6f7bff', t)],
   ];
-  for (const [line, colour] of parts) trail(L, line, 5, colour);
+  const width = (s.params && s.params.width) ?? 5;
+  for (const [line, colour] of parts) trail(L, line, width, colour);
   // Where the light was held still it burns into a spot: the eye.
   spot(g, b.eye[0], b.eye[1]);
   // Legs to the ground, where the light touched down.
@@ -54,7 +55,7 @@ function draw(g, s) {
   // The wet ground: everything above, mirrored, dimmer and rippled.
   const rip = (pts) => ripple(R, 'ripple', reflect(pts, GROUND));
   within(L, [0, GROUND, W, H - GROUND], () => {
-    for (const [line, colour] of parts) trail(L, rip(line), 5, colour, 0.35);
+    for (const [line, colour] of parts) trail(L, rip(line), width, colour, 0.35);
     for (const leg of legs) trail(L, rip(leg), 3, () => '#40e0ff', 0.3);
     trail(L, rip(songLine), 2.4, songHue, 0.3);
     sparks(g, R, 'spark', ...WOOL, 380, 0.3, mirrorY(GROUND));
@@ -68,4 +69,8 @@ function draw(g, s) {
   caption(g, label, font, 'rgba(230, 230, 255, 0.7)', (W - font.width(label, 14)) / 2);
 }
 
-module.exports = { name: 'light-painting', size: { w: 1000, h: 1000 }, seed: 2026, draw };
+const params = {
+  width: { min: 2.5, max: 7.5, value: 5, meaning: 'Width of the trails round body, wing, tail and beak, and of their reflections: a fine torch line to a glowing tube' },
+};
+
+module.exports = { name: 'light-painting', size: { w: 1000, h: 1000 }, seed: 2026, params, draw };

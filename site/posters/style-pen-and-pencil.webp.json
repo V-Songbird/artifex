@@ -1,0 +1,24 @@
+{
+  "recipe": {
+    "piece": "demos/pen-and-pencil.js",
+    "seed": 1,
+    "t": 1,
+    "width": 600,
+    "height": 600,
+    "type": "image/webp",
+    "quality": 0.82
+  },
+  "sources": {
+    "../skills/artifex/styles/kit.js": "30ffe34ac03451d65646e2f5d3870e987e460fcd79710fa4b91629fe87fdd797",
+    "../skills/artifex/styles/pen-and-pencil.js": "c072f6d6147575f13bfad17993b79b89c468b28949923b1a6fc59d4dec6233c9",
+    "core/geom.js": "e3e21ed547d90f2038649ddfa928c111f6eeb744d420ddbe27554c08eab2f6a8",
+    "core/layer.js": "e049fe4e75e4e65a50af36d394c3fa718ff4a50621f9f6bc0ab05c792ec50d1d",
+    "core/path.js": "2481b70f3dbd3a54b15bf54d90d2b4ebdfb8761a38d9b86ed2c5fbb467f9b204",
+    "core/rand.js": "8d8d11109d8b6271812535de899010f4c0ef90f0d48b58a293a31fa95306f203",
+    "core/robust-predicates.js": "3116ba65b729ab1cc4ad9e37a48625eb2a6fc884a72a36d46bdeb0e20bbcbbbb",
+    "core/stroke-font.js": "7b62854d15db56b58820f7c144dd6336819afb220e5df4bd5e46ae2443dd12a9",
+    "demos/pen-and-pencil.js": "2bf04ec28349a4e38516d09739da4853016bdb05d02af76225a1b76106c26d13",
+    "demos/subject.js": "8869f43d8ac98e7aadcc11378b9f23cac1a885d54bb8366ffd2a420bc34f6bed"
+  },
+  "poster": "8c5be89311d11f09a7ac072b184d8797acc42c5b2f9b6fd2683388aef94334b9"
+}

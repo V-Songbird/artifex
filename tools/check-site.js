@@ -922,7 +922,7 @@ function homeState() {
 }
 
 /** The product page at each view: the hero draws and answers the pointer and the seed, every widget draws, the theme flips, Listen sounds the controls. */
-async function homePage(client, context, base) {
+async function homePage(client, context, base, data = {}) {
   context.phase = 'home';
   const failures = [], views = [];
   const state = () => evaluate(client, '(' + homeState + ')()');
@@ -943,12 +943,14 @@ async function homePage(client, context, base) {
       await evaluate(client, 'document.querySelector(\'[data-widget="' + name + '"]\').scrollIntoView()');
       await waitFor(client, context, '!!__home.widgets[' + JSON.stringify(name) + '] || __home.errors.length > 0');
     }
+    const styled = data.styles ? await styleCards(client, context, view) : null;
     await evaluate(client, 'document.getElementById("theme").click()');
     const flipped = await state();
     await evaluate(client, 'document.getElementById("theme").click()');
     const back = await state();
-    const out = { view: view.name, first, moved: moved.hero, rolled: rolled.hero, flipped: { theme: flipped.theme, ground: flipped.ground }, back: { theme: back.theme, ground: back.ground }, widgets: back.widgets, overflow: back.overflow, errors: back.errors };
+    const out = { view: view.name, first, moved: moved.hero, rolled: rolled.hero, flipped: { theme: flipped.theme, ground: flipped.ground }, back: { theme: back.theme, ground: back.ground }, widgets: back.widgets, overflow: back.overflow, errors: back.errors, ...(styled && { styles: styled.report }) };
     const fail = (text) => failures.push('home ' + view.name + ': ' + text);
+    if (styled) styled.failures.forEach(fail);
     if (first.hero.inked < 20) fail('the hero canvas holds no writing (' + first.hero.inked + ' inked samples)');
     if (JSON.stringify(moved.hero.params) === JSON.stringify(first.hero.params)) fail('the pointer over the hero changed no parameter');
     if (rolled.hero.seed === first.hero.seed) fail('New seed kept seed ' + first.hero.seed);
@@ -958,7 +960,11 @@ async function homePage(client, context, base) {
     if (back.errors.length || context.errors.length) fail('page errors: ' + back.errors.concat(context.errors).join('; '));
     views.push(out);
   }
+  const pages = data.styles ? await stylePages(client, context, base, data.styles) : null;
+  if (pages) failures.push(...pages.failures);
   // Listen: off until pressed, then a toggle sounds.
+  await client.send('Page.navigate', { url: base });
+  await waitFor(client, context, 'document.readyState === "complete" && !!window.__home && __home.ready');
   const before = await state();
   if (before.listen || before.sounds.length) failures.push('home: sound before Listen was pressed');
   await evaluate(client, 'document.getElementById("listen").click()');
@@ -972,8 +978,79 @@ async function homePage(client, context, base) {
   await waitFor(client, context, 'document.readyState === "complete" && !!window.__home && __home.ready');
   const still = await evaluate(client, '({ t: __home.hero.t, draws: __home.heroDraws })');
   if (still.t !== 1 || still.draws !== 1) failures.push('home: under reduced motion the hero drew ' + still.draws + ' times, ending at ' + still.t);
+  // Reduced motion: the quick cards are drawn once, never laid; the slow ones keep their posters.
+  let cardsStill = null;
+  if (data.styles) {
+    await evaluate(client, 'document.getElementById("styles").scrollIntoView()');
+    await waitFor(client, context, 'Object.values(__home.cards).every((c) => c.tier === "poster" || c.drawn > 0 || c.error)');
+    await evaluate(client, SETTLE);
+    cardsStill = await evaluate(client, 'Object.fromEntries(Object.entries(__home.cards).map(([k, c]) => [k, { tier: c.tier, drawn: c.drawn, laid: c.laid }]))');
+    const wrong = Object.entries(cardsStill).filter(([, c]) => c.laid || (c.tier === 'poster' ? c.drawn : c.drawn !== 1)).map(([k]) => k);
+    if (wrong.length) failures.push('home: under reduced motion these cards were laid, or drawn when they should hold: ' + wrong.join(', '));
+  }
   await client.send('Emulation.setEmulatedMedia', { features: [] });
-  return { views, listen: heard.sounds, reduced: still, failures };
+  return { views, listen: heard.sounds, reduced: still, cardsStill, pages: pages && pages.report, failures };
+}
+
+/**
+ * The style cards at one view: every card drawn, a slow style's poster shown first; a hover lays a card's marks
+ * and a press draws it at a new seed. Each card's draw time is reported, the slow reference's under 4x CPU.
+ */
+async function styleCards(client, context, view) {
+  const failures = [];
+  await client.send('Emulation.setCPUThrottlingRate', { rate: view.name === 'phone' ? 4 : 1 });
+  await evaluate(client, 'document.getElementById("styles").scrollIntoView()');
+  await waitFor(client, context, 'Object.values(__home.cards).every((c) => c.drawn > 0 || c.error) || __home.errors.length > 0');
+  // The posters load lazily: each is brought on screen, as a visitor scrolling the section would.
+  for (let i = 0, n = await evaluate(client, 'document.querySelectorAll(".card img").length'); i < n; i++) {
+    await evaluate(client, 'document.querySelectorAll(".card img")[' + i + '].scrollIntoView({ block: "center", behavior: "instant" })');
+    await waitFor(client, context, '(() => { const i = document.querySelectorAll(".card img")[' + i + ']; return i.complete; })()');
+  }
+  const posters = await evaluate(client, 'Array.from(document.querySelectorAll(".card img")).map((i) => ({ style: i.closest(".card").dataset.style, shown: i.complete && i.naturalWidth > 0 }))');
+  const card = (n) => 'document.querySelectorAll(".card .art")[' + n + ']';
+  // Scrolled instantly: the page scrolls smoothly, and a card read mid-scroll is not where the pointer lands.
+  const at = await evaluate(client, '(() => { const a = ' + card(0) + '; a.scrollIntoView({ block: "center", behavior: "instant" }); const r = a.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2, name: a.closest(".card").dataset.style }; })()');
+  // The pointer leaves for the window's corner first, so the move onto the card enters it.
+  await client.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+  await client.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: Math.round(at.x), y: Math.round(at.y) });
+  await waitFor(client, context, '__home.cards[' + JSON.stringify(at.name) + '].laid > 0 || __home.errors.length > 0');
+  const pressed = await evaluate(client, '(() => { const a = ' + card(1) + ', n = a.closest(".card").dataset.style; const c = __home.cards[n]; window.__before = { seed: c.seed, drawn: c.drawn }; a.click(); return n; })()');
+  await waitFor(client, context, '__home.cards[' + JSON.stringify(pressed) + '].drawn > __before.drawn || __home.errors.length > 0');
+  await client.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+  const cards = await evaluate(client, 'JSON.parse(JSON.stringify(__home.cards))');
+  const before = await evaluate(client, 'window.__before');
+  for (const [name, c] of Object.entries(cards)) if (!c.drawn || c.error) failures.push('the ' + name + ' card was not drawn' + (c.error ? ': ' + c.error : ''));
+  for (const p of posters) if (!p.shown) failures.push('the ' + p.style + ' card shows no poster');
+  if (!cards[at.name] || !cards[at.name].laid) failures.push('a hover over the ' + at.name + ' card did not lay its marks');
+  if (cards[pressed].seed === before.seed) failures.push('a press on the ' + pressed + ' card kept seed ' + before.seed);
+  const report = Object.fromEntries(Object.entries(cards).map(([k, c]) => [k, { tier: c.tier, ms: c.ms[0], marks: c.marks, width: c.width }]));
+  return { report, failures };
+}
+
+/** One style page per tier, at each view: its demo drawn and laid, a parameter redraws it, the prompt names it. */
+async function stylePages(client, context, base, styles) {
+  const failures = [], report = [];
+  const picks = [styles.find((s) => !s.poster), styles.find((s) => s.poster)].filter(Boolean);
+  for (const view of HOME_VIEWS) {
+    await client.send('Emulation.setDeviceMetricsOverride', { width: view.width, height: view.height, deviceScaleFactor: view.dpr, mobile: false });
+    for (const s of picks) {
+      await client.send('Page.navigate', { url: base + 'style-' + s.name + '.html' });
+      await waitFor(client, context, 'document.readyState === "complete" && !!window.__home && __home.ready && (__home.page.laid > 0 || !!__home.page.error)');
+      const changed = await evaluate(client, '(() => { const i = document.querySelector("[data-param]"); if (!i) return null; window.__drawn = __home.page.drawn; i.value = i.min; i.dispatchEvent(new Event("input")); return i.dataset.param; })()');
+      if (changed) await waitFor(client, context, '__home.page.drawn > __drawn || !!__home.page.error');
+      const got = await evaluate(client, '({ page: JSON.parse(JSON.stringify(__home.page)), prompt: document.getElementById("prompt").textContent, marks: document.querySelectorAll(".marks li").length, overflow: document.documentElement.scrollWidth - innerWidth, errors: __home.errors.slice() })');
+      const fail = (text) => failures.push('style page ' + s.name + ' ' + view.name + ': ' + text);
+      if (got.page.error || got.errors.length || context.errors.length) fail('errors: ' + [got.page.error, ...got.errors, ...context.errors].filter(Boolean).join('; '));
+      if (!got.page.laid) fail('its demo was not laid when the page opened');
+      if (!changed) fail('the demo declares no parameter');
+      else if (!(changed in got.page.params)) fail('moving ' + changed + ' did not redraw the demo with it');
+      if (!got.prompt.includes('`' + s.name + '`')) fail('Copy prompt does not name the style');
+      if (!got.marks) fail('no marks are listed');
+      if (got.overflow > 0) fail('the page is ' + got.overflow + ' px wider than the window');
+      report.push({ style: s.name, view: view.name, tier: s.poster ? 'poster' : 'live', ms: got.page.ms, marks: got.marks, param: changed });
+    }
+  }
+  return { report, failures };
 }
 
 /** The site check of `options.dir`; `edge` stands in for withEdge in a test. */
@@ -1000,7 +1077,7 @@ async function runSiteCheck(options = {}, edge = withEdge) {
         Object.assign(report, { browser: context.version && context.version.Browser, frames: data.frames, hz: data.hz, timeoutMs, shots: shots.map((s) => s.name) });
         // The film is film.html; the landing page, index.html, is the product page.
         const film = server.url + 'film.html';
-        if (data.home) report.home = await homePage(client, context, server.url);
+        if (data.home) report.home = await homePage(client, context, server.url, data);
         for (const view of REFERENCES) report.walks.push(await walk(client, context, view, film, shots));
         await client.send('Emulation.setCPUThrottlingRate', { rate: 1 });
         report.reduced = await reduced(client, context, film, shots);

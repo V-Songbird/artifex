@@ -17,8 +17,16 @@ const recipes = (file) => load(file).recipes;
 const NUM = path.resolve(__dirname, '..', '..', 'core', 'num.js');
 
 test('posters: the real shot list draws ink, mirror, cad, kandinsky, wall, cues, readout and settle at 1200 x 800, seed 1, each at its still playhead, WebP 0.82, and all are current', () => {
-  const entries = recipes();
+  const all = recipes(), entries = all.filter((e) => !e.name.startsWith('style-'));
   assert.deepEqual(entries.map((e) => e.name), ['ink', 'mirror', 'cad', 'kandinsky', 'wall', 'cues', 'readout', 'settle']);
+  // A slow style's card poster: its demo at the site's seed, finished, 600 pixels wide.
+  const cards = all.filter((e) => e.name.startsWith('style-'));
+  assert.deepEqual(cards.map((e) => e.name), Object.keys(require('../shots.js').styles.posters).map((name) => 'style-' + name));
+  for (const e of cards) {
+    const name = e.name.slice('style-'.length);
+    assert.deepEqual(e.recipe, { piece: 'demos/' + name + '.js', seed: 1, t: 1, width: 600, height: 600, type: 'image/webp', quality: 0.82 });
+    assert.ok(e.sources['demos/' + name + '.js'] && e.sources['../skills/artifex/styles/' + name + '.js'], Object.keys(e.sources).join());
+  }
   for (const e of entries) {
     assert.deepEqual(e.recipe, { piece: 'pieces/' + e.name + '.cjs', seed: 1, t: e.name === 'wall' ? 0.6 : 1, width: 1200, height: 800, type: 'image/webp', quality: 0.82 });
     assert.ok(e.sources['pieces/' + e.name + '.cjs'] && e.sources['pieces/paper.js'] && e.sources['core/rand.js'], Object.keys(e.sources).join());

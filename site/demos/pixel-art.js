@@ -88,6 +88,7 @@ function birdSprite(C) {
 
 function draw(g, s) {
   const R = rng(s.seed);
+  const glow = (s.params && s.params.halo) ?? 3;
   // The seed picks the hour, the plumage, where the moon stands and which
   // way the scene faces.
   const hour = HOURS[Math.floor(R('look', 'hour') * HOURS.length)];
@@ -109,7 +110,7 @@ function draw(g, s) {
   // Moon with a dithered halo and craters.
   const mx = 66 + Math.floor(R('moon', 'x') * 21); const my = 12 + Math.floor(R('moon', 'y') * 7); const mr = 8;
   ball(G, mx, my, mr, C.moon, C.moonShade);
-  halo(G, mx, my, mr, 3, (x, y) => SKY[Math.min(SKY.length - 1, Math.floor((y / 71) * (SKY.length - 1)) + 3)]);
+  halo(G, mx, my, mr, glow, (x, y) => SKY[Math.min(SKY.length - 1, Math.floor((y / 71) * (SKY.length - 1)) + 3)]);
   for (const [cx, cy, r] of [[mx - 2.5, my - 1.5, 1.6], [mx + 3, my + 3, 1.3], [mx + 2, my - 5, 1]]) disc(G, cx, cy, r, C.crater);
 
   // Clouds: circles with a flat base, lit on top, shaded underneath.
@@ -200,4 +201,8 @@ function draw(g, s) {
   caption(g, 'PIXEL', font, 'rgba(253, 240, 200, 0.85)', 40, 955);
 }
 
-module.exports = { name: 'pixel-art', size: { w: 1000, h: 1000 }, seed: 2026, draw };
+module.exports = {
+  name: 'pixel-art', size: { w: 1000, h: 1000 }, seed: 2026,
+  params: { halo: { min: 1, max: 8, value: 3, meaning: 'Width in cells of the moon\'s dithered halo: low rings the moon with a thin glow, high spreads a wide Bayer haze' } },
+  draw,
+};

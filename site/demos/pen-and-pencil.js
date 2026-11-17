@@ -376,16 +376,18 @@ function draw(g, s) {
   const b = bird(500, by - 118, 190, -0.05 * f, flip);
   claim(500, by - 110, 215);
   for (const [i, leg] of b.legs.entries()) pen(g, R, 'leg' + i, [leg[0], [leg[1][0], top(leg[1][0]) + 2 - i * 5]], { w: 2.2 });
-  pencil(g, R, 'tailf', b.tail, scheme.tail, { tone: 0.5, angle: -0.5 });
+  // The pencil's spacing on the subject's fills: 3.3 is the pencil's own.
+  const spacing = (s.params && s.params.spacing) ?? 3.3;
+  pencil(g, R, 'tailf', b.tail, scheme.tail, { tone: 0.5, angle: -0.5, spacing });
   pen(g, R, 'tail', b.tail, { close: true, w: 2.2 });
-  pencil(g, R, 'bodyf', b.body, scheme.body, { tone: 0.42, angle: -1.0 });
-  pencil(g, R, 'bellyf', b.at(ellipse(-0.05, 0.22, 0.6, 0.26, 24, 0.1)), scheme.belly, { tone: 0.5, angle: -0.3, over: 3, within: b.body });
-  pencil(g, R, 'shadef', b.at(ellipse(-0.25, 0.3, 0.34, 0.13, 20, 0.2)), scheme.wing, { tone: 0.16, angle: 0.4, over: 2, within: b.body });
+  pencil(g, R, 'bodyf', b.body, scheme.body, { tone: 0.42, angle: -1.0, spacing });
+  pencil(g, R, 'bellyf', b.at(ellipse(-0.05, 0.22, 0.6, 0.26, 24, 0.1)), scheme.belly, { tone: 0.5, angle: -0.3, over: 3, within: b.body, spacing });
+  pencil(g, R, 'shadef', b.at(ellipse(-0.25, 0.3, 0.34, 0.13, 20, 0.2)), scheme.wing, { tone: 0.16, angle: 0.4, over: 2, within: b.body, spacing });
   pen(g, R, 'body', b.body, { close: true, w: 2.4 });
   g.fillStyle = PAPER;
   path(g, b.wing);
   g.fill();
-  pencil(g, R, 'wingf', b.wing, scheme.wing, { tone: 0.48, angle: -0.8 });
+  pencil(g, R, 'wingf', b.wing, scheme.wing, { tone: 0.48, angle: -0.8, spacing });
   pen(g, R, 'wing', b.wing, { close: true, w: 2.2 });
   for (let k = 0; k < 3; k++) pen(g, R, 'scallop' + k, chaikin(b.at([[0.1 - k * 0.22, -0.08], [-0.02 - k * 0.22, 0.03], [-0.14 - k * 0.22, -0.06]]), 2), { w: 1.8 });
   pencil(g, R, 'beakf', b.beak, scheme.beak, { tone: 0.6, spacing: 2.6, over: 2 });
@@ -534,4 +536,8 @@ function draw(g, s) {
   caption(g, 'PEN AND PENCIL', font, rgba(INK.brown, 0.8), 40, 952);
 }
 
-module.exports = { name: 'pen-and-pencil', size: { w: 1000, h: 1000 }, seed: 2026, draw };
+const params = {
+  spacing: { min: 2.1, max: 4.5, value: 3.3, meaning: 'Gap between the pencil strokes that colour the bird: dense, nearly solid fills to open hatching' },
+};
+
+module.exports = { name: 'pen-and-pencil', size: { w: 1000, h: 1000 }, seed: 2026, params, draw };

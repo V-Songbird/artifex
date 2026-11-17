@@ -40,6 +40,7 @@ function note(g, R, name, x, y, size, ink, tilt) {
 
 function draw(g, s) {
   const R = rng(s.seed);
+  const stitch = (s.params && s.params.stitch) ?? 11;
 
   cloth(g, R, W, H);
   g.strokeStyle = 'rgba(220, 225, 255, 0.16)';
@@ -75,7 +76,7 @@ function draw(g, s) {
   for (const [i, tip] of [[-1.05, -0.44], [-1.12, -0.29], [-1.07, -0.13]].entries()) {
     strand(g, wobble(b.at([[-0.5, -0.02], tip]), R, 'tail' + i, 2, 12), C.red, 22);
   }
-  satin(g, R, 'body', b.body, C.purple, 11, 8, 0.5);
+  satin(g, R, 'body', b.body, C.purple, stitch, 8, 0.5);
   strand(g, wobble(b.body, R, 'bodyo', 2.2, 10, true), C.purple, 10, true);
   satin(g, R, 'wing', b.wing, C.orange, 10, 7, -0.4);
   strand(g, wobble(b.wing, R, 'wingo', 2, 10, true), C.orange, 9, true);
@@ -129,4 +130,8 @@ function draw(g, s) {
   caption(g, 'EMBROIDERY', font, 'rgba(240, 240, 255, 0.85)');
 }
 
-module.exports = { name: 'embroidery', size: { w: 1000, h: 1000 }, seed: 2026, draw };
+module.exports = {
+  name: 'embroidery', size: { w: 1000, h: 1000 }, seed: 2026,
+  params: { stitch: { min: 5, max: 18, value: 11, meaning: 'Spacing of the satin stitches filling the bird\'s body: low packs them into solid thread, high opens gaps' } },
+  draw,
+};
