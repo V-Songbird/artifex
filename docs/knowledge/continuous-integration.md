@@ -29,7 +29,7 @@ Or, from a terminal with the GitHub CLI signed in:
 gh workflow run check.yml --ref <branch>
 ```
 
-A manual run starts the six `Mutations (<k>/6)` jobs and `Check (ubuntu-latest)` side by side. The run passes only when every shard passes. Starting it again on the same branch cancels the earlier run, and so does a push to `main` while it runs on `main`, because the workflow cancels an older run for the same ref.
+A manual run starts the twenty `Mutations (<k>/20)` jobs and `Check (ubuntu-latest)` side by side. The run passes only when every shard passes. Starting it again on the same branch cancels the earlier run, and so does a push to `main` while it runs on `main`, because the workflow cancels an older run for the same ref.
 
 A manual run is expensive. Its cost grows with the number of registered mutations. Each mutation in `tests/negative.js` has one `expect:` line, so this command counts them:
 
@@ -37,13 +37,13 @@ A manual run is expensive. Its cost grows with the number of registered mutation
 grep -c "^    expect:" tests/negative.js
 ```
 
-In PowerShell, use `(Select-String -Path tests/negative.js -Pattern '^    expect:').Count`. A filtered run of `npm run negative` also names the total in its control line, as `<n> of <total> mutations selected`, after it has run the whole suite once. At the sizing estimate below, 20 seconds per mutation, a manual run takes about one runner minute for every three mutations, plus a few minutes of control in each of the six shards. The registry held 1,220 mutations on 2026-11-16, so a run would take roughly 420 runner minutes across its shards; no run on the hosted Linux runner has measured it yet. To run a subset locally instead, use `npm run negative -- --file <path>` or `--expect <text>`, described in [the mutation suite](verification.md#the-mutation-suite).
+In PowerShell, use `(Select-String -Path tests/negative.js -Pattern '^    expect:').Count`. A filtered run of `npm run negative` also names the total in its control line, as `<n> of <total> mutations selected`, after it has run the whole suite once. The first full run on the hosted Linux runner, on 2026-11-17 with 1,249 mutations, measured 49 to 108 seconds per mutation by shard and 18 to 34 minutes of control in each shard, so a whole run takes roughly 17 to 37 runner hours across its shards. To run a subset locally instead, use `npm run negative -- --file <path>` or `--expect <text>`, described in [the mutation suite](verification.md#the-mutation-suite).
 
 ## Shards
 
-Each `Mutations (<k>/6)` job has a 90-minute cap. A shard holds every sixth mutation in registry order, so its size is the registry's count divided by six, rounded up. Each shard first runs the whole suite as its control, then runs each test file that its mutations need alone, once, a few minutes more. Each mutation then runs only the file that holds its expected test.
+Each `Mutations (<k>/20)` job has a 180-minute cap. A shard holds every twentieth mutation in registry order, so its size is the registry's count divided by twenty, rounded up. Each shard first runs the whole suite as its control, then runs each test file that its mutations need alone, once, a few minutes more. Each mutation then runs only the file that holds its expected test.
 
-To size shards, assume about 20 seconds per mutation, an estimate with some margin from local timings until a CI run measures it. At that rate a 90-minute shard fits about 250 mutations, or about 1,500 across six shards. The time per mutation grows with the slowest test files that hold expected tests, such as `tests/replay.test.js` and `tests/examples.test.js`. Add shards, in the matrix, the job name and the run step, when the longest shard job nears its cap. Each mutation-suite subprocess also keeps the finite runner deadline described in [the mutation suite](verification.md#the-mutation-suite). The workflow sets `ARTIFEX_NEGATIVE_TIMEOUT_MS` to 900000 for that job: the first manual run, on 2026-11-16, stopped in every shard because one whole-suite run takes about six minutes on a hosted runner, over the 300-second default.
+To size shards, take the rates the first full run measured: up to 34 minutes of control, then up to 108 seconds per mutation on the slowest runner. At those rates a 180-minute shard fits about 80 mutations, or about 1,600 across twenty shards. Six shards of 90 minutes judged 456 of 1,249 mutations on that run before every shard hit its cap. The time per mutation grows with the slowest test files that hold expected tests, such as `tests/replay.test.js` and `tests/examples.test.js`. Add shards, in the matrix, the job name and the run step, when the longest shard job nears its cap. Each mutation-suite subprocess also keeps the finite runner deadline described in [the mutation suite](verification.md#the-mutation-suite). The workflow sets `ARTIFEX_NEGATIVE_TIMEOUT_MS` to 900000 for that job: the first manual run, on 2026-11-16, stopped in every shard because one whole-suite run takes about six minutes on a hosted runner, over the 300-second default.
 
 ## Checking a workflow change
 
@@ -54,7 +54,7 @@ gh run list --workflow check.yml --limit 1
 gh run view <run id>
 ```
 
-`gh run view` lists the jobs of the run, including jobs the run skipped. On a push, the skipped mutation shards appear as one job, under the unexpanded name `Mutations (${{ matrix.shard }}/6)`. `gh workflow view check.yml` shows only recent runs, and `--yaml` shows the file as written, not as parsed.
+`gh run view` lists the jobs of the run, including jobs the run skipped. On a push, the skipped mutation shards appear as one job, under the unexpanded name `Mutations (${{ matrix.shard }}/20)`. `gh workflow view check.yml` shows only recent runs, and `--yaml` shows the file as written, not as parsed.
 
 ## Branch rules
 
