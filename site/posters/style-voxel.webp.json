@@ -16,7 +16,7 @@
     "core/rand.js": "8d8d11109d8b6271812535de899010f4c0ef90f0d48b58a293a31fa95306f203",
     "core/robust-predicates.js": "3116ba65b729ab1cc4ad9e37a48625eb2a6fc884a72a36d46bdeb0e20bbcbbbb",
     "core/stroke-font.js": "7b62854d15db56b58820f7c144dd6336819afb220e5df4bd5e46ae2443dd12a9",
-    "demos/voxel.js": "47e05b40f3ca80ffe8316358bf12d3518c904763f6665fc322e8830fc22c9d48"
+    "demos/voxel.js": "322f08c4bdc76ccd1c138f844d3990ed75a0abd52d59b9d7135be4f8b68e25fe"
   },
-  "poster": "ed673602c02fe028d43a24a5371f196efdb28f1d5440e39782975c52ec130ff9"
+  "poster": "aad7843785c51d2f2ed414dffbd5b75105b761a38cec4555ce0e7f7a4b485ac5"
 }
