@@ -128,6 +128,10 @@ function parseArgs(args) {
 function filmTarget(options, cwd = callerDirectory()) {
   const { name, external, file } = resolvePiece(options, cwd, refuse, '.mp4');
   const target = { name, external, file, ...(options.seed !== undefined && { seed: options.seed }) };
+  // An interactive piece has no film of its own, only its sessions'.
+  if (!options.session && validate(external ? external.piece : EXAMPLES[name]).play) {
+    throw refuse(`${name} is interactive, so its film comes from a saved session; pass --session <file> as the page's save session wrote it`);
+  }
   // A saved session is read and checked here, before Edge starts, and names the film after itself.
   if (options.session) {
     if (options.reframe) throw refuse('give --reframe or --session, not both: a session plays at the box it was played at');
