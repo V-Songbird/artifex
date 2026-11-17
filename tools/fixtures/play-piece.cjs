@@ -2,8 +2,9 @@
 // mode, a saved session run again tick by tick, and the film and still made
 // from it, replayed. A press drops a mark where it lands, its colour from the
 // seed; the arrow keys move a square cursor one cell, and Enter or Space drops
-// a mark there; a hand sweeps round the middle all the time, so every frame
-// differs from its neighbours. Never show it to anyone.
+// a mark there; each mark knocks once; a hand sweeps round the middle all the
+// time, so every frame differs from its neighbours, and holds still under
+// reduced motion. Never show it to anyone.
 
 'use strict';
 
@@ -12,8 +13,10 @@ const H = 120;
 const CELL = 20;
 const MOVES = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
 
+// Each mark knocks once, as a cue the page plays live and an export renders.
 function drop(s, x, y, tick, R) {
   s.marks.push({ x, y, tick, hue: Math.floor(R('mark', 'hue', s.marks.length) * 360) });
+  s.cues.sounds.push({ tick, name: 'mark ' + s.marks.length, impact: { modes: [[660, 0.3, 1], [1490, 0.12, 0.5]], velocity: 0.8 }, wet: 0.25 });
 }
 
 module.exports = {
@@ -21,7 +24,7 @@ module.exports = {
   size: { w: W, h: H },
   seed: 1,
   params: { reach: { min: 4, max: 20, value: 10, meaning: 'radius each dropped mark grows to, in design units' } },
-  state: () => ({ marks: [], cursor: { x: 3, y: 2 }, pointer: null }),
+  state: () => ({ marks: [], cursor: { x: 3, y: 2 }, pointer: null, cues: { sounds: [] } }),
   play: {
     step(s, inputs, tick, R) {
       for (const e of inputs) {
@@ -52,7 +55,7 @@ module.exports = {
       g.arc(m.x, m.y, r, 0, Math.PI * 2);
       g.fill();
     }
-    const a = t * Math.PI;
+    const a = clock.reducedMotion ? 0 : t * Math.PI;
     g.strokeStyle = '#1f4e79';
     g.beginPath();
     g.moveTo(W / 2, H / 2);

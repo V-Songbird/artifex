@@ -479,6 +479,7 @@ test('there is never exactly one example', () => {
 test('the set spans idioms that break each other', () => {
   const p = NAMES.map((n) => validate(EXAMPLES[n]));
   const has = (f) => p.filter(f).map((x) => x.name);
+  assert.ok(has((x) => x.play).length, 'a piece that answers a person');
 
   const stills = has((x) => x.time === null);
   const timelines = has((x) => x.time !== null);
@@ -549,7 +550,8 @@ test('a different seed gives a different frame', () => {
 
 test('a still ignores the playhead completely', () => {
   for (const n of NAMES) {
-    if (validate(EXAMPLES[n]).time) continue;
+    // A piece with play has no timeline either, but its t is the session's time.
+    if (validate(EXAMPLES[n]).time || validate(EXAMPLES[n]).play) continue;
     assert.equal(record(EXAMPLES[n], 5, 0).digest, record(EXAMPLES[n], 5, 1).digest, n);
     assert.deepEqual(playheads(EXAMPLES[n]), [0], n);
   }

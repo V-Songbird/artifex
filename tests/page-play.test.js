@@ -43,7 +43,7 @@ const plain = (v) => JSON.parse(JSON.stringify(v));
 
 test('a piece with play ticks at its rate, hands each tick the inputs that landed in it, and logs them in design units', () => {
   const { api, c, frame, el, png } = openGame();
-  assert.deepEqual(plain(api.read().play), { tick: 0, hz: 60, inputs: 0, describe: '0 inputs so far' });
+  assert.deepEqual(plain(api.read().play), { tick: 0, hz: 60, inputs: 0, describe: '0 inputs so far', cues: 0, heard: 0, sound: null, reducedMotion: false });
   assert.equal(el('playGroup').hidden, false);
   assert.equal(el('describe').textContent, '0 inputs so far');
   // Exports wait for a saved session; restart and save session are on.
@@ -151,6 +151,56 @@ test('a describe that throws stops play with its error shown', () => {
   assert.equal(api.read().play.tick, 0);
 });
 
+test('the page plays each cue live once, after the first gesture made its context, and plays the session under reduced motion when asked', () => {
+  const { fakeAudio } = require('./fake-media.js');
+  const { Context, record } = fakeAudio();
+  class Live extends Context {
+    constructor() { super(2, 0, 48000); Object.assign(this, { state: 'suspended', currentTime: 2, baseLatency: 0.01 }); }
+    resume() { this.state = 'running'; }
+  }
+  const drawn = [];
+  function knocking(module) {
+    module.exports = {
+      game: {
+        name: 'game', size: { w: 80, h: 60 }, state: () => ({ cues: { sounds: [] } }),
+        play: {
+          step(s, inputs, tick) {
+            for (const e of inputs) if (e.kind === 'down') s.cues.sounds.push({ tick, name: 'knock ' + tick, impact: { modes: [[500, 0.2, 1]] }, wet: 0.3 });
+          },
+        },
+        draw(g, s, t, clock) { globalThis.drawn.push(clock.reducedMotion); g.fillRect(0, 0, 1, 1); },
+      },
+    };
+  }
+  const clock = { now: 0 };
+  const page = fakePage({
+    modules: { 'examples/index.js': knocking }, now: () => clock.now,
+    fields: () => ({ disabled: false, getBoundingClientRect: () => ({ left: 0, top: 0, width: 80, height: 60 }), focus() {} }),
+    window: { matchMedia: (q) => ({ matches: q === '(prefers-reduced-motion: reduce)' }) },
+    globals: { AudioContext: Live, drawn },
+  });
+  const { api, frame } = page, c = page.elements.get('c');
+  const read = () => plain(api.read().play);
+  assert.equal(read().sound, null, 'no context before a gesture');
+  assert.equal(read().reducedMotion, true);
+  assert.equal(drawn.every((r) => r === true) && drawn.length > 0, true);
+  c.onpointerdown(press('down', 10, 10));
+  frame(clock.now = 20);
+  assert.deepEqual([read().cues, read().heard, read().sound], [1, 1, 'running']);
+  const knocks = () => record.nodes.filter((n) => n.kind === 'bufferSource');
+  assert.equal(knocks().length, 1);
+  assert.ok(Math.abs(knocks()[0].at - 2.01) < 1e-9, 'played at once, after the output latency');
+  assert.equal(record.nodes.filter((n) => n.kind === 'convolver').length, 1);
+  // Later ticks play nothing again; a second press plays one more, into the same room.
+  frame(clock.now = 60);
+  assert.equal(knocks().length, 1);
+  c.onpointerdown(press('down', 20, 20));
+  frame(clock.now = 80);
+  assert.equal(knocks().length, 2);
+  assert.equal(record.nodes.filter((n) => n.kind === 'convolver').length, 1);
+  assert.equal(JSON.parse(JSON.stringify(api.saveSession())).reducedMotion, true);
+});
+
 test('the page re-runs its own saved session to the same state, and restart plays again from tick 0', () => {
   const { api, c, frame, el, downloads } = openGame();
   const ticks = [];
@@ -171,7 +221,7 @@ test('the page re-runs its own saved session to the same state, and restart play
   el('saveSession').onclick();
   assert.deepEqual(downloads, ['game-3.session.json']);
   el('restart').onclick();
-  assert.deepEqual(plain(api.read().play), { tick: 0, hz: 60, inputs: 0, describe: '0 inputs so far' });
+  assert.deepEqual(plain(api.read().play), { tick: 0, hz: 60, inputs: 0, describe: '0 inputs so far', cues: 0, heard: 0, sound: null, reducedMotion: false });
   api.onTick(null);
   frame(200);
   assert.deepEqual(ticks, [1, 2, 3, 4, 5, 6]);

@@ -402,6 +402,41 @@ test('contact sheet: --frames spreads a time strip from the first frame to the l
   assert.throws(() => planStrip(validate(EXAMPLES.specimen), { frames: 3 }), /specimen is a still/);
 });
 
+test('contact sheet: --session draws a saved session as a time strip at its own seed, named after the file, and refuses what a session fixes', () => {
+  const { readSession } = require('../tools/contact-sheet.js');
+  const play = require('../core/play.js');
+  const s = play.session(EXAMPLES.noughts, 9);
+  for (let k = 1; k <= 90; k++) s.advance(k === 5 ? [{ kind: 'down', x: 130, y: 120 }] : []);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'artifex-session-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'game.session.json'), JSON.stringify(s.save()));
+    const args = parseArgs(['noughts', '--frames', '6', '--session', 'game.session.json']);
+    assert.deepEqual(args.strip.session, { path: 'game.session.json' });
+    const session = readSession(args.strip, 'noughts', null, dir);
+    assert.equal(session.name, 'game.session.json');
+    assert.deepEqual(Object.keys(session), ['path', 'file', 'name'], 'the film stays out of the strip\'s JSON');
+    const strip = { ...args.strip, session };
+    const [cells] = sheetPlans(['noughts'], 6, [], null, null, strip);
+    // 90 ticks make 91 frames, tick 0 to tick 90.
+  assert.deepEqual(cells.map((cell) => cell.frame), [0, 18, 36, 54, 72, 90]);
+    assert.ok(cells.every((cell) => cell.seed === 9), 'the session\'s seed');
+    assert.equal(path.basename(sheetStem(['noughts'], [], null, null, strip)), 'noughts-frames-game');
+    const html = page(['noughts'], 6, 1, [], null, null, strip);
+    assert.match(html, /var SESSION = \{"file":\{"artifex"/);
+    assert.match(html, /req\('core\/play\.js'\)\.film\(EX\[NAMES\[0\]\], SESSION\.file, SESSION\.name\)/);
+    // What a session fixes is refused beside it, and a strip of a piece with play needs one.
+    assert.throws(() => parseArgs(['noughts', '--session', 'game.session.json']), /--session draws a saved session as a time strip; add --frames/);
+    assert.throws(() => parseArgs(['noughts', '--frames', '6', '--session', 'g.json', '--seed', '3']), /give --seed or --session, not both/);
+    assert.throws(() => parseArgs(['noughts', '--frames', '6', '--session', 'g.json', '--box', '720x480']), /a session plays at the box it was played at; drop --box/);
+    assert.throws(() => parseArgs(['noughts', '--frames', '6', '--session']), /--session needs the session file/);
+    assert.throws(() => planStrip(validate(EXAMPLES.noughts), { frames: 6 }), /^Error: seeds: noughts is interactive, so its frames come from a session somebody played; save one in the page and add --session <file>/);
+    assert.throws(() => readSession({ session: { path: 'none.json' } }, 'noughts', null, dir), /--session: no session file at .*none\.json/);
+    fs.writeFileSync(path.join(dir, 'bad.json'), '{');
+    assert.throws(() => readSession({ session: { path: 'bad.json' } }, 'noughts', null, dir), /--session: .*bad\.json is not JSON/);
+    assert.throws(() => readSession({ session: { path: 'game.session.json' } }, 'readout', null, dir), /--session: play: readout declares no play/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('contact sheet: an --at strip survives a later --loupe strip of the same piece', async () => {
   const { writePieces } = require('../tools/check-browser.js');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'artifex-1239-'));

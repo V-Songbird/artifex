@@ -892,12 +892,24 @@ async function withEdge(page, options, work) {
   const edge = await findEdge(options.edge);
   const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
   const controller = new AbortController(), { signal } = controller;
-  const timer = setTimeout(() => controller.abort(new Error('browser: timed out after ' + timeoutMs + ' ms')), timeoutMs);
+  const expire = () => controller.abort(new Error('browser: timed out after ' + timeoutMs + ' ms'));
+  let timer = setTimeout(expire, timeoutMs);
   const interrupt = () => controller.abort(new Error('browser: interrupted'));
   process.once('SIGINT', interrupt); process.once('SIGTERM', interrupt);
   let server, profile, child, exited, client, result, failure, browserPid, started;
   let browserLog = '', handedOff = 0;
   const context = { signal, errors: [], phase: 'startup', version: null };
+  // With `options.phaseDeadline` the deadline starts again at each phase, so a
+  // run of many quick phases is never cut short by their sum, and a phase that
+  // hangs still fails by its name.
+  if (options.phaseDeadline) {
+    let phase = context.phase;
+    Object.defineProperty(context, 'phase', {
+      enumerable: true,
+      get: () => phase,
+      set: (next) => { phase = next; clearTimeout(timer); if (!signal.aborted) timer = setTimeout(expire, timeoutMs); },
+    });
+  }
   try {
     server = await servePage(page, options.file);
     const tempRoot = await fs.realpath(os.tmpdir());
@@ -1102,7 +1114,9 @@ async function runBrowserCheck(options = {}, { edge = withEdge, exportFilm, repl
   // An Edge whose work finished but which failed only to clean up still has its
   // films replayed; the first such failure fails the run once every film has a verdict.
   let cleanup;
-  const report = await edge(page, { ...options, command: 'browser' }, (client, context) => checkPage(client, context, options))
+  // Each example and each film export gets the whole deadline: together they
+  // pass a minute on a loaded machine, and the list grows with the examples.
+  const report = await edge(page, { ...options, command: 'browser', phaseDeadline: true }, (client, context) => checkPage(client, context, options))
     .catch((error) => { if (!error.report) throw error; cleanup = error; return error.report; });
   try {
     await replayFilms(report, options, { dir, replay });
@@ -1349,8 +1363,9 @@ function rerunTicks(name, session, frames) {
  * middle tick are then made by npm run film's and npm run still's own routes
  * with the session written beside them as browser-play-piece.session.json, and
  * each is replayed. Sets `report.playFixture` to { ticks, inputs, kinds,
- * differs, film, still }, `differs` the first tick whose re-run frame differs,
- * or null. Every failure names the fixture and carries the run's `report`.
+ * differs, sound, film, still }, `differs` the first tick whose re-run frame differs,
+ * or null, and `sound` the cues the fixture pushed, how many the page played
+ * live and its audio context's state; every cue must have played. Every failure names the fixture and carries the run's `report`.
  */
 async function checkPlayFixture(report, options, { dir = OUT, edge = withEdge, exportFilm, still, replay } = {}) {
   try { return await playFixtureSteps(report, options, { dir, edge, exportFilm, still, replay }); } catch (error) {
@@ -1385,14 +1400,19 @@ async function playFixtureSteps(report, options, { dir, edge, exportFilm, still,
     await mouse('mouseReleased', 130, 90);
     const last = await evaluate(client, 'window.__artifex.read().play.tick');
     await waitFor(client, context, 'window.__artifex.read().play.tick >= ' + (last + PLAY_TAIL));
+    // The sound cues its marks pushed, and how many the page played live.
+    const heard = await evaluate(client, '(({ cues, heard, sound }) => ({ cues, heard, sound }))(window.__artifex.read().play)');
     const recorded = await evaluateInPieces(client, '(' + stopTicks + ')()');
     const verdict = await evaluate(client, '(' + rerunTicks + ')(' + [name, recorded.session, recorded.frames].map((v) => JSON.stringify(v)).join(', ') + ')');
     pageErrors(client, context);
-    return { ...recorded, ...verdict };
+    return { ...recorded, ...verdict, heard };
   });
   const { session } = played;
   const kinds = [...new Set(session.log.map((row) => row[1]))].sort();
-  Object.assign(fixture, { ticks: session.ticks, inputs: session.log.length, kinds, differs: played.differs });
+  Object.assign(fixture, { ticks: session.ticks, inputs: session.log.length, kinds, differs: played.differs, sound: played.heard });
+  if (!played.heard.cues || played.heard.heard !== played.heard.cues || played.heard.sound !== 'running') {
+    throw new Error(`browser: the play fixture pushed ${played.heard.cues} sound cues and the page played ${played.heard.heard} of them live, its audio ${played.heard.sound ?? 'never made'}`);
+  }
   if (played.frames.length !== session.ticks || played.rerun !== session.ticks) {
     throw new Error(`browser: the play fixture recorded ${played.frames.length} frames over ${session.ticks} ticks and its re-run drew ${played.rerun}`);
   }
@@ -1832,7 +1852,8 @@ async function main(args = process.argv.slice(2), run = runAll, dir = OUT) {
       + (image && image.png && image.png.match ? '; the image fixture\'s page credited its image, and its PNG showed it and replayed as matching'
         + (image.replay ? ', and its film was exported' + replayPhrase(image.replay) : '')
         + (image.decode && image.decode.converted ? '; npm run image converted a gamma-tagged PNG to sRGB in Edge' : '') : '')
-      + (play && play.still && play.still.match ? '; the play fixture was played for ' + play.ticks + ' ticks through ' + play.inputs + ' real inputs, its saved session ran again to the same frames'
+      + (play && play.still && play.still.match ? '; the play fixture was played for ' + play.ticks + ' ticks through ' + play.inputs + ' real inputs'
+        + (play.sound ? ', the page played its ' + play.sound.heard + ' sound cues live' : '') + ', its saved session ran again to the same frames'
         + ', its film was exported' + replayPhrase(play.film.replay) + ', and its still replayed as matching' : '')
       + (failure && /browser: cleanup failed/.test(failure.message) ? '; cleanup failed' : '; owned browser, server and profile cleaned up'));
     if (!options.json) console.log('report: ' + slash(await saveReport('browser', report, dir)));
