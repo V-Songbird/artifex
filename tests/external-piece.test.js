@@ -114,7 +114,7 @@ test('npm run browser\'s image fixture checks the page\'s credit, and a failure 
   const { checkImageFixture, main } = require('../tools/check-browser.js');
   const { solve } = require('../core/piece.js');
   const { sample } = require('../core/image.js');
-  const { piece } = loadExternal(path.join(ROOT, 'tests', 'fixtures', 'image-piece.cjs'), ROOT);
+  const { piece } = loadExternal(path.join(ROOT, 'tools', 'fixtures', 'image-piece.cjs'), ROOT);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'artifex-image-fixture-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   // A PNG of the fixture's size: the image as sample reads it, or transparent.

@@ -139,7 +139,7 @@ test('a file made by another version, for another piece, box or outputs is refus
 
 test('a file drawn with another image, or without one the piece declares, is refused naming the image', async (t) => {
   const dir = scratch(t);
-  const piece = path.join(ROOT, 'tests', 'fixtures', 'image-piece.cjs');
+  const piece = path.join(ROOT, 'tools', 'fixtures', 'image-piece.cjs');
   const { svg, manifest } = renderVector(require(piece), { seed: 1, t: 0 });
   const saved = (m) => { const file = path.join(dir, 'x.svg'); fs.writeFileSync(file, withManifest(svg, m)); return file; };
   const same = await replay(saved(manifest), { piece });

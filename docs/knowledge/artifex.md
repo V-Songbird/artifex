@@ -43,6 +43,6 @@ Read the [piece API](../apis/piece-api.md) for a runnable custom piece. The [Art
 
 For fixed code, data, parameters, and rendering configuration, a seed and playhead must reproduce the same frame in the same execution environment. This is an authoring requirement; the library cannot prove that arbitrary user drawing code is pure. Cross-browser pixel equality is not guaranteed.
 
-The root and host-specific plugin manifests describe the same library. The Claude and Codex marketplace catalogs both use the repository root as their source. A plugin installation needs the library files alongside the skill; copying `SKILL.md` alone is insufficient.
+The root and host-specific plugin manifests describe the same library. The Claude and Codex marketplace catalogs both use the repository root as their source. A plugin installation needs the library files alongside the skill; copying `SKILL.md` alone is insufficient. The README installs Claude Code and Codex with a sparse checkout of the folders the plugin uses: `core/`, `skills/`, `tools/`, `examples/`, `assets/`, `docs/` and the host's catalog folder, plus the files at the root. Anything a tool reads at run time belongs in one of them, which is why the two fixtures `npm run browser` draws live in `tools/fixtures/`, not `tests/fixtures/`.
 
 See [development](development.md) for checks and source entry points, and [LICENSE](../../LICENSE) for the MIT license.

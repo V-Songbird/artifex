@@ -1,7 +1,7 @@
 ---
 type: knowledge
 summary: "Explains Artifex's page, PNG, SVG, MP4 and WebM outputs, soundtracks, and the checks and limitations of each format."
-related_files: ["core/render.js", "core/film.js", "core/export.js", "tests/fixtures/hatch-film.cjs", "tests/fixtures/noise-film.cjs", "tests/fixtures/gradient-film.cjs", "core/webgpu-preview.js", "core/surface-vector.js", "examples/inversion.js", "examples/pixel-field.js", "examples/readout.js", "tools/build-page.js", "tools/check-browser.js", "tools/piece-input.js", "tools/contact-sheet.js", "tools/render-examples.js", "tests/examples.test.js", "tests/external-piece.test.js", "tests/film.test.js", "tests/page-build-errors.test.js", "tests/page-preview.test.js", "tools/replay.js", "tests/replay.test.js", "tools/film-cli.js", "tests/film-cli.test.js", "tools/stitch.js", "tests/stitch.test.js", "core/image.js", "tests/fixtures/image-piece.cjs"]
+related_files: ["core/render.js", "core/film.js", "core/export.js", "tests/fixtures/hatch-film.cjs", "tests/fixtures/noise-film.cjs", "tests/fixtures/gradient-film.cjs", "core/webgpu-preview.js", "core/surface-vector.js", "examples/inversion.js", "examples/pixel-field.js", "examples/readout.js", "tools/build-page.js", "tools/check-browser.js", "tools/piece-input.js", "tools/contact-sheet.js", "tools/render-examples.js", "tests/examples.test.js", "tests/external-piece.test.js", "tests/film.test.js", "tests/page-build-errors.test.js", "tests/page-preview.test.js", "tools/replay.js", "tests/replay.test.js", "tools/film-cli.js", "tests/film-cli.test.js", "tools/stitch.js", "tests/stitch.test.js", "core/image.js", "tools/fixtures/image-piece.cjs"]
 ---
 
 # Output formats
@@ -134,7 +134,7 @@ The Opus path, the CPU conversion and the encoder route's refusals are checked i
 - the WebM fallback, by `--force no-h264` (see the WebM section below);
 - a lost GPU, by `--force gpu-crash`, which hides WebGL2 and crashes the GPU process of the check's own Edge once a third of the first pass is drawn, and fails unless the film reports its canvas lost and was drawn again in memory (see [the forced fallbacks](verification.md#forced-fallbacks)).
 
-Every film a run exports is then replayed, and a film whose replay differs fails the run. A soundtrack whose decoded peak is not above 0.01 fails as silent. Without `--force`, the run also exports `tests/fixtures/flash-film.cjs`, which must count more than three general and more than three red flashes and warn, and replays it.
+Every film a run exports is then replayed, and a film whose replay differs fails the run. A soundtrack whose decoded peak is not above 0.01 fails as silent. Without `--force`, the run also exports `tools/fixtures/flash-film.cjs`, which must count more than three general and more than three red flashes and warn, and replays it.
 
 Decoded frames and sound are compared within the tested browser; they are not byte-identical to the drawing.
 
