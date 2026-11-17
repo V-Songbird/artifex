@@ -54,6 +54,18 @@ test('intersection separates parallel segments and detects an interior crossing'
     { type: 'point', point: [0.5, 5e-13] });
 });
 
+test('a proper crossing of integer segments whose meeting point is exactly representable returns that point exactly', () => {
+  // Scaling by a power of two keeps every difference exact; scaling by the
+  // largest difference rounds each one and moves these points by an ulp.
+  for (const [a, b, c, d, point] of [
+    [[0, 0], [4, 1], [5, 10], [1, -1], [1.5, 0.375]],
+    [[0, 0], [3, 1], [6, 12], [1, -3], [2.25, 0.75]],
+    [[0, 0], [3, 1], [8, 11], [1, -2], [2.53125, 0.84375]],
+  ]) {
+    assert.deepStrictEqual(segmentIntersection(a, b, c, d), { type: 'point', point }, `${a} ${b} x ${c} ${d}`);
+  }
+});
+
 test('collinear overlap keeps both ends in the first segment direction', () => {
   assert.deepEqual(segmentIntersection([0, 0], [6, 3], [8, 4], [2, 1]),
     { type: 'overlap', points: [[2, 1], [6, 3]] });

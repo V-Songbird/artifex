@@ -1595,11 +1595,11 @@ const MUTATIONS = [
     expect: 'closest point clamps to the segment and measures from the returned point',
   },
   {
-    why: 'nonbinary scaling destroys collinearity even for exact integer inputs',
+    why: 'a crossing is scaled by its largest difference instead of a power of two, so a meeting point exactly representable comes out an ulp off',
     file: 'core/geom.js',
     from: '  const scale = 2 ** Math.min(1023, Math.floor(Math.log2(magnitude)));',
     to: '  const scale = magnitude;',
-    expect: 'collinear overlap keeps both ends in the first segment direction',
+    expect: 'a proper crossing of integer segments whose meeting point is exactly representable returns that point exactly',
   },
   {
     why: 'segments on one side of each other are reported as meeting',
@@ -2494,7 +2494,7 @@ const MUTATIONS = [
     why: 'a video encoder that fails on the encoder route goes unreported in the film converted instead',
     file: 'core/film.js',
     from: "    if (why) restarts.push('encoder route: ' + why);\n",
-    to: '',
+    to: '    if (why) {}\n',
     expect: 'a video encoder that fails on the encoder route is named in the report of the film converted instead',
   },
   {
