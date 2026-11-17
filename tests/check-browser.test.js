@@ -364,6 +364,56 @@ test('an Edge launcher that exits 0 and never opens a port fails after the hand-
     /Edge exited before completion \(0\)/);
 });
 
+test('an Edge that exits 0 and hands over to a browser that opens its port runs the work, with no sandbox hint', async (t) => {
+  const devtools = http.createServer((request, response) => {
+    response.setHeader('content-type', 'application/json');
+    if (request.url === '/json/version') response.end(JSON.stringify({ Browser: 'Fake/1' }));
+    else if (request.url === '/json/list') response.end(JSON.stringify([{ type: 'page', url: 'about:blank', webSocketDebuggerUrl: 'ws://127.0.0.1:1/devtools/page/fake' }]));
+    else response.writeHead(404).end();
+  });
+  await new Promise((resolve) => devtools.listen(0, '127.0.0.1', resolve));
+  t.after(() => devtools.close());
+  class Socket extends FakeSocket {
+    constructor(url) { super(url); queueMicrotask(() => this.open()); }
+    send(data) { this.reply({ id: JSON.parse(data).id, result: {} }); }
+  }
+  assert.equal(await withEdge('<title>x</title>', {
+    edge: process.execPath, spawn: relaunching(devtools.address().port), WebSocket: Socket, timeoutMs: 20000,
+  }, async () => 'done'), 'done');
+  const failed = await withEdge('<title>x</title>', { edge: process.execPath, spawn: relaunching(0), handoffMs: 300, timeoutMs: 20000 }, async () => 'unreachable')
+    .catch((error) => error);
+  assert.doesNotMatch(failed.message, /sandbox/, 'a hand-off whose browser never opens its port is not blamed on a sandbox');
+});
+
+test('withEdge names a command sandbox as the likely cause when Edge is stopped the way one stops it', async (t) => {
+  const hint = '\nbrowser: Edge could not run here, and a command sandbox such as an agent host\'s is the likely cause; run this command outside the sandbox';
+  const exiting = (code, log = '') => () => {
+    const child = Object.assign(new EventEmitter(), { stderr: new EventEmitter(), pid: 424242, exitCode: null, signalCode: null });
+    setImmediate(() => {
+      if (log) child.stderr.emit('data', log);
+      child.exitCode = code; child.emit('exit', code, null);
+    });
+    return child;
+  };
+  const run = (spawn) => withEdge('<title>x</title>', { edge: process.execPath, spawn, timeoutMs: 20000 }, async () => 'unreachable').catch((error) => error);
+  await t.test('a launch the sandbox denies', async () => {
+    const denied = () => { throw Object.assign(new Error('spawn EPERM'), { code: 'EPERM' }); };
+    assert.equal((await run(denied)).message, 'browser: Edge launch failed: spawn EPERM during startup' + hint);
+  });
+  await t.test('an Edge that exits non-zero at startup', async () => {
+    assert.equal((await run(exiting(2147483651))).message, 'browser: Edge exited before completion (2147483651) during startup' + hint);
+  });
+  await t.test('an Edge whose GPU process died', async () => {
+    const message = (await run(exiting(1, "GPU process isn't usable. Goodbye."))).message;
+    assert.ok(message.endsWith("Edge diagnostics:\nGPU process isn't usable. Goodbye." + hint), message);
+  });
+  await t.test('the line names the command that started Edge', async () => {
+    const message = (await withEdge('<title>x</title>', { edge: process.execPath, spawn: exiting(2147483651), timeoutMs: 20000, command: 'replay' }, async () => 'unreachable')
+      .catch((error) => error)).message;
+    assert.ok(message.endsWith(hint.replace('\nbrowser:', '\nreplay:')), message);
+  });
+});
+
 test('browser stop waits for the owned Edge to exit and fails while it keeps running', async () => {
   // The kill is injected, so no real process is signalled.
   const root = { pid: 424242, exitCode: null, signalCode: null };

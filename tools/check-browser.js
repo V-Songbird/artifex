@@ -802,6 +802,18 @@ async function removeProfile(profile, { limitMs = PROFILE_MS, rm = fs.rm } = {})
 // not a failure: the debugging port says whether it took, within this time.
 const HANDOFF_MS = 15000;
 
+// An agent host's command sandbox, such as Codex's workspace-write on Windows,
+// stops Edge in one of three ways: the launch is denied (EPERM or EACCES, its
+// stderr pipe included), Edge exits non-zero at startup (0x80000003 and
+// 0xC0000005 seen), or its GPU process dies later. An exit 0 is a hand-off.
+const SANDBOX_HINT = ': Edge could not run here, and a command sandbox such as an agent host\'s is the likely cause; run this command outside the sandbox';
+
+/** Whether the failure `message`, from `phase`, has the marks of a sandboxed Edge. */
+function sandboxStopped(message, phase) {
+  return /Edge launch failed: .*\b(EPERM|EACCES)\b|GPU process isn't usable/.test(message)
+    || (phase === 'startup' && /Edge exited before completion \((?!0\))/.test(message));
+}
+
 /**
  * The process id of the browser at the CDP endpoint `url`. The endpoint's path
  * names one browser instance, so only that browser answers it.
@@ -884,11 +896,13 @@ async function withEdge(page, options, work) {
     server = await servePage(page, options.file);
     const tempRoot = await fs.realpath(os.tmpdir());
     profile = await fs.mkdtemp(path.join(tempRoot, 'artifex-browser-' + process.pid + '-'));
-    child = (options.spawn ?? spawn)(edge, [
-      '--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1',
-      '--user-data-dir=' + profile, '--no-first-run', '--no-default-browser-check',
-      '--disable-background-networking', ...(options.headed ? [] : ['--headless=new']), 'about:blank',
-    ], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+    try {
+      child = (options.spawn ?? spawn)(edge, [
+        '--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1',
+        '--user-data-dir=' + profile, '--no-first-run', '--no-default-browser-check',
+        '--disable-background-networking', ...(options.headed ? [] : ['--headless=new']), 'about:blank',
+      ], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+    } catch (error) { throw new Error('browser: Edge launch failed: ' + error.message); }
     child.stderr.on('data', (chunk) => { browserLog = (browserLog + chunk).slice(-3000); });
     exited = new Promise((resolve) => {
       child.once('error', (error) => { controller.abort(new Error('browser: Edge launch failed: ' + error.message)); resolve(); });
@@ -957,6 +971,7 @@ async function withEdge(page, options, work) {
     if (/CDP connection closed|Edge exited/.test(failure.message) && browserLog) {
       failure.message += '\nEdge diagnostics:\n' + browserLog.trim();
     }
+    if (sandboxStopped(failure.message, context.phase)) failure.message += '\n' + (options.command ?? 'browser') + SANDBOX_HINT;
   } finally {
     clearTimeout(timer);
     process.removeListener('SIGINT', interrupt); process.removeListener('SIGTERM', interrupt);
