@@ -146,6 +146,49 @@ function resolvePiece(options, cwd, refuse, extension) {
   return { name, external, file };
 }
 
+/**
+ * The saved session `options.session` names, for a film or still of `piece`
+ * (validated) whose file would be `file`: read relative to `cwd` and checked
+ * against the piece before any browser starts. Returns { file, name, film,
+ * text, path, beside, output }: `file` the parsed session, `name` its file
+ * name, which the output's manifest records, `film` the session's film (see
+ * core/play.js), and `beside` where the session must sit for replay to find
+ * it, next to `output`. Without --out the output is named after the session,
+ * `<stem>` of `<stem>.session.json` with `file`'s extension, so two sessions
+ * never share a file. A session at a seed, another file of the session's name
+ * already beside the output, or a file that is no session of the piece is
+ * refused through `refuse(cause)`.
+ */
+function sessionInput(options, cwd, refuse, piece, file) {
+  if (options.seed != null) throw refuse('give --seed or --session, not both: a session plays at the seed it was played at');
+  const where = path.resolve(cwd, options.session);
+  let text, session;
+  try { text = fs.readFileSync(where, 'utf8'); } catch (e) {
+    if (e.code === 'ENOENT') throw refuse(`--session: no session file at ${slash(where)}; name the file the page's save session wrote`);
+    throw e;
+  }
+  try { session = JSON.parse(text); } catch (e) { throw refuse(`--session: ${shown(where)} is not JSON: ${e.message}`); }
+  const name = path.basename(where);
+  let film;
+  try { film = require('../core/play.js').film(piece, session, name); } catch (e) {
+    if (e.name !== 'PieceError') throw e;
+    throw refuse('--session: ' + e.message);
+  }
+  const output = options.out !== null ? file : path.join(path.dirname(file), name.replace(/(\.session)?\.json$/i, '') + path.extname(file));
+  const beside = path.join(path.dirname(output), name);
+  if (fold(beside) !== fold(where) && fs.existsSync(beside) && fs.readFileSync(beside, 'utf8') !== text) {
+    throw refuse(`--session: ${shown(beside)} already holds another session, and replay reads the session beside the file it checks; move it, or write the file elsewhere with --out`);
+  }
+  return { file: session, name, film, text, path: where, beside, output };
+}
+
+/** Copies a sessionInput's session beside its output, where replay reads it, unless it is there already. */
+function keepSessionBeside(session) {
+  if (fold(session.beside) === fold(session.path)) return;
+  fs.mkdirSync(path.dirname(session.beside), { recursive: true });
+  fs.writeFileSync(session.beside, session.text);
+}
+
 // Read direct literal CommonJS imports without treating comments or ordinary
 // strings as imports. Dynamic requires cannot be made self-contained reliably.
 function imports(source, file) {
@@ -378,4 +421,4 @@ function loadExternal(input, cwd = callerDirectory(), { confine } = {}) {
   return Object.defineProperty({ entry, piece, names, source, moduleCount: ids.size, stem: outputStem(entry), directory: path.dirname(entry) }, 'modules', { value: modules });
 }
 
-module.exports = { callerDirectory, isPiecePath, outputStem, imports, loadExternal, inLibrary, realPath, slash, quote, quoteWord, hint, shown, outRoot, outputDirectory, resolvePiece };
+module.exports = { callerDirectory, isPiecePath, outputStem, imports, loadExternal, inLibrary, realPath, slash, quote, quoteWord, hint, shown, outRoot, outputDirectory, resolvePiece, sessionInput, keepSessionBeside };

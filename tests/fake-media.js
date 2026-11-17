@@ -639,7 +639,7 @@ function fakePage({
     frames.clear();
     pending.forEach((callback) => callback(timestamp));
   };
-  return { api: sandbox.window.__artifex, window: sandbox.window, elements, png: pngButton, frames, frame, downloads, blobs };
+  return { api: sandbox.window.__artifex, window: sandbox.window, document: sandbox.document, elements, png: pngButton, frames, frame, downloads, blobs };
 }
 
 module.exports = { fakeAudio, fakeCodecs, fakeCanvas, fakePage, opusHead, EDGE_AVCC };

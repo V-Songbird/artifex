@@ -137,7 +137,31 @@ test('film: --seed films at that seed: the page sets it after select, which rese
   } };
   const edge = async (page, browser, work) => work(client, { errors: [], version: { Browser: 'stub' } });
   await exportFilm({ name: 'readout', external: { piece: EXAMPLES.readout, source: '' }, seed: 7 }, {}, {}, undefined, edge);
-  assert.ok(sent.some((e) => /, 7\);\n\}\)\(\)/.test(e)), 'the seed is the page function\'s last argument');
+  assert.ok(sent.some((e) => /, 7, null\);\n\}\)\(\)/.test(e)), 'the seed is the page function\'s argument before the session, which is null without --session');
+});
+
+test('film: a saved session goes to the page before select, so the film is the session\'s, and exportFilm carries it as the last argument', async () => {
+  const calls = [];
+  globalThis.window = { __artifex: {
+    session: (file, name) => calls.push(['session', file.piece, name]),
+    select: (name) => calls.push(['select', name]),
+    film: async () => { calls.push(['film']); return { bytes: 1, blob: new Blob([new Uint8Array(1)]) }; },
+  } };
+  try {
+    await exportInPage('play-piece', {}, null, null, null, { file: { piece: 'play-piece' }, name: 'round.session.json' });
+    assert.deepEqual(calls, [['session', 'play-piece', 'round.session.json'], ['select', 'play-piece'], ['film']]);
+  } finally { delete globalThis.window; }
+  const reply = JSON.stringify({ report: { bytes: 1 }, data: 'YQ==', sound: null });
+  const sent = [];
+  const client = { send: async (method, { expression }) => {
+    sent.push(expression);
+    if (expression.startsWith('(async () => (globalThis.__artifexValue')) return { result: { value: reply.length } };
+    return { result: { value: expression.startsWith('globalThis.__artifexValue.slice') ? reply : true } };
+  } };
+  const edge = async (page, browser, work) => work(client, { errors: [], version: { Browser: 'stub' } });
+  const session = { file: { piece: 'play-piece', ticks: 2 }, name: 'round.session.json', text: 'kept out of the page' };
+  await exportFilm({ name: 'play-piece', external: { piece: EXAMPLES.readout, source: '' }, session }, {}, {}, undefined, edge);
+  assert.ok(sent.some((e) => e.includes(', null, {"file":{"piece":"play-piece","ticks":2},"name":"round.session.json"});\n})()')), 'the session, its file and name only, is the page function\'s last argument');
 });
 
 test('film: the page function selects the piece, passes the options to the page\'s film() and returns its file as base64', async () => {

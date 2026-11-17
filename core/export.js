@@ -689,11 +689,13 @@ function recipe(p, s, t) {
 /**
  * The name a saved file of piece `name` at `seed` takes, the same from the page
  * and the site: `name-seed@kx.png` for a PNG at scale `extra`, `name-seed.svg`,
- * `name-seed.webm`, and `name-seed-WxH.mp4` for an MP4 of `extra` 'WxH'.
+ * `name-seed.webm`, `name-seed-WxH.mp4` for an MP4 of `extra` 'WxH', and
+ * `name-seed.session.json` for an interactive piece's saved session.
  */
 function fileName(kind, name, seed, extra) {
   var stem = name + '-' + seed;
   if (kind === 'png') return stem + '@' + extra + 'x.png';
+  if (kind === 'session') return stem + '.session.json';
   if (kind === 'mp4') return stem + '-' + extra + '.mp4';
   return stem + '.' + kind;
 }

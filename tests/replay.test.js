@@ -1352,6 +1352,42 @@ test('a film whose pictures match still differs by its soundtrack, and pictures 
   assert.match(replayVerdict([{ frame: 0, psnr: 12, neighbours: [] }], lost).detail, /^frame 0 decodes at 12 dB/);
 });
 
+test('a file drawn from a saved session is drawn again from the session beside it, and refused by name with another log, ticks or piece, or no session', async (t) => {
+  const play = require('../core/play.js');
+  const dir = scratch(t);
+  // The play fixture claiming vector output, so its frames replay as SVG in Node.
+  const modulePath = path.join(dir, 'vector-game.cjs');
+  fs.writeFileSync(modulePath, `module.exports = Object.assign({}, require(${JSON.stringify(path.join(ROOT, 'tools', 'fixtures', 'play-piece.cjs'))}), { outputs: ['raster', 'vector'] });\n`);
+  const { piece } = loadExternal(modulePath, dir);
+  const s = play.session(piece, 2);
+  s.advance([{ kind: 'down', x: 40, y: 50 }]);
+  for (let i = 0; i < 5; i++) s.advance([]);
+  const saved = JSON.parse(JSON.stringify(s.save()));
+  // Each case in its own folder: the file, and beside it the session `session` as text, or none.
+  const drawn = (name, session, film = play.film(piece, saved, 'game.session.json')) => {
+    const where = path.join(dir, name);
+    fs.mkdirSync(where);
+    if (session !== null) fs.writeFileSync(path.join(where, 'game.session.json'), typeof session === 'string' ? session : JSON.stringify(session));
+    const file = path.join(where, 'game.svg');
+    fs.writeFileSync(file, renderVector(film, { t: 1 }).svg);
+    return { file, beside: slash(path.join(where, 'game.session.json')) };
+  };
+  const ok = await replay(drawn('kept', saved).file, { piece: modulePath, cwd: dir });
+  assert.equal(ok.match, true, ok.detail);
+  assert.deepEqual(ok.manifest.session, { hz: 60, ticks: 6, digest: play.digest(saved.log), file: 'game.session.json' });
+  const refused = async (name, session, pattern, film) => {
+    const { file, beside } = drawn(name, session, film);
+    await assert.rejects(replay(file, { piece: modulePath, cwd: dir }), (e) => pattern(beside).test(e.message));
+  };
+  const moved = { ...saved, log: [[1, 'down', 41, 50]] };
+  await t.test('another log', () => refused('moved', moved, (beside) => new RegExp('^replay: the file was drawn from a session whose log has digest "' + play.digest(saved.log) + '", and ' + beside + ' holds another log, digest ' + play.digest(moved.log) + '; replay it beside the session it was played from$')));
+  await t.test('other ticks', () => refused('longer', { ...saved, ticks: 7 }, (beside) => new RegExp('^replay: the file was drawn from 6 ticks of its session, and ' + beside + ' holds 7$')));
+  await t.test('another piece', () => refused('other', { ...saved, piece: 'other' }, (beside) => new RegExp('^replay: ' + beside + ': session: the session is of piece "other", not play-piece$')));
+  await t.test('not JSON', () => refused('broken', '{', (beside) => new RegExp('^replay: ' + beside + ' is not a session: ')));
+  await t.test('no session beside it', () => refused('missing', null, (beside) => new RegExp('^replay: the file was drawn from the session game\\.session\\.json, and no file of that name is beside it at ' + beside + '; put the session file there$')));
+  await t.test('no session named', () => refused('unnamed', saved, () => /^replay: the file was drawn from a session and names no session file, \{"hz":60,"ticks":6,"digest":"fnv1a32:[0-9a-f]{8}"\}; npm run film and npm run still with --session make one that replay can check$/, play.film(piece, saved)));
+});
+
 test('a PNG from the page is checked against its scale, size and playhead before any browser starts', async (t) => {
   const dir = scratch(t);
   const modulePath = fixturePiece(dir);

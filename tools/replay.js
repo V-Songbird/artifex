@@ -33,6 +33,7 @@ const { renderVector, playheads } = require('../core/render.js');
 const { readMp4 } = require('../core/film.js');
 const { svgManifest } = require('../core/surface-vector.js');
 const { describe } = require('../core/image.js');
+const { film: playFilm, digest } = require('../core/play.js');
 const EXAMPLES = require('../examples/index.js');
 const { loadExternal, callerDirectory, inLibrary, slash, outRoot } = require('./piece-input.js');
 const { bundle, html } = require('./build-page.js');
@@ -117,6 +118,40 @@ function pieceFor(manifest, modulePath = null, cwd = callerDirectory(), loaded =
   if (changed) throw new Error(`replay: ${changed}`);
   return { piece, external };
 }
+
+/**
+ * A file drawn from an interactive piece's saved session, `file` its path:
+ * the session's film, to draw it again, from the session file the manifest
+ * names. That file must sit beside `file` and hold the log the manifest's
+ * digest names, over the ticks it names; anything else is refused by name.
+ * Returns { piece, session }, `session` ({ file, name }) as the page takes it.
+ */
+function sessionFor(file, manifest, piece) {
+  const s = manifest.session;
+  if (!s || typeof s !== 'object' || typeof s.file !== 'string' || !s.file || path.basename(s.file) !== s.file) {
+    throw new Error(`replay: the file was drawn from a session and names no session file, ${JSON.stringify(s)}; npm run film and npm run still with --session make one that replay can check`);
+  }
+  const beside = path.join(path.dirname(file), s.file);
+  let text, saved, film;
+  try { text = fs.readFileSync(beside, 'utf8'); } catch (e) {
+    if (e.code === 'ENOENT') throw new Error(`replay: the file was drawn from the session ${s.file}, and no file of that name is beside it at ${slash(beside)}; put the session file there`);
+    throw e;
+  }
+  try { saved = JSON.parse(text); } catch (e) { throw new Error(`replay: ${slash(beside)} is not a session: ${e.message}`); }
+  try { film = playFilm(piece, saved, s.file); } catch (e) {
+    if (e.name !== 'PieceError') throw e;
+    throw new Error(`replay: ${slash(beside)}: ${e.message}`);
+  }
+  const now = digest(saved.log);
+  if (now !== s.digest) {
+    throw new Error(`replay: the file was drawn from a session whose log has digest ${JSON.stringify(s.digest)}, and ${slash(beside)} holds another log, digest ${now}; replay it beside the session it was played from`);
+  }
+  if (saved.ticks !== s.ticks) throw new Error(`replay: the file was drawn from ${JSON.stringify(s.ticks)} ticks of its session, and ${slash(beside)} holds ${saved.ticks}`);
+  return { piece: film, session: { file: saved, name: s.file } };
+}
+
+/** Makes the page's piece of `session` ({ file, name }) that session's film, as the export drew it. */
+const useSession = (client, session) => evaluate(client, 'window.__artifex.session(' + JSON.stringify(session.file) + ', ' + JSON.stringify(session.name) + '), true');
 
 /** How the images a file names differ from those `piece` declares, naming the first image that differs, or null. */
 function imageChange(saved, piece) {
@@ -1160,7 +1195,7 @@ async function sendBytes(client, bytes, run = evaluate) {
 }
 
 /** A PNG or WebM compared in installed Edge; resolves to what replay() adds for it. */
-async function replayInEdge(type, bytes, manifest, piece, external, browser) {
+async function replayInEdge(type, bytes, manifest, piece, external, browser, session = null) {
   const plan = type === 'png' ? pngPlan(bytes, manifest, piece) : webmPlan(bytes, manifest, piece);
   const call = type === 'png'
     ? '(' + comparePng.toString() + ')(window.__replayBytes, ' + [manifest, plan.heads, plan.frames].map((v) => JSON.stringify(v)).join(', ') + ')'
@@ -1170,6 +1205,7 @@ async function replayInEdge(type, bytes, manifest, piece, external, browser) {
     await waitFor(client, context, 'document.readyState === "complete" && !!window.__artifex');
     context.phase = type + ' replay';
     await sendBytes(client, bytes);
+    if (session) await useSession(client, session);
     const rows = await evaluate(client, call);
     pageErrors(client, context);
     return { browser: context.version.Browser, rows };
@@ -1213,11 +1249,13 @@ async function replay(file, options = {}) {
   const joined = type === 'mp4' && manifest.scenes;
   if (!joined && Array.isArray(options.piece)) throw new Error(`replay: ${file} was drawn by one piece; pass one --piece`);
   if (joined) return saved(await replayScenes(file, bytes, manifest, { ...options, grab }, cwd));
-  const { piece, external } = pieceFor(manifest, options.piece, cwd);
+  let { piece, external } = pieceFor(manifest, options.piece, cwd), session = null;
+  // A file drawn from a saved session is drawn again from the session beside it.
+  if (manifest.session !== undefined) ({ piece, session } = sessionFor(where, manifest, piece));
   if (type === 'svg') return { file, type, manifest, ...replaySvg(bytes, manifest, piece) };
-  if (type === 'png' || type === 'webm') return { file, type, manifest, ...await replayInEdge(type, bytes, manifest, piece, external, options.browser) };
+  if (type === 'png' || type === 'webm') return { file, type, manifest, ...await replayInEdge(type, bytes, manifest, piece, external, options.browser, session) };
   const dump = options.dump ? dumpFolder(bytes, [piece], path.resolve(cwd, options.dump), '') : null;
-  const [result] = await replayMp4(bytes, [{ manifest, piece, dump }], external, options.browser, options.withEdge, grab);
+  const [result] = await replayMp4(bytes, [{ manifest, piece, dump, session }], external, options.browser, options.withEdge, grab);
   return saved({ file, type, manifest, ...result });
 }
 
@@ -1230,8 +1268,8 @@ async function replay(file, options = {}) {
  * framesPlan, has the page decode those frames too, written as PNG files.
  */
 async function replayMp4(bytes, films, external, browser = {}, open = withEdge, grab = null) {
-  const jobs = films.map(({ manifest, piece, scene = null, dump = null }) => ({
-    recipe: JSON.stringify(manifest), first: scene ? scene.frames[0] : 0,
+  const jobs = films.map(({ manifest, piece, scene = null, dump = null, session = null }) => ({
+    recipe: JSON.stringify(manifest), first: scene ? scene.frames[0] : 0, session,
     frames: filmPlan(bytes, manifest, piece, scene && scene.frames),
     plan: soundPlan(bytes, piece),
     span: scene && scene.sound ? { at: scene.sound.at, from: scene.sound.judged[0], to: scene.sound.judged[1], total: scene.total } : null,
@@ -1244,8 +1282,9 @@ async function replayMp4(bytes, films, external, browser = {}, open = withEdge, 
     context.phase = 'film replay';
     await sendBytes(client, bytes);
     const compared = [];
-    for (const { recipe, first, frames, plan, span, dump } of jobs) {
+    for (const { recipe, first, frames, plan, span, dump, session } of jobs) {
       context.phase = 'film replay';
+      if (session) await useSession(client, session);
       const rows = await evaluate(client, '(' + compareFilm.toString() + ')(' + ['window.__replayBytes', recipe, JSON.stringify(frames), first].join(', ') + ')');
       let sound = null;
       if (plan && plan.codec) {
@@ -1351,9 +1390,11 @@ async function replayScenes(file, bytes, manifest, options, cwd) {
   const pages = new Map();
   for (const [k, scene] of manifest.scenes.entries()) {
     const own = modules.find((m) => m.loaded.piece.name === scene.recipe.piece);
-    const { piece, external } = pieceFor(scene.recipe, own ? own.path : null, cwd, own ? own.loaded : null);
+    let { piece, external } = pieceFor(scene.recipe, own ? own.path : null, cwd, own ? own.loaded : null), session = null;
+    // A scene filmed from a saved session is drawn again from the session beside the joined film.
+    if (scene.recipe.session !== undefined) ({ piece, session } = sessionFor(path.resolve(cwd, file), scene.recipe, piece));
     if (!pages.has(external)) pages.set(external, []);
-    pages.get(external).push({ k, manifest: scene.recipe, piece, scene: { ...scene, total } });
+    pages.get(external).push({ k, manifest: scene.recipe, piece, session, scene: { ...scene, total } });
   }
   // Every scene's --dump is checked before the first page opens.
   if (options.dump) {

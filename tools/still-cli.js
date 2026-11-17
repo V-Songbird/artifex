@@ -12,6 +12,7 @@
 //   npm run still -- drift --out drift.svg           an SVG, beside the caller
 //   npm run still -- readout --at 2 --seed 7         the frame holding 2 s of a film, at seed 7
 //   npm run still -- refit --box 405x720             at another box the piece declares
+//   npm run still -- ./game.cjs --session game-1.session.json --at 2   a saved session's frame at 2 s
 //
 // Prints one line naming the file and its recipe.
 
@@ -22,15 +23,15 @@ const EXAMPLES = require('../examples/index.js');
 const { validate, atBox } = require('../core/piece.js');
 const { renderVector, playheads } = require('../core/render.js');
 const { timeoutArg } = require('./check-browser.js');
-const { callerDirectory, shown, quote, hint, resolvePiece } = require('./piece-input.js');
+const { callerDirectory, shown, quote, hint, resolvePiece, sessionInput, keepSessionBeside } = require('./piece-input.js');
 
 const USAGE = 'usage: npm run still -- <piece | ./piece.cjs> [--out file.png|file.svg] [--seed n] [--at s] [--scale k] [--box WxH]'
-  + ' [--edge PATH] [--timeout-ms N] [--headed]';
+  + ' [--session file.session.json] [--edge PATH] [--timeout-ms N] [--headed]';
 /** A refused argument: its cause, then the usage line. */
 const refuse = (cause) => new Error('still: ' + cause + '\n' + USAGE);
 
 function parseArgs(args) {
-  const out = { piece: null, style: null, out: null, seed: null, at: 0, scale: null, box: null, browser: {} };
+  const out = { piece: null, style: null, out: null, seed: null, at: 0, scale: null, box: null, session: null, browser: {} };
   const value = (i) => {
     if (args[i + 1] === undefined || args[i + 1].startsWith('--')) throw refuse(args[i] + ' needs a value');
     return args[i + 1];
@@ -57,6 +58,11 @@ function parseArgs(args) {
       if (!m) throw refuse('--box needs a box as WIDTHxHEIGHT, such as 405x720');
       out.box = { w: Number(m[1]), h: Number(m[2]) };
     }
+    // An interactive piece's saved session; stillTarget reads and checks it.
+    else if (a === '--session') {
+      if (out.session) throw refuse('give --session only once');
+      out.session = value(i++);
+    }
     else if (a === '--edge') out.browser.edge = value(i++);
     else if (a === '--timeout-ms') out.browser.timeoutMs = timeoutArg(value(i++), refuse, { max: 3600000 });
     else if (a === '--headed') out.browser.headed = true;
@@ -80,8 +86,17 @@ function parseArgs(args) {
  * with where the style's guide and mark functions are, since a style is no piece.
  */
 function stillTarget(options, cwd = callerDirectory()) {
-  const { name, external, file } = resolvePiece(options, cwd, refuse, '.png');
-  let piece = validate(external ? external.piece : EXAMPLES[name]);
+  const resolved = resolvePiece(options, cwd, refuse, '.png');
+  const { name, external } = resolved;
+  let piece = validate(external ? external.piece : EXAMPLES[name]), file = resolved.file, session = null;
+  // A saved session's frame is a frame of its film, one a tick, named after the session.
+  if (options.session) {
+    if (options.box) throw refuse('give --box or --session, not both: a session plays at the box it was played at');
+    session = sessionInput(options, cwd, refuse, piece, file);
+    piece = session.film;
+    file = session.output;
+  }
+  if (piece.play && options.at !== 0) throw refuse(`${name} is interactive, so --at reads a saved session's time; pass --session <file> as the page's save session wrote it`);
   // A box the piece does not declare is refused by name, with the boxes it takes.
   if (options.box) {
     try { piece = atBox(piece, options.box); } catch (e) { throw refuse(e.message.replace(/^atBox: /, '')); }
@@ -91,7 +106,7 @@ function stillTarget(options, cwd = callerDirectory()) {
   const heads = playheads(piece), frame = Math.floor(options.at * (piece.time ? piece.time.hz : 0) + 1e-6);
   if (!piece.time && options.at !== 0) throw refuse(`${name} is a still; --at 0 is its one frame`);
   if (frame >= heads.length) throw refuse(`--at ${options.at} is outside ${name}'s ${heads.length / piece.time.hz} s`);
-  return { name, external, piece, file, t: heads[frame] };
+  return { name, external, piece, file, t: heads[frame], ...(session && { session }) };
 }
 
 /** Draw `target`'s frame: resolves to { bytes, manifest }. `edge` stands in for withEdge in tests. */
@@ -102,7 +117,8 @@ async function drawStill(target, options, edge) {
     return { bytes: Buffer.from(r.svg, 'utf8'), manifest: r.manifest };
   }
   const width = target.piece.size.w * (options.scale ?? 1);
-  return require('./styles.js').pngInEdge(target.external, target.name, seed, target.t, width, options.browser, options.box, edge, 'still');
+  const session = target.session ? { file: target.session.file, name: target.session.name } : null;
+  return require('./styles.js').pngInEdge(target.external, target.name, seed, target.t, width, options.browser, options.box, edge, 'still', session);
 }
 
 async function main(args = process.argv.slice(2), draw = drawStill, cwd = callerDirectory()) {
@@ -112,6 +128,8 @@ async function main(args = process.argv.slice(2), draw = drawStill, cwd = caller
   const { bytes, manifest } = await draw(target, options);
   fs.mkdirSync(path.dirname(target.file), { recursive: true });
   fs.writeFileSync(target.file, bytes);
+  // Replay reads a session's frame beside the session it was played from.
+  if (target.session) keepSessionBeside(target.session);
   // A film's frame says which one it is and where the whole film comes from.
   const frame = target.piece.time ? `, the frame at ${options.at} s; npm run film saves the whole film` : '';
   // Replay finds a registered example itself, and needs to be told an external piece.

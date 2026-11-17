@@ -254,9 +254,48 @@ const FIELDS = {
        + 'digest, source and rights, so replay refuses another image. Only a surface '
        + 'with pixels can show it: an SVG holds the marks alone.',
   },
+
+  play: {
+    required: false,
+    default: () => null,
+    check: checkPlay,
+    doc: 'null, or an interactive piece: { hz, inputs, step, describe }. step(state, '
+       + 'inputs, tick, R) advances one tick and is the only code that may change the '
+       + 'state after the build; inputs are { kind: down | move | up, x, y } in design '
+       + 'units or { kind: key, key, down }; R is the addressed source of the seed. hz, '
+       + 'ticks a second, defaults to 60; inputs lists pointer, key or both, both by '
+       + 'default; describe(state) returns one sentence of the state for a screen '
+       + 'reader. draw gets the session time in seconds, tick / hz. A session is a pure '
+       + 'function of seed, parameters and the input log it records, so a saved session '
+       + 'makes its film and stills again. Takes no time, sound or preview.',
+  },
 };
 
 const OUTPUTS = ['raster', 'vector'];
+// What a piece with play may listen to.
+const INPUTS = ['pointer', 'key'];
+
+/** Why a value is not a play declaration, or null when it is one. */
+function checkPlay(v) {
+  if (v === null) return null;
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return 'must be null or { hz, inputs, step, describe }';
+  const extra = Object.keys(v).filter((k) => !['hz', 'inputs', 'step', 'describe'].includes(k));
+  if (extra.length) return `unknown key(s) in play: ${extra.join(', ')}`;
+  if (v.hz !== undefined && !(Number.isInteger(v.hz) && v.hz >= 1 && v.hz <= 240)) {
+    return 'play.hz must be a whole number of ticks a second from 1 to 240';
+  }
+  const listed = v.inputs === undefined || (Array.isArray(v.inputs) && v.inputs.length > 0
+    && v.inputs.every((k) => INPUTS.includes(k)) && new Set(v.inputs).size === v.inputs.length);
+  if (!listed) return `play.inputs must list one or both of ${INPUTS.join(', ')}, each once`;
+  if (typeof v.step !== 'function') return 'play.step must be a function (state, inputs, tick, R)';
+  if (v.describe != null && typeof v.describe !== 'function') return 'play.describe must be a function (state) returning one sentence';
+  return null;
+}
+
+// Where a session's film keeps what its manifest records of the session, on
+// the state its own state() returns: { hz, ticks, digest, file }. A symbol, so
+// no piece's own state key can be read as one. Set by core/play.js film().
+const SESSION = Symbol('artifex session');
 
 class PieceError extends Error {
   constructor(msg) { super(msg); this.name = 'PieceError'; }
@@ -294,6 +333,14 @@ function validate(piece) {
   }
   if (out.preview && out.outputs.includes('vector')) {
     throw new PieceError('preview: webgpu-pixels requires raster-only outputs');
+  }
+  if (out.play) {
+    const p = out.play;
+    out.play = { hz: p.hz === undefined ? 60 : p.hz, inputs: (p.inputs || INPUTS).slice(), step: p.step, describe: p.describe || null };
+    // A session is as long as somebody plays it, and one draw serves the live page and every export.
+    if (out.time) throw new PieceError('play: an interactive piece runs as long as its session, so it takes no time; drop time, or drop play for a film');
+    if (out.sound) throw new PieceError('sound: a piece with play has no fixed length for a soundtrack to fill; drop sound');
+    if (out.preview) throw new PieceError('preview: a piece with play draws live and in its exports with one draw, so it takes no GPU preview; drop preview');
   }
   // A soundtrack is as long as the film, and a still has no film.
   if (out.sound && !out.time) {
@@ -463,6 +510,8 @@ function frameIndex(piece, t) {
  * motion slide. A still quantises to 0.
  */
 function frameT(piece, t) {
+  // A piece with play is drawn at its session time in seconds, between ticks too.
+  if (piece.play) return t;
   if (!piece.time) return 0;
   return frameIndex(piece, t) / frameDen(piece);
 }
@@ -474,6 +523,11 @@ function frameT(piece, t) {
  * do not need a second copy of its duration or draw rate.
  */
 function clockAt(piece, t) {
+  // A session's clock: the tick its time falls in, and the tick rate.
+  if (piece.play) {
+    const tick = Math.floor(t * piece.play.hz + 1e-9);
+    return { frame: tick, tick, seconds: t, hz: piece.play.hz };
+  }
   const frames = frameCount(piece);
   const frame = frameIndex(piece, t);
   const clock = {
@@ -586,6 +640,8 @@ function manifest(piece, solved) {
   if (piece.reframe) m.reframe = piece.reframe.map(keyOf);
   // So is every image it was drawn with, named by digest and never by pixels.
   if (piece.images) m.images = image.describe(piece.images);
+  // And a session's film names the session it was played from, by its log's digest.
+  if (solved.state[SESSION]) m.session = { ...solved.state[SESSION] };
   return m;
 }
 
@@ -633,6 +689,6 @@ function summarise(state) {
 }
 
 module.exports = {
-  FIELDS, OUTPUTS, VERSION, PieceError, validate, atBox, parseReframe,
+  FIELDS, OUTPUTS, INPUTS, SESSION, VERSION, PieceError, validate, atBox, parseReframe,
   frameT, frameCount, frameDen, frameIndex, clockAt, solve, summarise, manifest,
 };
