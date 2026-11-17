@@ -156,7 +156,7 @@ test('site: a card and a page per built-in style, split apart from the film, eac
     assert.equal(!!s.poster, html.includes('src="posters/style-' + s.name + '.webp"'), s.name + ' shows its poster when it has one');
     assert.ok(Object.keys(s.params).length, s.name + ' declares parameters');
     const page = text('style-' + s.name + '.html');
-    assert.ok(!/<!-- [a-z]+ -->/.test(page), s.name + ': every marker is filled');
+    assert.ok(!page.includes('<!-- style:'), s.name + ': every marker is filled');
     assert.ok(page.includes('Use the Artifex style `' + s.name + '`') && page.includes(s.title), s.name + ': the prompt names it');
     for (const k of Object.keys(s.params)) assert.ok(page.includes('data-param="' + k + '"'), s.name + ': a slider for ' + k);
     // The card loads and validates from core.js and its scripts, as the worker loads it.
