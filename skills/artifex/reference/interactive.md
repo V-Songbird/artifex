@@ -99,13 +99,16 @@ or grows each frame. Measure a played frame in the page before adding detail.
 
 ## Check it from a saved session
 
-Play it in the page (`npm run page`), then **save session**. Everything that
-judges a film then judges the session:
+Play it in the page (`npm --prefix "<library root>" run page -- "./my-piece.cjs"`),
+then **save session**. Everything that judges a film then judges the session:
 
-- `npm run film -- <piece> --session <file>` makes its film with sound, and
-  `npm run replay` checks it.
-- `npm run still -- <piece> --session <file> --at <seconds>` makes one frame.
-- `npm run seeds -- <piece> --session <file>` lays its frames out as a time
-  strip, so you can see every change grow and every reaction land.
+- `npm --prefix "<library root>" run film -- "./my-piece.cjs" --session <file>`
+  makes its film with sound, and `npm --prefix "<library root>" run replay -- <film>`
+  checks it.
+- `npm --prefix "<library root>" run still -- "./my-piece.cjs" --session <file> --at <seconds>`
+  makes one frame.
+- `npm --prefix "<library root>" run seeds -- "./my-piece.cjs" --frames 12 --session <file> --sound --png`
+  lays its frames out as a time strip, so you can see every change grow and
+  every reaction land.
 
 Look at the strip at readable size before calling the piece done.
