@@ -1,8 +1,8 @@
 name: Site
 
-# Started by hand only: nothing here runs on a push. The owner enables GitHub
-# Pages for the repository (source: GitHub Actions), sets any domain, and
-# starts each run.
+# Started by hand only: nothing here runs on a push. It checks and builds the
+# showcase site and deploys nothing yet; the site will be hosted on
+# Cloudflare, not GitHub Pages.
 on:
   workflow_dispatch:
 
@@ -56,24 +56,3 @@ jobs:
         run: npm run site
       - name: Run the site checks
         run: npm run site:check
-      - name: Upload the site as the Pages artifact
-        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
-        with:
-          path: out/site
-
-  deploy:
-    name: Deploy to GitHub Pages
-    needs: [browser, build]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    # Only this job may publish: it writes the Pages deployment and proves who it is to Pages.
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy the uploaded site
-        id: deployment
-        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
