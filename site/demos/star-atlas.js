@@ -52,7 +52,7 @@ function draw(g, s) {
   ecliptic(g, curve);
   label(g, 'ECLIPTIC', 150, 208, 9, 'rgba(214, 178, 90, 0.85)');
 
-  const field = starField(R, 'field', FRAME, 1100);
+  const field = starField(R, 'field', FRAME, (s.params && s.params.stars) ?? 1100);
 
   // The constellation: the subject's outline carried by named points.
   const b = bird(470, 470, 262, -0.04);
@@ -123,4 +123,8 @@ function draw(g, s) {
   caption(g, 'STAR ATLAS', font, C.label, 62, 930);
 }
 
-module.exports = { name: 'star-atlas', size: { w: 1000, h: 1000 }, seed: 2026, draw };
+const params = {
+  stars: { min: 300, max: 1900, value: 1100, meaning: 'How many field stars fill the chart round the constellation: a sparse sky to a crowded one' },
+};
+
+module.exports = { name: 'star-atlas', size: { w: 1000, h: 1000 }, seed: 2026, params, draw };

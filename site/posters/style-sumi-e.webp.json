@@ -1,0 +1,23 @@
+{
+  "recipe": {
+    "piece": "demos/sumi-e.js",
+    "seed": 1,
+    "t": 1,
+    "width": 600,
+    "height": 600,
+    "type": "image/webp",
+    "quality": 0.82
+  },
+  "sources": {
+    "../skills/artifex/styles/kit.js": "30ffe34ac03451d65646e2f5d3870e987e460fcd79710fa4b91629fe87fdd797",
+    "../skills/artifex/styles/sumi-e.js": "8f32756a95b12b450dcb971ae843f2c1dc2cae21671f53736653aab53691ed77",
+    "core/geom.js": "e3e21ed547d90f2038649ddfa928c111f6eeb744d420ddbe27554c08eab2f6a8",
+    "core/layer.js": "e049fe4e75e4e65a50af36d394c3fa718ff4a50621f9f6bc0ab05c792ec50d1d",
+    "core/rand.js": "8d8d11109d8b6271812535de899010f4c0ef90f0d48b58a293a31fa95306f203",
+    "core/robust-predicates.js": "3116ba65b729ab1cc4ad9e37a48625eb2a6fc884a72a36d46bdeb0e20bbcbbbb",
+    "core/stroke-font.js": "7b62854d15db56b58820f7c144dd6336819afb220e5df4bd5e46ae2443dd12a9",
+    "demos/subject.js": "8869f43d8ac98e7aadcc11378b9f23cac1a885d54bb8366ffd2a420bc34f6bed",
+    "demos/sumi-e.js": "8dad5dce1149ae82bfc58caa283e4b01843639e5564f68b529ed3ce1127474af"
+  },
+  "poster": "447304af6cddb27bde568102a1cc817aea22c19544d7ffd87881e117f989412f"
+}

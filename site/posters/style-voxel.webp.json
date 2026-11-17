@@ -1,0 +1,22 @@
+{
+  "recipe": {
+    "piece": "demos/voxel.js",
+    "seed": 1,
+    "t": 1,
+    "width": 600,
+    "height": 600,
+    "type": "image/webp",
+    "quality": 0.82
+  },
+  "sources": {
+    "../skills/artifex/styles/kit.js": "30ffe34ac03451d65646e2f5d3870e987e460fcd79710fa4b91629fe87fdd797",
+    "../skills/artifex/styles/voxel.js": "e1329d52e0d2cbbcad7d011edcdd25721fb1fa51fa834caa6415eea05554faa4",
+    "core/geom.js": "e3e21ed547d90f2038649ddfa928c111f6eeb744d420ddbe27554c08eab2f6a8",
+    "core/layer.js": "e049fe4e75e4e65a50af36d394c3fa718ff4a50621f9f6bc0ab05c792ec50d1d",
+    "core/rand.js": "8d8d11109d8b6271812535de899010f4c0ef90f0d48b58a293a31fa95306f203",
+    "core/robust-predicates.js": "3116ba65b729ab1cc4ad9e37a48625eb2a6fc884a72a36d46bdeb0e20bbcbbbb",
+    "core/stroke-font.js": "7b62854d15db56b58820f7c144dd6336819afb220e5df4bd5e46ae2443dd12a9",
+    "demos/voxel.js": "47e05b40f3ca80ffe8316358bf12d3518c904763f6665fc322e8830fc22c9d48"
+  },
+  "poster": "ed673602c02fe028d43a24a5371f196efdb28f1d5440e39782975c52ec130ff9"
+}

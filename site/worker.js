@@ -1,7 +1,8 @@
-// The stage's drawing worker. A worker-tier shot draws here, on the stage canvas
+// The site's drawing worker. A worker-tier shot draws here, on the stage canvas
 // the page handed over as an OffscreenCanvas, so a heavy frame never holds up
-// the scroll. It loads the same core.js and shot scripts the page does, and
-// answers each draw with its key and time, or with the error that stopped it.
+// the scroll; the product page's style cards and style pages draw here too.
+// It loads the same core.js and scripts the page does, and answers each draw
+// with its key and time, or with the error that stopped it.
 'use strict';
 
 importScripts('core.js');
@@ -21,15 +22,54 @@ function solved(piece, d) {
   return solves.get(key);
 }
 
+function load(d) {
+  const missing = d.scripts.filter((src) => !loaded.has(src));
+  if (missing.length) { importScripts(...missing); missing.forEach((src) => loaded.add(src)); }
+  if (!pieces.has(d.id)) pieces.set(d.id, P.validate(req(d.id)));
+}
+
+// The product page's style cards and style pages: a draw on a canvas of the worker's own, at playhead 1, its
+// marks counted; with `every`, the canvas is copied every that many marks, so the page can play the marks
+// being laid. It answers with the picture, the copies, the count and the time, forced to rasterize.
+const MARKS = ['fill', 'stroke', 'fillRect', 'strokeRect', 'fillText', 'strokeText', 'drawImage', 'putImageData'];
+function lay(d) {
+  load(d);
+  const piece = pieces.get(d.id), state = solved(piece, d), c = new OffscreenCanvas(d.w, d.h), g = c.getContext('2d'), frames = [];
+  let marks = 0, every = d.every;
+  for (const name of MARKS) {
+    const mark = g[name];
+    g[name] = function () {
+      const out = mark.apply(this, arguments);
+      if (++marks && every && marks % every === 0) {
+        const f = new OffscreenCanvas(d.w, d.h);
+        f.getContext('2d').drawImage(c, 0, 0);
+        frames.push(f.transferToImageBitmap());
+        // A draw of more marks than the page guessed keeps at most 48 copies: every other one goes, and the gap doubles.
+        if (frames.length >= 48) { for (let i = 0; i < frames.length; i += 2) frames[i].close(); frames.splice(0, frames.length, ...frames.filter((f, i) => i % 2)); every *= 2; }
+      }
+      return out;
+    };
+  }
+  const a = performance.now();
+  R.drawFrame(g, piece, state, 1, { scale: d.scale });
+  const sink = new OffscreenCanvas(1, 1).getContext('2d');
+  sink.drawImage(c, 0, 0, 1, 1, 0, 0, 1, 1);
+  sink.getImageData(0, 0, 1, 1);
+  const ms = performance.now() - a, image = c.transferToImageBitmap();
+  postMessage({ key: d.key, ms, marks, frames, image }, frames.concat(image));
+}
+
 onmessage = (event) => {
   const m = event.data;
   if (m.canvas) { canvases[m.slot] = { canvas: m.canvas, g: null }; return; }
   if (m.release) { canvases[m.slot] = null; return; }
+  if (m.lay) {
+    try { lay(m.lay); } catch (error) { postMessage({ key: m.lay.key, error: String(error && error.message || error) }); }
+    return;
+  }
   const d = m.draw;
   try {
-    const missing = d.scripts.filter((src) => !loaded.has(src));
-    if (missing.length) { importScripts(...missing); missing.forEach((src) => loaded.add(src)); }
-    if (!pieces.has(d.id)) pieces.set(d.id, P.validate(req(d.id)));
+    load(d);
     // A piece that declares boxes draws at the box the stage shows it at.
     const piece = d.box ? P.atBox(pieces.get(d.id), d.box) : pieces.get(d.id), slot = canvases[m.slot];
     if (!slot) throw new Error('no canvas for slot ' + m.slot);

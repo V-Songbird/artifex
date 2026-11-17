@@ -31,6 +31,7 @@ const WING_TOP = [[0.26, 0.1], [0.12, 0.26], [-0.12, 0.34], [-0.4, 0.3], [-0.66,
 // dark green and the grey they had.
 function draw(g, s) {
   const R = rng(s.seed);
+  const hatch = (s.params && s.params.hatch) ?? 9;
   const BG = GROUNDS[(s.seed + 1) % GROUNDS.length];
   const solid = (pts) => solidOn(g, pts, BG);
   // From folded (1.0) to wide (1.4): from 1.0 up, the wing reaches past the
@@ -187,7 +188,7 @@ function draw(g, s) {
     const shell = [...inner, ...outer.reverse()].map(X);
     sectionFill(g, shell, BG, -Math.PI / 4, 6);
   }
-  sectionFill(g, section, BG, Math.PI / 4, 9, cross);
+  sectionFill(g, section, BG, Math.PI / 4, hatch, cross);
   for (const s of [1, -1]) {
     const x = X([s * 0.08, 0])[0];
     solid([[x - 3, X([0, bodySpan[1]])[1]], [x + 3, X([0, bodySpan[1]])[1]], [x + 3, foot[1]], [x - 3, foot[1]]]);
@@ -240,4 +241,8 @@ function draw(g, s) {
   titleCell(g, 800, 922, 'MATERIAL', 'PAPER 120 GSM', 11);
 }
 
-module.exports = { name: 'cad', size: { w: 1000, h: 1000 }, seed: 2026, draw };
+module.exports = {
+  name: 'cad', size: { w: 1000, h: 1000 }, seed: 2026,
+  params: { hatch: { min: 4, max: 20, value: 9, meaning: 'Spacing of section A-A\'s hatch lines: low packs the cut face dense and dark, high spreads a few wide lines' } },
+  draw,
+};

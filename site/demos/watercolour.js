@@ -37,7 +37,7 @@ function draw(g, s) {
 
   // Sky: a wash graded down from the top, ultramarine flowing into it.
   const sky = wash(g, R, 'sky', (u) => blob(430 + 60 * u, 90 + 40 * R('sky', 'top', Math.round(u * 99)) + 40 + 110 * u, 380 + 40 * u, 40 + 110 * u, 30), P.cerulean,
-    { layers: 30, alpha: 0.022, spread: 0.13, second: P.ultramarine, share: 0.25, mottle: 0 });
+    { layers: 30, alpha: 0.022, spread: (s.params && s.params.water) ?? 0.13, second: P.ultramarine, share: 0.25, mottle: 0 });
   granulate(g, R, 'skyg', sky, P.ultramarine, 1600, 1.3);
   bloom(g, R, 'bloom', blob(690, 190, 70, 48, 20), P.ultramarine);
 
@@ -121,4 +121,8 @@ function draw(g, s) {
   caption(g, 'WATERCOLOUR', font, 'rgba(80, 76, 72, 0.75)');
 }
 
-module.exports = { name: 'watercolour', size: { w: 1000, h: 1000 }, seed: 2026, draw };
+const params = {
+  water: { min: 0.08, max: 0.22, value: 0.13, meaning: 'How far the wet sky wash spreads: tighter layered edges to a soft, feathered wet edge' },
+};
+
+module.exports = { name: 'watercolour', size: { w: 1000, h: 1000 }, seed: 2026, params, draw };

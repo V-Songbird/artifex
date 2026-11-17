@@ -30,6 +30,7 @@ function draw(g, s) {
   const dist = (pts, x, y) => pts.reduce((m, p) => Math.min(m, Math.hypot(p[0] - x, p[1] - y)), Infinity);
 
   // Background swirls: a shuffled, jittered grid of dabs.
+  const stroke = (s.params && s.params.stroke) ?? 17;
   for (const [x, y, i] of scatter(R, 'bg', -20, -20, 1044, 1044, 19, 18)) {
     const warp = (fbm(R, x / 420, y / 420, 2, 'warp') - 0.5) * 1.6;
     const dp = dist(pale, x, y); const dr = dist(red, x, y); const d = Math.min(dp, dr);
@@ -41,7 +42,7 @@ function draw(g, s) {
     v = Math.min(v, 0.999);
     let colour = ramp(FIRE, v);
     if (R('bg', 'gold', i) < 0.015) colour = '#e9b949';
-    dab(g, x, y, flow(R, 'flow', x, y, VORTEX), 17 + R('bg', 'l', i) * 10, 6 + R('bg', 'w', i) * 3, colour);
+    dab(g, x, y, flow(R, 'flow', x, y, VORTEX), stroke + R('bg', 'l', i) * 10, 6 + R('bg', 'w', i) * 3, colour);
   }
 
   // The bird: dabs sampled inside each part, turned to follow its form.
@@ -87,4 +88,8 @@ function draw(g, s) {
   caption(g, 'IMPASTO', font, 'rgba(90, 50, 30, 0.8)');
 }
 
-module.exports = { name: 'impasto', size: { w: 1000, h: 1000 }, seed: 2026, draw };
+const params = {
+  stroke: { min: 10, max: 24, value: 17, meaning: 'Length of the background strokes: short choppy dabs to long strokes that sweep the swirls' },
+};
+
+module.exports = { name: 'impasto', size: { w: 1000, h: 1000 }, seed: 2026, params, draw };

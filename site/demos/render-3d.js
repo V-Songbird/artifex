@@ -67,7 +67,7 @@ const solid = (x, y, z) => Math.min(bird(turnX(x, z), y - LIFT, turnZ(x, z)), pe
 const scene = (x, y, z) => Math.min(solid(x, y, z), y);
 
 // One sample: returns [r, g, b] in linear light and the id it saw.
-function sample(cam, sx, sy, screenV, out) {
+function sample(cam, sx, sy, screenV, out, hardness) {
   const [ox, oy, oz] = cam.ro;
   const d = ray(cam, sx, sy);
   const sky = backdrop(SKY_TOP, SKY_LOW, screenV);
@@ -101,7 +101,7 @@ function sample(cam, sx, sy, screenV, out) {
   out.id = id;
   const v = [-d[0], -d[1], -d[2]];
   const lambert = Math.max(0, n[0] * KEY[0] + n[1] * KEY[1] + n[2] * KEY[2]);
-  const shadow = lambert > 0 ? softShadow(solid, x + n[0] * 0.004, y + n[1] * 0.004, z + n[2] * 0.004, KEY, BOUND) : 0;
+  const shadow = lambert > 0 ? softShadow(solid, x + n[0] * 0.004, y + n[1] * 0.004, z + n[2] * 0.004, KEY, BOUND, { k: hardness }) : 0;
   const ao = occlusion(scene, x, y, z, n[0], n[1], n[2]);
   const col = lit(n, v, albedo, { spec: SPEC[id], shine: SHINE[id], fresnel: id > 1 }, shadow, ao);
   return id === 1 ? fog(col, sky, t) : col;
@@ -109,14 +109,19 @@ function sample(cam, sx, sy, screenV, out) {
 
 function draw(g, s) {
   const R = rng(s.seed);
+  const hardness = (s.params && s.params.hardness) ?? 9;
   stage(TOYS[Math.floor(R('look', 'toy') * TOYS.length)], -0.45 + R('pose', 'yaw') * 1.25);
   const [width, height] = pixelSize(g, W, H);
   const cam = camera([2.25, 1.55, 3.45], [0.05, 0.62, 0], 3.4);
   raster(g, width, height, (fx, fy, info) => {
     const sx = (fx / width) * 2 - 1; const sy = 1 - (fy / height) * 2;
-    return sample(cam, sx, sy * (height / width), fy / height, info).map((c) => encode(c));
+    return sample(cam, sx, sy * (height / width), fy / height, info, hardness).map((c) => encode(c));
   });
   caption(g, '3D', font, 'rgba(70, 64, 80, 0.8)');
 }
 
-module.exports = { name: 'render-3d', size: { w: 1000, h: 1000 }, seed: 2026, draw };
+module.exports = {
+  name: 'render-3d', size: { w: 1000, h: 1000 }, seed: 2026,
+  params: { hardness: { min: 2, max: 40, value: 9, meaning: 'Hardness of the key light\'s soft shadows: low spreads a wide, soft penumbra, high cuts the shadows sharp' } },
+  draw,
+};

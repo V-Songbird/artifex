@@ -41,7 +41,7 @@ test('cad shows all four grounds in any four consecutive seeds, and keeps seed 1
 // Only the random names in `chosen` follow the seed; every other name, such as
 // pen wobble, grain or texel noise, is held at one seed, so the digest changes
 // only through what the seed chooses.
-function drawnDigest(module, seed, chosen) {
+function drawnDigest(module, seed, chosen, params) {
   const font = require('../../core/stroke-font.js');
   const rand = require('../../core/rand.js');
   // The demo and the style's marks both load afresh, so both read the stand-in rng.
@@ -67,15 +67,31 @@ function drawnDigest(module, seed, chosen) {
   });
   const text = font.text;
   font.text = () => {};
-  try { style.draw(g, { seed, t: 0.5 }); } finally { font.text = text; }
+  try { style.draw(g, { seed, t: 0.5, ...(params && { params }) }); } finally { font.text = text; }
   return hash.digest('hex');
 }
+
+test('every style demo declares parameters for its page, each moving the picture, and its default drawing none', () => {
+  const P = require('../../core/piece.js');
+  const lazy = [];
+  for (const module of fs.readdirSync(DEMOS).filter((f) => f.endsWith('.js') && f !== 'subject.js')) {
+    const demo = P.validate(require(path.join(DEMOS, module)));
+    const names = Object.keys(demo.params);
+    if (!names.length) { lazy.push(module + ' declares none'); continue; }
+    const at = (name, value) => drawnDigest(module, 2026, [], Object.fromEntries(names.map((k) => [k, k === name ? value : demo.params[k].value])));
+    const plain = drawnDigest(module, 2026, []);
+    if (at(names[0], demo.params[names[0]].value) !== plain) lazy.push(module + ' draws otherwise at its declared values than with no parameters');
+    for (const name of names) if (at(name, demo.params[name].min) === at(name, demo.params[name].max)) lazy.push(module + ': ' + name + ' draws the same at its min and max');
+  }
+  assert.deepEqual(lazy, []);
+});
 
 test('each style whose seed picks pose, palette or composition draws differently at two seeds', () => {
   // The names each style draws its choices from; noise alone never counts.
   const chosen = {
     'render-3d.js': ['look', 'pose'], 'cad.js': ['look', 'pose'], 'voxel.js': ['look', 'crown', 'bird', 'cloud'],
     'doodle.js': ['look', 'star'], 'pixel-art.js': ['look', 'moon'], 'kandinsky.js': ['look', 'place'],
+    'backlit-silhouette.js': ['look', 'pose'], 'flat-cartoon.js': ['look', 'pose'], 'gouache.js': ['look', 'pose', 'place'],
   };
   const same = Object.entries(chosen).filter(([module, names]) => drawnDigest(module, 1, names) === drawnDigest(module, 2, names)).map(([module]) => module);
   assert.deepEqual(same, [], 'these styles draw the same picture at seeds 1 and 2, their noise and printed text aside');
@@ -277,14 +293,14 @@ test('impasto keeps the caption on a pale ground at seeds 1-9', () => {
   }
 });
 
-test('the wall hangs every built-in style that has a site demo, and site.md names the ones without', () => {
+test('every built-in style has a site demo for its card, the wall hangs sixteen of them, and site.md names the rest', () => {
   const { HUNG } = require('../pieces/hang.js');
   const builtins = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'skills', 'artifex', 'styles', 'builtin.json'), 'utf8')).map((s) => s.name);
   const demos = fs.readdirSync(DEMOS).filter((f) => f.endsWith('.js') && f !== 'subject.js').map((f) => f.slice(0, -3));
-  assert.deepEqual([...demos].sort(), builtins.filter((name) => demos.includes(name)).sort(), 'every site demo is named after a built-in style');
+  assert.deepEqual([...demos].sort(), [...builtins].sort(), 'every built-in style has a site demo, named after it, and no other demo exists');
   // The Kandinsky on the wall is the art shot's own painting; every other work is its style's demo.
-  assert.deepEqual([...HUNG].sort(), [...demos].sort(), 'a style with a demo hangs, and nothing else does');
-  const bare = builtins.filter((name) => !demos.includes(name));
+  assert.ok(HUNG.every((name) => demos.includes(name)), 'every style on the wall has a demo');
+  const bare = builtins.filter((name) => !HUNG.includes(name));
   const doc = fs.readFileSync(path.join(__dirname, '..', '..', 'docs', 'knowledge', 'site.md'), 'utf8');
   const said = /every style in \[`builtin\.json`\]\([^)]*\) but ([^,]*(?:, [^,]*?)*?), in the order/.exec(doc);
   assert.ok(said, 'site.md says which built-in styles the wall leaves out');

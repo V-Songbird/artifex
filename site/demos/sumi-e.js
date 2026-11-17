@@ -70,7 +70,7 @@ function draw(g, s) {
   // The plum: an old limb in one dry, heavy stroke, angular young twigs in
   // quick dark ones, knots where they leave the wood.
   const limb = [[10, 1000], [110, 900], [230, 820], [330, 742], [470, 688], [610, 650], [720, 624]];
-  brush(g, R, 'limb', limb, { w: 62, tone: 0.95, dry: 0.4, grade: 0.65, press: PRESS.press, bristles: 56 });
+  brush(g, R, 'limb', limb, { w: 62, tone: 0.95, dry: (s.params && s.params.dry) ?? 0.4, grade: 0.65, press: PRESS.press, bristles: 56 });
   brush(g, R, 'limbhi', [[60, 960], [200, 850], [330, 760]], { w: 26, tone: 0.95, dry: 0.45, grade: 0.1, press: PRESS.blunt, bristles: 20 });
   const twigs = [
     [[700, 628], [800, 596], [880, 560], [990, 548]],
@@ -123,4 +123,8 @@ function draw(g, s) {
   caption(g, 'SUMI-E', font, ink(0.7), 880, 950);
 }
 
-module.exports = { name: 'sumi-e', size: { w: 1000, h: 1000 }, seed: 2026, draw };
+const params = {
+  dry: { min: 0.1, max: 0.7, value: 0.4, meaning: 'How soon the brush runs dry along the old plum limb: solid wet ink to a long streak of bare hairs' },
+};
+
+module.exports = { name: 'sumi-e', size: { w: 1000, h: 1000 }, seed: 2026, params, draw };

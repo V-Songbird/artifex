@@ -27,6 +27,13 @@ module.exports = {
   seed: 1,
   // The product page's pieces: the hero, the teaching piece the widgets draw, and the interface sounds.
   home: { hero: './pieces/hero.cjs', teach: './pieces/tides.cjs', ui: './pieces/ui.cjs' },
+  // A card and a page per built-in style, each drawn by its demo. The styles whose card draw took over 100 ms on
+  // either reference show a poster drawn from the same recipe until the live card is ready.
+  styles: {
+    demos: './demos',
+    posters: Object.fromEntries(['render-3d', 'voxel', 'impasto', 'watercolour', 'sumi-e', 'star-atlas', 'light-painting', 'pen-and-pencil', 'manga', 'gouache']
+      .map((name) => [name, './posters/style-' + name + '.webp'])),
+  },
   shots: [
     { name: 'intro', piece: './pieces/intro.cjs', heard: './pieces/intro-heard.cjs', text: 'A plotter pen writes the name, one line at a time. Scroll back and it lifts every line again: each frame is a function of a seed and a playhead.' },
     { name: 'bloom', piece: './pieces/bloom.cjs', seam: true, text: 'A wide brush of clean water crosses the last line while its ink is still wet, and the ink blooms out into the water along its current.' },

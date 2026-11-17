@@ -50,12 +50,12 @@ const BIRD = {
   eye: '#1d1624',
 };
 
-function textures(R, bloom) {
+function textures(R, bloom, patch) {
   return {
     grass: grassTexture(R),
     dirt: dirtTexture(R),
     log: logTexture(R),
-    bloom: speckle(R, 'bloom', bloom, 2.5),
+    bloom: speckle(R, 'bloom', bloom, patch),
     cream: speckle(R, 'cream', BIRD.cream, 4),
     coral: bands(R, 'coral', BIRD.coral, 3),
     beak: speckle(R, 'beak', BIRD.beak, 2),
@@ -100,9 +100,10 @@ function island(R) {
 
 function draw(g, s) {
   const R = rng(s.seed);
+  const patch = (s.params && s.params.patch) ?? 2.5;
   const hour = SKIES[Math.floor(R('look', 'sky') * SKIES.length)];
   const bloom = BLOOMS[Math.floor(R('look', 'bloom') * BLOOMS.length)];
-  const tex = textures(R, bloom);
+  const tex = textures(R, bloom, patch);
 
   // Background: open daylight, cloud slabs drifting by the seed, far islands lost in haze.
   const sky = g.createLinearGradient(0, 0, 0, W);
@@ -147,6 +148,10 @@ function draw(g, s) {
   caption(g, 'VOXEL', font, 'rgba(40, 70, 110, 0.85)');
 }
 
-module.exports = { name: 'voxel', size: { w: 1000, h: 1000 }, seed: 2026, draw };
+module.exports = {
+  name: 'voxel', size: { w: 1000, h: 1000 }, seed: 2026,
+  params: { patch: { min: 0.8, max: 8, value: 2.5, meaning: 'Texel noise scale of the blossom blocks: low speckles them texel by texel, high clumps their colours in broad patches' } },
+  draw,
+};
 // For the test that checks no block floats; not a key of the piece, which refuses unknown keys.
 Object.defineProperty(module.exports, 'island', { value: island });

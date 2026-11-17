@@ -1,0 +1,25 @@
+{
+  "recipe": {
+    "piece": "demos/gouache.js",
+    "seed": 1,
+    "t": 1,
+    "width": 600,
+    "height": 600,
+    "type": "image/webp",
+    "quality": 0.82
+  },
+  "sources": {
+    "../skills/artifex/styles/gouache.js": "c593f9f7ca23fd18ee2bb5718b3d4caaaa936610eb5a311701bc4fef39090e5e",
+    "../skills/artifex/styles/kit.js": "30ffe34ac03451d65646e2f5d3870e987e460fcd79710fa4b91629fe87fdd797",
+    "core/colour.js": "21fb41835c359f30836f13b1711f1ba7577f9c805d5ebac697731f2a424f371e",
+    "core/geom.js": "e3e21ed547d90f2038649ddfa928c111f6eeb744d420ddbe27554c08eab2f6a8",
+    "core/layer.js": "e049fe4e75e4e65a50af36d394c3fa718ff4a50621f9f6bc0ab05c792ec50d1d",
+    "core/num.js": "f0ae1c682945a48b284a78ea079a2510717d5b013e30b7548f33d768199a3455",
+    "core/rand.js": "8d8d11109d8b6271812535de899010f4c0ef90f0d48b58a293a31fa95306f203",
+    "core/robust-predicates.js": "3116ba65b729ab1cc4ad9e37a48625eb2a6fc884a72a36d46bdeb0e20bbcbbbb",
+    "core/stroke-font.js": "7b62854d15db56b58820f7c144dd6336819afb220e5df4bd5e46ae2443dd12a9",
+    "demos/gouache.js": "439ff18e451fa9560eb94c6c8ed10de4b95245fe944ef52166e5a880e234559a",
+    "demos/subject.js": "8869f43d8ac98e7aadcc11378b9f23cac1a885d54bb8366ffd2a420bc34f6bed"
+  },
+  "poster": "a32cbe0d1247c1491afd782f72f80482d30b729f89ccf6700e13aa0b341e6c6f"
+}
