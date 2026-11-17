@@ -30,18 +30,28 @@ const BLOOMS = [
   ['#3f7a2a', '#4a8a31', '#56993a', '#63a845', '#72b551', '#84c262'],
 ];
 
-// Untextured cloud slabs, one character per cell; S is the block size.
+// The composition with the bird on the left, mirrored when it flies on the
+// right: the bird in open sky high on its side, the near island lower on the
+// other, far islands under the bird. Untextured cloud slabs, one character per
+// cell; S is the block size.
 const CLOUDS = [
-  { S: 24, x: 70, y: 140, rows: ['0110', '1111', '0111'] },
-  { S: 18, x: 520, y: 40, rows: ['111', '110'] },
-  { S: 30, x: 700, y: 390, rows: ['01110', '11111', '01100'] },
-  { S: 26, x: 60, y: 690, rows: ['0111', '1110'] },
+  { S: 24, x: 560, y: 30, rows: ['0110', '1111', '0111'] },
+  { S: 18, x: 310, y: 40, rows: ['111', '110'] },
+  { S: 30, x: 800, y: 150, rows: ['01110', '11111', '01100'] },
+  { S: 26, x: 60, y: 760, rows: ['0111', '1110'] },
 ];
 // Far islands: block size, origin, grass footprint, haze toward the sky.
 const FAR = [
-  { S: 20, x: 120, y: 470, foot: [[0, 0], [1, 0], [2, 0], [0, 1], [1, 1]], tree: [1, 0], haze: 0.55 },
-  { S: 15, x: 860, y: 640, foot: [[0, 0], [1, 0], [1, 1]], haze: 0.65 },
+  { S: 20, x: 230, y: 650, foot: [[0, 0], [1, 0], [2, 0], [0, 1], [1, 1]], tree: [1, 0], haze: 0.55 },
+  { S: 15, x: 420, y: 840, foot: [[0, 0], [1, 0], [1, 1]], haze: 0.65 },
 ];
+// The near island's block size, the canvas x its blocks centre on and the
+// height of its origin.
+const S = 52;
+const ISLE = [725, 664];
+// The bird's scale against the island's blocks, and where its origin falls.
+const K = 3.6;
+const PERCH = [250, 320];
 
 const BIRD = {
   cream: ['#e7ddcb', '#efe6d6', '#f6efe3', '#fbf7ef'],
@@ -62,10 +72,13 @@ function textures(R, bloom, patch) {
   };
 }
 
-// Eye texels painted on the head box's side faces.
-function eyes(name, u, v, nu) {
-  if ((name === 'right' && v >= 2 && v <= 4 && (u === 1 || u === 2 || u === nu - 3 || u === nu - 2)) ||
-    (name === 'left' && v >= 2 && v <= 4 && u >= nu - 4 && u <= nu - 3)) return BIRD.eye;
+// Eye texels painted on the head box's side faces, placed as fractions of the
+// face so they keep their proportions at any head size.
+function eyes(name, u, v, nu, nv) {
+  if (v < Math.round(nv * 0.22) || v >= Math.round(nv * 0.55)) return null;
+  const w = Math.max(2, Math.round(nu * 0.2)); const at = (lo) => u >= lo && u < lo + w;
+  if (name === 'right' && (at(Math.round(nu * 0.1)) || at(nu - Math.round(nu * 0.1) - w))) return BIRD.eye;
+  if (name === 'left' && at(Math.round(nu * 0.55))) return BIRD.eye;
   return null;
 }
 
@@ -112,35 +125,39 @@ function draw(g, s) {
   sky.addColorStop(1, hour.stops[2]);
   g.fillStyle = sky;
   g.fillRect(0, 0, W, W);
-  // The bird flies right of the tree or left of it; on the left, the first cloud rises out of its way.
+  // The bird flies left of the tree or right of it; on the right, the whole composition mirrors.
   const right = R('bird', 'side') < 0.5;
-  CLOUDS.forEach((cloud, k) => slab(g, { ...cloud, x: cloud.x + (R('cloud', 'x', k) - 0.5) * 120, y: cloud.y - (k === 0 && !right ? 100 : 0) }));
+  const mx = (x) => (right ? W - x : x);
+  CLOUDS.forEach((cloud, k) => slab(g, { ...cloud, x: mx(cloud.x + (R('cloud', 'x', k) - 0.5) * 120) }));
 
   FAR.forEach((f, k) => {
     const { boxes, cell, block } = world();
     for (const [x, y] of f.foot) { block(x, y, 0, 'grass'); block(x, y, -1, 'dirt'); }
     block(f.foot[0][0], f.foot[0][1], -2, 'dirt');
     if (f.tree) { block(f.tree[0], f.tree[1], 1, 'log'); block(f.tree[0], f.tree[1], 2, 'bloom'); }
-    drawBoxes(g, boxes, cell, iso(f.S, f.x, f.y), tex, { haze: f.haze, hazeColour: hour.haze, base: 5000 + k * 100 });
+    drawBoxes(g, boxes, cell, iso(f.S, mx(f.x), f.y), tex, { haze: f.haze, hazeColour: hour.haze, base: 5000 + k * 100 });
   });
 
-  // The near world.
+  // The near world, centred on ISLE[0]: the island spans x - y from -4 to 6.
   const { boxes, cell } = island(R);
+  drawBoxes(g, boxes, cell, iso(S, mx(ISLE[0]) - S * 0.866, ISLE[1]), tex);
 
-  // The bird, flying, built from boxes around (bx, by, bz), on one side of the tree or the other.
-  const [bx, by, bz] = right ? [4.6, -2.2, 5.3] : [-2.4, 2.6, 3.9];
-  const part = (x, y, z, w, d, h, mat, decal) => boxes.push({ x: bx + x, y: by + y, z: bz + z, w, d, h, mat, decal, free: true });
+  // The bird, flying, built from boxes scaled K times at the island's texel size: the
+  // subject, in open sky of its own, drawn last.
+  const [sx, sy] = [mx(PERCH[0]), PERCH[1]];
+  const bird = [];
+  const part = (x, y, z, w, d, h, mat, decal) => bird.push({ x: K * x, y: K * y, z: K * z, w: K * w, d: K * d, h: K * h, mat, decal, free: true });
   part(-0.4, 0.28, 0.42, 0.42, 0.3, 0.08, 'coral');
   part(0, 0, 0, 1.0, 0.85, 0.75, 'cream');
   part(0.18, -0.42, 0.7, 0.58, 0.42, 0.07, 'coral');
   part(0.18, 0.85, 0.7, 0.58, 0.42, 0.07, 'coral');
   part(0.62, 0.12, 0.52, 0.56, 0.62, 0.56, 'cream', eyes);
   part(1.18, 0.33, 0.7, 0.22, 0.2, 0.14, 'beak');
-  drawBoxes(g, boxes, cell, iso(75, 500 - 75 * 0.866, 530), tex);
+  drawBoxes(g, bird, new Set(), iso(S, sx, sy), tex, { base: 9000 });
 
-  // A few petals on the wind.
+  // A few petals on the wind, blown from the crown toward the bird.
   for (let i = 0; i < 9; i++) {
-    const px = 260 + R('petal', 'x', i) * 520; const py = 420 + R('petal', 'y', i) * 360;
+    const px = mx(440 + R('petal', 'x', i) * 440); const py = 480 + R('petal', 'y', i) * 320;
     g.fillStyle = bloom[3 + (i % 3)];
     g.fillRect(Math.round(px / 5) * 5, Math.round(py / 5) * 5, 10, 5);
   }
