@@ -56,7 +56,7 @@ agy plugin install https://github.com/V-Songbird/artifex
 
 Antigravity has no sparse option, so its copy holds every file in the repository.
 
-To try a change of your own, give the same commands the path of your checkout instead. A local-path install can copy files Git does not track, so use it for development only.
+To try a change of your own, give the first command of each host the path of your checkout instead of `V-Songbird/artifex`, without the `--sparse` folders: both hosts refuse `--sparse` for a local path. A local-path install can copy files Git does not track, so use it for development only.
 
 Ask your host: “Use the Artifex skill to make a seeded SVG poster and render nine variations.”
 The expected result is piece source and rendered artwork for review; the skill is guidance, not a standalone renderer.
