@@ -46,6 +46,6 @@ These checks stop a pack from reading your other files while it is checked and f
 [CI](../.github/workflows/check.yml) runs a tracked-ignore check, lint, tests, page generation, and the showcase site's build and checks on Linux, on every push to `main` and every pull request. It runs the mutation suite only when someone starts the workflow by hand; see [continuous integration](knowledge/continuous-integration.md).
 Its token is read-only, checkout credentials are not persisted, and third-party Actions are pinned to full commit hashes.
 [Dependabot](../.github/dependabot.yml) proposes updates to those Action pins.
-The [Site workflow](../.github/workflows/site.yml), started by hand only, deploys the showcase site to GitHub Pages; only its deploy job holds `pages: write` and `id-token: write`.
+The [Site workflow](../.github/workflows/site.yml), started by hand only, checks and builds the showcase site with `contents: read` alone; it deploys nothing.
 
 Automated checks and code scanning cover selected properties. They do not prove arbitrary artwork code is safe or replace review of exported content.

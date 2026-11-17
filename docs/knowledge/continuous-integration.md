@@ -14,7 +14,7 @@ Each push to `main` and each push to a pull request runs one job, `Check (ubuntu
 
 One run takes a few minutes, most of them `npm run check`. A pull request merged after one push runs the job twice, once for the pull request and once for the push to `main`.
 
-A second workflow, [Site](../../.github/workflows/site.yml), runs only when started by hand: it checks the built site in Edge on a Windows runner without failing on frame budgets, builds it and runs `npm run site:check` on Linux, and deploys `out/site/` to GitHub Pages. [The site](site.md) describes it.
+A second workflow, [Site](../../.github/workflows/site.yml), runs only when started by hand: it checks the built site in Edge on a Windows runner without failing on frame budgets, and builds it and runs `npm run site:check` on Linux. It deploys nothing. [The site](site.md) describes it.
 
 ## Running the mutation suite by hand
 
