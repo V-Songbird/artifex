@@ -1,6 +1,6 @@
 ---
 type: knowledge
-summary: "Traps that break an Artifex piece without an error: blends that read their destination, cached layers that read the playhead, simulations advanced in draw, display values taken as linear light, binding limiters, unstable addresses, checks that pass on nothing, timing, dead parameters and botanical flow fields."
+summary: "Traps that break an Artifex piece without an error: blends that read their destination, cached layers that read the playhead, simulations advanced in draw, display values taken as linear light, binding limiters, unstable addresses, checks that pass on nothing, timing, dead parameters, botanical flow fields and an agent host's sandbox that stops Edge."
 related_files: ["skills/artifex/SKILL.md", "core/sim.js", "core/layer.js", "core/rand.js"]
 ---
 
@@ -52,3 +52,9 @@ Read this with [the core skill](../SKILL.md).
   produces an approximately circular arc. To avoid that default, steer *towards*
   the field with inertia and let the focus modulate size and density rather
   than position.
+- **An agent host's command sandbox can stop Edge.** Every command that
+  drives Edge, such as `film`, `still`, `browser` and `seeds --png`, fails
+  inside some hosts' sandboxes. Codex's `workspace-write` on Windows denies
+  the launch or ends Edge at startup, and no Edge flag gets past it. The
+  command then says that a sandbox is the likely cause: run that same
+  command outside the sandbox, as the host allows. The piece is fine.

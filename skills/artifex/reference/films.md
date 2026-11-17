@@ -4678,6 +4678,12 @@ still change its box inside that frame with `reframe`; see the runtime skill.
 
 ## Film traps
 
+- **An agent host's command sandbox can keep the film from saving.** `npm run
+  film` drives Edge, and some hosts' sandboxes stop it: Codex's
+  `workspace-write` on Windows denies the launch or ends Edge at startup. The
+  command says that a sandbox is the likely cause. Run the same `film` and
+  `replay` commands outside the sandbox, as the host allows; the piece needs
+  no change ([traps](traps.md)).
 - **A piece slower than real time cannot be recorded in real time.** The WebM
   recorder stamps frames by the wall clock, so frames that cost more than their
   budget are lost and the export says so. MP4 encodes every frame at its own
