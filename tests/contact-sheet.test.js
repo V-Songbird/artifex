@@ -300,7 +300,9 @@ test('contact sheet: --png names the image beside the sheet, sizes it and counts
   assert.notEqual(sheetStem(['drift'], [], { directory: fixtures, stem: 'drift' }), sheetStem(['drift'], []),
     'a fixture named like a registered example keeps that example\'s sheet');
   // A piece already in an untracked folder writes beside itself, not under a doubled out/pieces/out/ path.
-  for (const directory of [path.join(out, 'scratch'), path.join(__dirname, '..', '.private', 'pieces')]) {
+  // Git decides what it ignores: the mutation suite's copy has no Git, so there only out/ is untracked.
+  const git = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: path.join(__dirname, '..'), stdio: 'ignore' }).status === 0;
+  for (const directory of [path.join(out, 'scratch'), ...(git ? [path.join(__dirname, '..', '.private', 'pieces')] : [])]) {
     assert.equal(sheetStem(['p'], [], { directory, stem: 'p' }), path.join(directory, 'p-seeds'), 'a piece in an untracked folder writes beside itself');
   }
   // A piece at the top of out/ named like a registered example keeps that example's sheet.

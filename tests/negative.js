@@ -8808,10 +8808,11 @@ const MUTATIONS = [
 ];
 
 // Copy only what `node --test tests/*.test.js` reads: the tests, their modules
-// under `core/`, `examples/` and `tools/`, the styles under `skills/`, and
-// `package.json`. The site's own tests run outside this suite, and
-// `tools/check-site.js` loads `site/` only when it walks the site. Keeping an
-// explicit allowlist prevents unrelated workspace data from increasing every copy.
+// under `core/`, `examples/` and `tools/`, the skills, `package.json`, the docs,
+// the site and studies the link and site tests read, and the plugin manifests,
+// icon and top-level files the manifest tests check, with `.nvmrc` and the
+// workflows the docs link to. Keeping an explicit
+// allowlist prevents unrelated workspace data from increasing every copy.
 //
 // If a test ever reads something new, the control run goes red before any
 // mutation is applied and says so by name. That is the failure announcing
@@ -8819,7 +8820,8 @@ const MUTATIONS = [
 //
 // The names are the tree root's own, so the filter applies there and nowhere
 // else: once inside `core/`, every file is taken.
-const COPIED = new Set(['core', 'examples', 'skills', 'tests', 'tools', 'package.json']);
+const COPIED = new Set(['core', 'examples', 'skills', 'tests', 'tools', 'package.json', 'docs', 'site', 'studies', 'assets',
+  'plugin.json', '.claude-plugin', '.agents', 'README.md', 'AGENTS.md', 'CLAUDE.md', 'LICENSE', '.nvmrc', '.github']);
 
 function copyDir(src, dst, root = false) {
   fs.mkdirSync(dst, { recursive: true });
