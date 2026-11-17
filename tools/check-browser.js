@@ -20,10 +20,10 @@ const { sample } = require('../core/image.js');
 const ROOT = path.resolve(__dirname, '..');
 const OUT = outRoot(); // the library's out/ in a clone, the caller's from outside it
 // A film that flashes on purpose, both ways, so the count is seen to work.
-const FLASH_FIXTURE = path.join(ROOT, 'tests', 'fixtures', 'flash-film.cjs');
+const FLASH_FIXTURE = path.join(ROOT, 'tools', 'fixtures', 'flash-film.cjs');
 // A film drawn over and from an image it declares, so a declared image is seen
 // in the page's own PNG and to replay in its PNG and its film.
-const IMAGE_FIXTURE = path.join(ROOT, 'tests', 'fixtures', 'image-piece.cjs');
+const IMAGE_FIXTURE = path.join(ROOT, 'tools', 'fixtures', 'image-piece.cjs');
 // Pixels of the image fixture's first frame, away from its marks, where its PNG
 // must show the image itself, and by how many levels a channel there may differ
 // from the image read bilinearly: any smooth upscale of the fixture's linear

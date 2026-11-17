@@ -38,7 +38,7 @@ A JavaScript library and agent skill for making art from code: one seeded piece 
 | --- | --- |
 | `core/` | The library: contract and validation (`piece.js`), drawing and sound rendering, film export, geometry, fields, time, simulation, sound. |
 | `examples/` | Registered example pieces, listed in `examples/index.js`; the tools find them by that name. |
-| `tools/` | Every `npm run` command: page build, Edge checks, seeds, film, still, replay, stitch, styles, site. |
+| `tools/` | Every `npm run` command: page build, Edge checks, seeds, film, still, replay, stitch, styles, site. `tools/fixtures/` holds the two pieces `npm run browser` draws, since installs leave out `tests/`. |
 | `tests/` | Node tests (`*.test.js`), fixtures in `tests/fixtures/`, mutations in `tests/negative.js`. |
 | `skills/artifex/` | The runtime skill (`SKILL.md`), its `reference/` docs, the film scaffold. |
 | `skills/artifex/styles/` | Built-in styles: a guide `<name>.md` and a mark-functions module `<name>.js` each, listed in `builtin.json`. No picture to draw. |

@@ -2229,7 +2229,7 @@ test('a run replays every film it exported and the flash fixture\'s, with the fi
     return /flash/.test(file) ? fixture : { match: true, detail: '24 frames ...', frames: [{ frame: 0, psnr: 50 }] };
   };
   const report = await runBrowserCheck({ pagePath }, { edge, exportFilm, replay, dir });
-  assert.deepEqual(asked, [['browser-stride.mp4', 'stride film', undefined], ['browser-flash-film.mp4', 'flash film', path.join(__dirname, 'fixtures', 'flash-film.cjs')]]);
+  assert.deepEqual(asked, [['browser-stride.mp4', 'stride film', undefined], ['browser-flash-film.mp4', 'flash film', path.join(__dirname, '..', 'tools', 'fixtures', 'flash-film.cjs')]]);
   assert.deepEqual([report.films[0].replay.match, report.flashFixture.replay.match, report.flashFixture.replay.pictureMarginDb], [true, true, 10]);
   assert.equal('saved' in JSON.parse(JSON.stringify(report)).flashFixture, false, 'the report carries no film bytes');
   // A forced run exports no fixture, so it replays only its own films.
@@ -2241,7 +2241,7 @@ test('a run replays every film it exported and the flash fixture\'s, with the fi
   await assert.rejects(runBrowserCheck({ pagePath }, { edge, exportFilm, replay, dir }),
     (error) => error.message === 'browser: the flash fixture: its film DIFFERS on replay: frame 3 decodes at 20 dB from its redraw, under the 30 dB floor; replay it with npm --prefix "'
       + path.resolve(__dirname, '..').split(path.sep).join('/') + '" run replay -- "' + path.join(dir, 'browser-flash-film.mp4').split(path.sep).join('/')
-      + '" --piece "' + path.join(__dirname, 'fixtures', 'flash-film.cjs').split(path.sep).join('/') + '"'
+      + '" --piece "' + path.join(__dirname, '..', 'tools', 'fixtures', 'flash-film.cjs').split(path.sep).join('/') + '"'
       && error.report.flashFixture.replay.match === false && error.report.flashFixture.replay.pictureMarginDb === -10);
   // Any exported film without a replay verdict fails the run, by name.
   assert.throws(() => requireReplays({ films: [{ name: 'stride' }] }), { message: 'browser: stride: its film was exported but never replayed' });

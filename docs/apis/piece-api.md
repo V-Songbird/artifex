@@ -1,7 +1,7 @@
 ---
 type: api_spec
 summary: "Shows a runnable custom Artifex piece and the public validation, noise, responsive-box, solving, rendering, key-outline, depth-armature, cross-contour, path-growing, simulation, static-layer, sprite, image, colour-dissolve, soundtrack and film-finish entry points."
-related_files: ["core/piece.js", "core/sim.js", "core/planck.js", "tests/sim.test.js", "examples/cascade.js", "examples/drape.js", "core/rand.js", "tests/rand.test.js", "core/render.js", "core/time.js", "core/film.js", "core/webgpu-preview.js", "core/surface-vector.js", "examples/pixel-field.js", "examples/refit.js", "examples/readout.js", "examples/drift.js", "examples/settle.js", "examples/cues.js", "examples/stride.js", "core/layer.js", "core/sound.js", "skills/artifex/film-scaffold.cjs", "core/colour.js", "core/finish.js", "core/flash.js", "core/export.js", "tests/finish.test.js", "tests/layer.test.js", "tests/fixtures/sprite-film.cjs", "tests/toolkit.test.js", "tests/piece.test.js", "tests/render.test.js", "tests/time.test.js", "tests/sound.test.js", "tests/film.test.js", "tests/webgpu-preview.test.js", "core/geom.js", "tests/geom.test.js", "core/clip.js", "core/clipper2.js", "core/armature.js", "tests/armature.test.js", "core/path.js", "core/image.js", "tools/image.js", "tests/image.test.js", "tests/fixtures/image-piece.cjs"]
+related_files: ["core/piece.js", "core/sim.js", "core/planck.js", "tests/sim.test.js", "examples/cascade.js", "examples/drape.js", "core/rand.js", "tests/rand.test.js", "core/render.js", "core/time.js", "core/film.js", "core/webgpu-preview.js", "core/surface-vector.js", "examples/pixel-field.js", "examples/refit.js", "examples/readout.js", "examples/drift.js", "examples/settle.js", "examples/cues.js", "examples/stride.js", "core/layer.js", "core/sound.js", "skills/artifex/film-scaffold.cjs", "core/colour.js", "core/finish.js", "core/flash.js", "core/export.js", "tests/finish.test.js", "tests/layer.test.js", "tests/fixtures/sprite-film.cjs", "tests/toolkit.test.js", "tests/piece.test.js", "tests/render.test.js", "tests/time.test.js", "tests/sound.test.js", "tests/film.test.js", "tests/webgpu-preview.test.js", "core/geom.js", "tests/geom.test.js", "core/clip.js", "core/clipper2.js", "core/armature.js", "tests/armature.test.js", "core/path.js", "core/image.js", "tools/image.js", "tests/image.test.js", "tools/fixtures/image-piece.cjs"]
 ---
 
 # Piece API
@@ -749,7 +749,7 @@ The replay manifest of every saved file names each image under `images`: its `w`
 
 The page built by `npm run page` shows an **Images** group for a piece that declares images, with each image's name, size, source and rights. The page's `read()` returns them as `images`, a list of `{ name, w, h, channels, source, rights }`, empty for a piece without images.
 
-Run `node --test tests/image.test.js` for the readers and `show`, and `node --test tests/piece.test.js` for the refusals, the copy per solve and the digest. [`tests/fixtures/image-piece.cjs`](../../tests/fixtures/image-piece.cjs) draws discs sized by the tones of an image made in code; `npm run browser` draws it in installed Edge and replays its PNG and its film.
+Run `node --test tests/image.test.js` for the readers and `show`, and `node --test tests/piece.test.js` for the refusals, the copy per solve and the digest. [`tools/fixtures/image-piece.cjs`](../../tools/fixtures/image-piece.cjs) draws discs sized by the tones of an image made in code; `npm run browser` draws it in installed Edge and replays its PNG and its film.
 
 ## Soundtrack
 
@@ -872,7 +872,7 @@ What the count does not see:
 - A change that takes longer than a second is counted from its last second.
 - A looping film is not counted across its seam.
 
-The count is a check, not a proof of safety. Viewers sit nearer or further, and screens vary, so a film under the limit can still be uncomfortable for some viewers. In installed Edge the count found the red and the general flashes of [`tests/fixtures/flash-film.cjs`](../../tests/fixtures/flash-film.cjs), a fixture that flashes on purpose, and gave no warning for the readout and cues examples, whose films were counted the same way.
+The count is a check, not a proof of safety. Viewers sit nearer or further, and screens vary, so a film under the limit can still be uncomfortable for some viewers. In installed Edge the count found the red and the general flashes of [`tools/fixtures/flash-film.cjs`](../../tools/fixtures/flash-film.cjs), a fixture that flashes on purpose, and gave no warning for the readout and cues examples, whose films were counted the same way.
 
 ## Optional WebGPU pixel preview
 

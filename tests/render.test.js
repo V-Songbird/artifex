@@ -347,7 +347,7 @@ test('a soundtrack may be async: it is awaited before the graph renders', async 
 });
 
 test('a piece drawn from an image renders an SVG of its marks alone, whose manifest names the image', () => {
-  const fixture = require('./fixtures/image-piece.cjs');
+  const fixture = require('../tools/fixtures/image-piece.cjs');
   const r = renderVector(fixture, { seed: 1, t: 0 });
   assert.equal(r.marks, 16, 'fifteen discs and the bar, and no image');
   const named = svgManifest(r.svg).images.ground;

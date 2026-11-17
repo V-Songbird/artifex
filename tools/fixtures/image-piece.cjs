@@ -28,7 +28,7 @@ module.exports = {
   time: { duration: 2, hz: 12 },
   outputs: ['raster', 'vector'],
   images: {
-    ground: { w: IW, h: IH, channels: 3, pixels: btoa(text), source: 'made from code by tests/fixtures/image-piece.cjs', rights: 'part of the Artifex tests, MIT licence' },
+    ground: { w: IW, h: IH, channels: 3, pixels: btoa(text), source: 'made from code by tools/fixtures/image-piece.cjs', rights: 'part of the Artifex tests, MIT licence' },
   },
   draw(g, s, t) {
     const img = s.images.ground;

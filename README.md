@@ -32,19 +32,19 @@ No dependency installation, build toolchain, account, or network service is requ
 
 The plugin bundles the library with [the Artifex skill](skills/artifex/SKILL.md). It guides an agent through authoring a piece, rendering it, and reviewing multiple seeds.
 
-Install it from this repository. Each host clones it, so the installed copy holds the repository's files and nothing else.
+Install it from this repository. Each host clones it, so the installed copy holds the repository's files and nothing else. The `--sparse` folders below are the ones the plugin uses, so Claude Code and Codex leave out the tests, the showcase site and the studies, about 5 MB of the 10.
 
 With Claude Code installed:
 
 ```shell
-claude plugin marketplace add V-Songbird/artifex
+claude plugin marketplace add V-Songbird/artifex --sparse .claude-plugin core skills tools examples assets docs
 claude plugin install artifex@artifex
 ```
 
 With Codex CLI installed:
 
 ```shell
-codex plugin marketplace add V-Songbird/artifex
+codex plugin marketplace add V-Songbird/artifex --sparse .agents --sparse core --sparse skills --sparse tools --sparse examples --sparse assets --sparse docs
 codex plugin add artifex@artifex
 ```
 
@@ -53,6 +53,8 @@ With the Antigravity CLI installed:
 ```shell
 agy plugin install https://github.com/V-Songbird/artifex
 ```
+
+Antigravity has no sparse option, so its copy holds every file in the repository.
 
 To try a change of your own, give the same commands the path of your checkout instead. A local-path install can copy files Git does not track, so use it for development only.
 
