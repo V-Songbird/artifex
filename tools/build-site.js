@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 'use strict';
 
-// Build the showcase site into out/site/ from site/shots.js.
+// Build the showcase site into out/site/ from site/shots.js: index.html, the
+// product page, and film.html, the film you scroll.
+//
+// The product page draws the pieces the shot list names under `home` (the
+// hero, the teaching piece and the interface sounds). They join the module
+// list after the shots and their heard pieces, so a module they share with a
+// shot is defined once, and each loads its own scripts. The page shows the
+// teaching piece's `// @site <name>` regions beside the widgets, and the
+// install commands from the README, both cut at build time.
 //
 // Every shot is an ordinary piece, loaded through the external-piece loader as
 // one list, so a module two shots share is defined once, in the shared-<n>.js
@@ -92,6 +100,36 @@ function sections(list) {
     + (s.seam ? '' : '\n<figure class="still" data-shot="' + i + '">' + (s.poster ? '<noscript><img src="posters/' + s.name + path.extname(s.poster).toLowerCase() + '" alt="' + escape(s.title || s.name) + '"></noscript>' : '') + '</figure>') + '\n</section>').join('\n');
 }
 
+/** The `// @site <name>` ... `// @site end` regions of `source`, each dedented. */
+function regions(source, file) {
+  const out = {};
+  for (const m of source.matchAll(/^([ \t]*)\/\/ @site ([a-z-]+)\n([\s\S]*?)^[ \t]*\/\/ @site end$/gm)) {
+    if (m[2] === 'end') continue;
+    const lines = m[3].replace(/\n$/, '').split('\n'), cut = Math.min(...lines.filter((l) => l.trim()).map((l) => /^ */.exec(l)[0].length));
+    out[m[2]] = lines.map((l) => l.slice(cut)).join('\n');
+  }
+  if (!Object.keys(out).length) throw new Error('site: ' + file + ' marks no // @site region');
+  return out;
+}
+
+/** The install commands of each host the README names: "With <host> installed:" and the shell block after it. */
+function installs(readme) {
+  const out = [...readme.matchAll(/^With (?:the )?(.+?) installed:\n\n```shell\n([\s\S]*?)```/gm)].map((m) => ({ host: m[1], lines: m[2].trim() }));
+  if (!out.length) throw new Error('site: README.md names no install commands ("With <host> installed:" and a shell block)');
+  return out;
+}
+
+/** The product page: index.html with the teaching piece's code and the install commands filled in. */
+function homePage(template, code, hosts) {
+  for (const marker of ['<!-- install -->']) if (!template.includes(marker)) throw new Error('site: index.html has no ' + marker + ' marker');
+  const html = template.replace(/<!-- code:([a-z-]+) -->/g, (all, name) => {
+    if (!(name in code)) throw new Error('site: index.html shows the region ' + name + ', which the teaching piece does not mark');
+    return escape(code[name]);
+  });
+  return html.replace('<!-- install -->', () => hosts.map((h, i) => '<h3>' + escape(h.host) + '</h3>\n<pre id="install-' + i + '">' + escape(h.lines) + '</pre>\n'
+    + '<button type="button" class="quiet" data-copy="install-' + i + '">Copy the ' + escape(h.host) + ' lines</button>').join('\n'));
+}
+
 function parses(name, source) {
   try { new Function(source); }  // eslint-disable-line no-new-func
   catch (error) { throw new Error('site: ' + name + ' does not parse: ' + error.message); }
@@ -113,7 +151,11 @@ function build({ shots = path.join(SITE, 'shots.js'), site = SITE, out = OUT } =
   // A shot's `heard` is the same piece with its sound, loaded apart from it: it joins the list after the shots.
   const heard = config.shots.map((s, i) => [s, i]).filter(([s]) => s.heard !== undefined);
   for (const [s] of heard) if (typeof s.heard !== 'string') throw new Error('site: shot ' + s.name + ': heard must be a piece path');
-  const external = loadExternal(config.shots.map((s) => s.piece).concat(heard.map(([s]) => s.heard)), base);
+  // The product page's pieces, `home: { hero, teach, ui }`, join the list after those.
+  const homes = Object.entries(config.home || {});
+  for (const [name, p] of homes) if (!['hero', 'teach', 'ui'].includes(name) || typeof p !== 'string') throw new Error('site: home.' + name + ': home names hero, teach and ui, each a piece path');
+  if (homes.length && homes.length !== 3) throw new Error('site: home needs hero, teach and ui, or nothing');
+  const external = loadExternal(config.shots.map((s) => s.piece).concat(heard.map(([s]) => s.heard), homes.map(([, p]) => p)), base);
   for (const m of external.modules) refusePrivate(m.real, 'module');
   const { list, frames } = readShots(config, external.pieces);
   heard.forEach(([s], n) => { if (typeof external.pieces[config.shots.length + n].piece.sound !== 'function') throw new Error('site: shot ' + s.name + ': its heard piece has no sound'); });
@@ -122,7 +164,7 @@ function build({ shots = path.join(SITE, 'shots.js'), site = SITE, out = OUT } =
   // require, and what those reach; a library module only later shots reach
   // goes with their modules below.
   const read = (name) => fs.readFileSync(refusePrivate(path.join(site, name), 'site file'), 'utf8');
-  const runtime = ['stage.js', 'worker.js'].map((name) => [name, read(name)]);
+  const runtime = ['stage.js', 'worker.js', ...(homes.length ? ['home.js', 'theme.js'] : [])].map((name) => [name, read(name)]);
   const needs = runtime.flatMap(([, text]) => [...text.matchAll(/\breq\('([^']+)'\)/g)].map((m) => m[1]));
   const core = reach(needs.concat(external.pieces[0].library)), exported = reach(needs.concat(EXPORTS));
   const reaches = external.pieces.map((p) => p.modules.concat(reach(p.library).filter((id) => !core.includes(id))));
@@ -164,13 +206,24 @@ function build({ shots = path.join(SITE, 'shots.js'), site = SITE, out = OUT } =
       return { name: s.name, id: external.pieces[i].id, scripts, ...(sound && { heard: sound }), seam: s.seam, seconds: s.seconds, tier: s.tier, still: s.still, poster, label: s.title || s.name, ...(s.boxes && { size: s.size, boxes: s.boxes }) };
     }),
   };
-
-  const template = read('index.html');
-  for (const marker of ['<!-- shots -->', '<!-- data -->']) {
-    if (!template.includes(marker)) throw new Error('site: ' + path.join(site, 'index.html') + ' has no ' + marker + ' marker');
+  // Each product page piece: the shared scripts it reaches, then its own.
+  const at = config.shots.length + heard.length;
+  if (homes.length) {
+    data.home = Object.fromEntries(homes.map(([name], n) => [name, { id: external.pieces[at + n].id,
+      scripts: shared.filter((c) => c.shots.includes(at + n)).map((c) => c.name).concat(chunk('home-' + name + '.js', reaches[at + n].filter((id) => users.get(id).length === 1))) }]));
   }
-  files.set('index.html', template.replace('<!-- shots -->', () => sections(list))
+
+  const template = read('film.html');
+  for (const marker of ['<!-- shots -->', '<!-- data -->']) {
+    if (!template.includes(marker)) throw new Error('site: ' + path.join(site, 'film.html') + ' has no ' + marker + ' marker');
+  }
+  files.set('film.html', template.replace('<!-- shots -->', () => sections(list))
     .replace('<!-- data -->', () => '<script src="data.js"></script>'));
+  if (homes.length) {
+    const teach = refusePrivate(path.resolve(base, config.home.teach), 'module');
+    files.set('index.html', homePage(read('index.html'), regions(fs.readFileSync(teach, 'utf8'), teach), installs(fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8'))));
+    files.set('home.css', read('home.css'));
+  }
   files.set('data.js', 'window.__siteData = ' + JSON.stringify(data) + ';\n');
   files.set('core.js', parses('core.js', bundle({ source: external.registry }, core)));
   checkResolvable(exported);
@@ -185,11 +238,13 @@ function build({ shots = path.join(SITE, 'shots.js'), site = SITE, out = OUT } =
 
   const brotli = (name) => zlib.brotliCompressSync(fs.readFileSync(path.join(out, name))).length;
   const sizes = Object.fromEntries([...files.keys(), ...posters.keys()].map((name) => [name, brotli(name)]));
-  // What a visitor loads before the first shot draws.
-  const first = ['index.html', 'data.js', 'site.css', 'core.js', 'stage.js', ...data.shots[0].scripts, ...(data.shots[0].poster ? [data.shots[0].poster] : [])];
+  // What a visitor loads before the film's first shot draws, and before the product page's hero does.
+  const sum = (names) => names.reduce((total, name) => total + sizes[name], 0);
+  const filmLoad = sum(['film.html', 'data.js', 'site.css', 'core.js', 'stage.js', ...data.shots[0].scripts, ...(data.shots[0].poster ? [data.shots[0].poster] : [])]);
   return {
-    out, data, files: Object.keys(sizes), sizes,
-    firstLoad: first.reduce((sum, name) => sum + sizes[name], 0),
+    out, data, files: Object.keys(sizes), sizes, filmLoad,
+    // The landing page's: the product page's when there is one.
+    firstLoad: data.home ? sum(['index.html', 'theme.js', 'home.css', 'data.js', 'core.js', 'home.js', ...data.home.hero.scripts]) : filmLoad,
     total: Object.values(sizes).reduce((a, b) => a + b, 0),
   };
 }
@@ -242,7 +297,7 @@ async function main(args = process.argv.slice(2)) {
   const result = build();
   const kb = (b) => (b / 1024).toFixed(1) + ' kB';
   console.log(shown(result.out, ROOT) + '  ' + result.data.shots.length + ' shots, ' + result.data.frames + ' frames at ' + result.data.hz + ' Hz, '
-    + result.files.length + ' files; brotli: first load ' + kb(result.firstLoad) + ', whole site ' + kb(result.total));
+    + result.files.length + ' files; brotli: first load ' + kb(result.firstLoad) + (result.data.home ? ' (product page; the film ' + kb(result.filmLoad) + ')' : '') + ', whole site ' + kb(result.total));
   if (!serve) return;
   const server = await serveSite(result.out, port);
   console.log('serving ' + server.url + ' on loopback; stop with Ctrl+C');
@@ -251,4 +306,4 @@ async function main(args = process.argv.slice(2)) {
 
 if (require.main === module) main().catch((error) => { console.error(error.message); process.exitCode = 1; });
 
-module.exports = { build, serveSite, refusePrivate, readShots, main, OUT, PRIVATE };
+module.exports = { build, serveSite, refusePrivate, readShots, regions, installs, main, OUT, PRIVATE };

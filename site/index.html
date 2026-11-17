@@ -4,35 +4,90 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob:">
-<title>Artifex</title>
-<link rel="stylesheet" href="site.css">
+<title>Artifex: art from code</title>
+<meta name="description" content="A JavaScript library and agent skill: one seeded piece draws a page, a PNG, an SVG and a film with sound.">
+<link rel="stylesheet" href="home.css">
+<script src="theme.js"></script>
 </head>
 <body>
-<div id="stage"></div>
-<img id="poster" alt="" hidden>
-<main>
-<header class="intro"><div class="card">
-<h1>Artifex</h1>
-<p>A film you scroll: every frame is drawn live, in your browser, from a seed and a playhead.</p>
-</div></header>
-<!-- shots -->
-<div id="spacer"></div>
-</main>
-<div class="wall" aria-hidden="true" hidden></div><div class="wall" aria-hidden="true" hidden></div>
-<div id="bar">
-<label id="boxcontrol" hidden>Box width <input id="box" type="range" step="10"></label>
-<button id="listen" type="button" aria-pressed="false" hidden>Listen</button>
-<button id="play" type="button" aria-pressed="false">Play as film</button>
-<button id="reroll" type="button">Re-roll seed</button>
-<button id="copy" type="button">Copy link</button>
-<button id="recipe" type="button">Copy recipe</button>
-<button id="savepng" type="button">Save picture</button>
-<button id="savefilm" type="button">Save film</button>
-<button id="install" type="button">Copy install</button>
-<span id="status" role="status"></span>
+<header class="top">
+<a class="mark" href="#hero">Artifex</a>
+<nav aria-label="Sections"><a href="#how">How it works</a><a href="#film">The film</a><a href="#install">Install</a></nav>
+<div class="toggles">
+<button id="listen" class="quiet" type="button" aria-pressed="false">Listen</button>
+<button id="theme" class="quiet" type="button" aria-pressed="false">Dark theme</button>
 </div>
-<!-- data -->
+</header>
+<main>
+<section id="hero" class="hero">
+<div class="lede">
+<p class="eyebrow">A JavaScript library and agent skill</p>
+<h1>Art from <em>code</em></h1>
+<p>One seeded piece draws a page, a PNG, an SVG and a film with sound, and each file carries the recipe that redraws it.</p>
+<p><a href="#install">Install it</a>, then ask your agent for a piece.</p>
+</div>
+<div>
+<figure class="sheet">
+<canvas id="hero-canvas" role="img" aria-label="The name Artifex, written live by a plotter pen on paper"></canvas>
+<figcaption>Not a picture: a piece, drawn now in your browser. Move the pointer across the sheet to widen the pen's line, and down it to let the paper soak up more ink. The sliders do the same from the keyboard.</figcaption>
+</figure>
+<div class="controls">
+<label>Line <input type="range" data-param="weight"></label>
+<label>Soak <input type="range" data-param="soak"></label>
+<button id="hero-seed" type="button">New seed</button>
+</div>
+</div>
+</section>
+
+<section id="how" class="how">
+<p class="eyebrow">One piece, five ideas</p>
+<h2>How Artifex works</h2>
+<p>Each widget below is the same small piece, drawn live. The code beside it is cut from that piece's file when the site is built.</p>
+
+<article class="widget" data-widget="seed">
+<div><h3>A seed decides the picture</h3><p>Every random choice reads the seed. The same seed draws the same picture on any machine; a new seed draws another. Both sheets here share one.</p><pre><code><!-- code:seed --></code></pre></div>
+<div class="live"><div class="pair"><canvas role="img" aria-label="The piece at the widget's seed"></canvas><canvas role="img" aria-label="The same piece at the same seed"></canvas></div><div class="row"><button type="button">New seed</button><output></output></div></div>
+</article>
+
+<article class="widget" data-widget="playhead">
+<div><h3>A playhead is time</h3><p>A piece draws any moment from its playhead, 0 to 1. Drag it back and the pen lifts its lines again; nothing is recorded.</p><pre><code><!-- code:playhead --></code></pre></div>
+<div class="live"><canvas role="img" aria-label="The piece at the playhead the slider sets"></canvas><label>Playhead <input type="range" min="0" max="1" step="0.001" value="0.6"></label><div class="row"><button type="button">Play</button></div></div>
+</article>
+
+<article class="widget" data-widget="params">
+<div><h3>Parameters reshape it</h3><p>A piece declares its parameters, each with a range and what it changes. Every control a page shows comes from that declaration.</p><pre><code><!-- code:params --></code></pre></div>
+<div class="live"><canvas role="img" aria-label="The piece at the parameters the sliders set"></canvas><label>Lines <input type="range" data-param="lines"></label><label>Swell <input type="range" data-param="swell"></label></div>
+</article>
+
+<article class="widget" data-widget="box">
+<div><h3>Any box, recomposed</h3><p>A piece that declares the boxes it takes is laid out again for each one. Widen it or narrow it: the lines are solved for the new box, never stretched.</p><pre><code><!-- code:box --></code></pre></div>
+<div class="live"><canvas role="img" aria-label="The piece at the box the slider sets"></canvas><label>Box width <input type="range"></label><output></output></div>
+</article>
+
+<article class="widget" data-widget="exports">
+<div><h3>One recipe, every file</h3><p>The same piece saves as a PNG, an SVG or a film. Each file carries its recipe: the piece, the seed and the parameters that draw it again.</p><pre><code><!-- code:exports --></code></pre></div>
+<div class="live"><canvas role="img" aria-label="The piece the buttons save"></canvas><div class="row"><button type="button" data-kind="png">Save PNG</button><button type="button" data-kind="svg">Save SVG</button><button type="button" data-kind="film">Save film</button></div></div>
+</article>
+</section>
+
+<section id="film">
+<p class="eyebrow">The showcase</p>
+<h2>The film you scroll</h2>
+<p>A pen writes the name, the ink blooms, cracks, turns to a kaleidoscope, a blueprint, papercraft, a painting and a box that takes your window's shape. Every frame is drawn live from a seed and a playhead; turn Listen on to hear it.</p>
+<a class="filmcard" href="film.html"><img src="posters/kandinsky.webp" alt="A bird scraped from thick paint into circles, arcs, bars and lines: a still from the film" width="1200" height="800" loading="lazy"><span>Enter the film</span></a>
+</section>
+
+<section id="install" class="install">
+<p class="eyebrow">Install</p>
+<h2>Bring it to your agent</h2>
+<p>Artifex installs as a plugin. Pick your host, copy its lines, then ask your agent for a piece in plain words.</p>
+<!-- install -->
+</section>
+</main>
+<footer><p>Artifex is open source: <a href="https://github.com/V-Songbird/artifex">V-Songbird/artifex on GitHub</a>.</p></footer>
+<span id="status" role="status"></span>
+<script src="data.js"></script>
 <script src="core.js"></script>
-<script src="stage.js"></script>
+<script src="home.js"></script>
 </body>
 </html>
