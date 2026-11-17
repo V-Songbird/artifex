@@ -15,6 +15,7 @@
 //   npm run film -- settle --force no-aac            with AAC refused, so an Opus soundtrack
 //   npm run film -- refit --reframe 0:720x720,1:405x720   along another box timeline
 //   npm run film -- cues --crash-gpu 1500            with Edge's GPU process crashed 1.5 s into the export
+//   npm run film -- ./game.cjs --session game-1.session.json   an interactive piece's saved session, one frame a tick
 //
 // Writes the MP4 and its report, the MP4's name with .json added, and prints
 // one summary line. Exits 1 with the page's own message when the export fails.
@@ -31,13 +32,13 @@ const { bundle, html } = require('./build-page.js');
 const { filmNote } = require('../core/export.js');
 const { validate, atBox, parseReframe, solve } = require('../core/piece.js');
 const { withEdge, waitFor, evaluate, evaluateInPieces, pageErrors, FORCED, timeoutArg } = require('./check-browser.js');
-const { callerDirectory, shown, resolvePiece, outputDirectory, quote, quoteWord, hint } = require('./piece-input.js');
+const { callerDirectory, shown, resolvePiece, outputDirectory, quote, quoteWord, hint, sessionInput, keepSessionBeside } = require('./piece-input.js');
 const { SOUND_HELPERS, soundPicture, soundSummary, drawSound, silentSpans, contactList, SOUND_WAVE, SOUND_ROWS } = require('./contact-sheet.js');
 // soundInPage runs in Node too (in tests); contact-sheet keeps soundSquares only in the helpers it serializes.
 const soundSquares = new Function(SOUND_HELPERS + '\nreturn soundSquares;')();
 
 const USAGE = 'usage: npm run film -- <piece | ./piece.cjs> [--out file.mp4] [--seed n] [--scale n] [--bitrate bit/s] [--reframe t:WxH,t:WxH,...]'
-  + ' [--force no-aac|no-webgl2] [--crash-gpu ms] [--edge PATH] [--timeout-ms N] [--headed]';
+  + ' [--session file.session.json] [--force no-aac|no-webgl2] [--crash-gpu ms] [--edge PATH] [--timeout-ms N] [--headed]';
 // A long film takes minutes to draw and encode; the deadline still ends a hung export.
 const TIMEOUT_MS = 600000, MAX_TIMEOUT_MS = 3600000;
 // The decoded soundtrack's picture, in pixels across the whole film.
@@ -73,6 +74,11 @@ function parseArgs(args) {
       if (out.reframe) throw refuse('give --reframe only once');
       const text = value(i++);
       try { out.reframe = parseReframe(text); } catch (e) { throw refuse('--' + e.message); }
+    }
+    // An interactive piece's saved session; filmTarget reads and checks it.
+    else if (a === '--session') {
+      if (out.session) throw refuse('give --session only once');
+      out.session = value(i++);
     }
     else if (a === '--edge') out.browser.edge = value(i++);
     else if (a === '--timeout-ms') {
@@ -122,6 +128,12 @@ function parseArgs(args) {
 function filmTarget(options, cwd = callerDirectory()) {
   const { name, external, file } = resolvePiece(options, cwd, refuse, '.mp4');
   const target = { name, external, file, ...(options.seed !== undefined && { seed: options.seed }) };
+  // A saved session is read and checked here, before Edge starts, and names the film after itself.
+  if (options.session) {
+    if (options.reframe) throw refuse('give --reframe or --session, not both: a session plays at the box it was played at');
+    const session = sessionInput(options, cwd, refuse, validate(external ? external.piece : EXAMPLES[name]), file);
+    return { ...target, file: session.output, session };
+  }
   if (!options.reframe) return target;
   // A box timeline the piece cannot play is refused by name before Edge starts.
   try { atBox(validate(external ? external.piece : EXAMPLES[name]), options.reframe); }
@@ -130,12 +142,14 @@ function filmTarget(options, cwd = callerDirectory()) {
 }
 
 // Serialized into the page. The page's own export of `name`, along the box
-// timeline `reframe` when one is given, at `seed` when one is given, with
+// timeline `reframe` when one is given, at `seed` when one is given, or the
+// film of the saved `session` ({ file, name }) when one is given, with
 // `opts` ({ scale, bitrate }) passed through, and its file as base64. A film
 // with sound also returns `picture(bytes, report)`, the picture of its decoded
 // soundtrack, as `sound`.
-async function exportInPage(name, opts, reframe = null, picture = null, seed = null) {
+async function exportInPage(name, opts, reframe = null, picture = null, seed = null, session = null) {
   const api = window.__artifex;
+  if (session) api.session(session.file, session.name);
   api.select(name);
   if (reframe) api.setReframe(reframe);
   // After select, which resets the seed to the piece's own.
@@ -208,7 +222,8 @@ async function exportFilm(target, film = {}, browser = {}, crashGpu, edge = with
     // The sound picture's cuts are the shots of the solve the page exported, carried in its report.
     const picture = '(bytes, report) => (' + soundInPage + ')(bytes, report, ' + [SOUND_WIDTH, SOUND_WAVE, SOUND_ROWS] + ', report.shots)';
     const exported = evaluateInPieces(client, '(() => {\n' + SOUND_HELPERS + soundPicture + '\n' + soundSummary + '\n' + drawSound + '\n' + silentSpans + '\nreturn (' + exportInPage.toString() + ')('
-      + JSON.stringify(target.name) + ', ' + JSON.stringify(film) + ', ' + JSON.stringify(target.reframe || null) + ', ' + picture + ', ' + JSON.stringify(target.seed ?? null) + ');\n})()');
+      + JSON.stringify(target.name) + ', ' + JSON.stringify(film) + ', ' + JSON.stringify(target.reframe || null) + ', ' + picture + ', ' + JSON.stringify(target.seed ?? null)
+      + ', ' + JSON.stringify(target.session ? { file: target.session.file, name: target.session.name } : null) + ');\n})()');
     const crashed = crashGpu === undefined ? undefined : await crashAfter(client, context, exported, crashGpu);
     const { report, data, sound } = await exported;
     pageErrors(client, context);
@@ -302,6 +317,8 @@ async function main(args = process.argv.slice(2), run = exportFilm, cwd = caller
   if (bytes.length !== report.bytes) throw new Error(`film: ${bytes.length} of the film's ${report.bytes} bytes arrived; nothing was written`);
   fs.mkdirSync(path.dirname(target.file), { recursive: true });
   fs.writeFileSync(target.file, bytes);
+  // Replay reads a session's film beside the session it was played from.
+  if (target.session) keepSessionBeside(target.session);
   // The decoded soundtrack's picture; an earlier run's is removed, so a film without sound leaves none.
   const soundFile = target.file + '.sound.png';
   fs.rmSync(soundFile, { force: true });
@@ -317,7 +334,10 @@ async function main(args = process.argv.slice(2), run = exportFilm, cwd = caller
   // Where the frames were drawn, in the browser check's words, when the export could tell.
   const drawn = report.rasterizer ? ' Film made from frames drawn ' + (report.rasterizer === 'gpu' ? 'on the GPU' : 'in memory') + '.' : '';
   // A forced film says so first, as a forced browser check does.
-  console.log('film' + (forced ? ' with ' + FORCED[forced].means : '') + ': ' + shown(target.file) + ': ' + filmNote(report) + drawn + crashNote + soundNote + ' Report: ' + shown(reportFile));
+  const sessionNote = target.session ? ' Played from ' + shown(target.session.beside) + ', which replay reads beside it.' : '';
+  console.log('film' + (forced ? ' with ' + FORCED[forced].means : '') + ': ' + shown(target.file) + ': ' + filmNote(report) + drawn + crashNote + soundNote + sessionNote + ' Report: ' + shown(reportFile));
+  // npm run seeds draws no session yet, so a session's film is shown no looks to draw.
+  if (target.session) return console.error(`film: a fresh-eyes review by a subagent without this work's context finds what the plan's author cannot see: ${shown(FILMS_MD)}#fresh-eyes-review`);
   // The film is saved either way; the looks not drawn since the piece changed go to stderr, one per line,
   // each command at the film's seed and box timeline. A contact sheet sweeps seeds, so it takes no --seed.
   const reframe = options.reframe ? '--reframe ' + options.reframe.map((k) => `${k.t}:${k.w}x${k.h}`).join(',') : '';

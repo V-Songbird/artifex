@@ -48,8 +48,9 @@ primitive or an example that only makes sense for one kind of art, that is a
 defect — report it. This rule outranks convenience, elegance and performance.
 
 This is subject neutrality, not a promise to support every medium. The piece
-contract has seeded drawing, declared parameters and an optional timeline; it
-does not define live interaction, network streams or an asset-loading lifecycle.
+contract has seeded drawing, declared parameters, an optional timeline and
+optional [play](#play), pointer and key input stepped on fixed ticks; it does
+not define network streams or an asset-loading lifecycle.
 See [subject neutrality](../../docs/knowledge/subject-neutrality.md).
 
 **2. Randomness is addressed, never sequential.** `core/rand.js`:
@@ -65,6 +66,8 @@ work looks generated.
 no `requestAnimationFrame` timestamp reaching a mark. A still has no advancing
 timeline. A soundtrack schedules on its offline context, whose seconds are the
 film's seconds: frame `i` sits at `i / hz`, the `clock.seconds` that `draw` sees.
+A piece with `play` counts ticks instead: real time only decides how fast they
+pass, and what a person did reaches the state only through `play.step`.
 
 **4. A still is a legal piece.** `time: null`. Do not invent a fake reveal to
 satisfy a timeline.
@@ -240,6 +243,8 @@ require('artifex/core/medium.js')  // medium, pigment (a sheet that watercolour 
   // body paint act on over time: wash, stroke,
   // tilt, dry, paint, knife; raster only)
 require('artifex/core/sound.js')   // sumInto, voice, ambience, room, pluck, impact, shaker, ducking, duck, hertz
+require('artifex/core/play.js')    // session, rerun, checkSession, digest, film,
+  // MAX_EVENTS, MAX_TICKS (sessions of play)
 require('artifex/core/stroke-font.js') // text, width, display, metrics, glyph, missing,
   // runCount, faces, KERN, GLYPHS, ascent, descent, leading
   // (polyline lettering in seven faces)
@@ -289,7 +294,7 @@ validator and field documentation when changing a piece or the contract.
 
 Required: `name`, `size`, `draw`.
 Optional: `state`, `build`, `seed`, `time`, `outputs`, `params`, `sound`,
-`preview`, `boxes`, `reframe`, `finish`, `images`.
+`preview`, `boxes`, `reframe`, `finish`, `images`, `play`.
 **Unknown keys are refused by name.** This catches misspelled or unsupported
 contract fields.
 
@@ -310,6 +315,7 @@ contract fields.
   reframe: null,                  // or [{ t, w, h }, ...]: a box timeline; needs boxes and time, size is the largest box
   finish: null,                   // or a film's finish: grain, weave, flicker (<= 0.025), vignette, grade (ends, tone, per-channel toe/mid/shoulder curves, shadow and highlight tints), bloom and halation (light on dark only); never flash large-area brightness or saturated red more than 3 times a second (the film export warns, report `flashes`)
   images: null,                   // or { name: require('./photo.image.js') }: decoded pixels with source and rights (see images in)
+  play: null,                     // or { hz, inputs, step(state, inputs, tick, R), describe }: interactive, no time
 }
 ```
 
@@ -331,6 +337,12 @@ a cutout once, read [stills, checks and layers](reference/library.md#stills-chec
 
 The surface is **Canvas2D-shaped** in all four, so one `draw` reaches all of
 them unchanged, except that a vector surface refuses raster operations by name.
+
+## Play
+
+A piece that answers a person declares `play` instead of `time`; a session is
+a pure function of seed, parameters and input log, and `film` or `still` with
+`--session` make its files. Read [interactive pieces](../../docs/apis/piece-api.md#interactive-pieces) first.
 
 ## Sound
 

@@ -1,12 +1,12 @@
 ---
 type: api_spec
-summary: "Shows a runnable custom Artifex piece and the public validation, noise, responsive-box, solving, rendering, key-outline, depth-armature, cross-contour, path-growing, simulation, static-layer, sprite, image, colour-dissolve, soundtrack and film-finish entry points."
-related_files: ["core/piece.js", "core/sim.js", "core/planck.js", "tests/sim.test.js", "examples/cascade.js", "examples/drape.js", "core/rand.js", "tests/rand.test.js", "core/render.js", "core/time.js", "core/film.js", "core/webgpu-preview.js", "core/surface-vector.js", "examples/pixel-field.js", "examples/refit.js", "examples/readout.js", "examples/drift.js", "examples/settle.js", "examples/cues.js", "examples/stride.js", "core/layer.js", "core/sound.js", "skills/artifex/film-scaffold.cjs", "core/colour.js", "core/finish.js", "core/flash.js", "core/export.js", "tests/finish.test.js", "tests/layer.test.js", "tests/fixtures/sprite-film.cjs", "tests/toolkit.test.js", "tests/piece.test.js", "tests/render.test.js", "tests/time.test.js", "tests/sound.test.js", "tests/film.test.js", "tests/webgpu-preview.test.js", "core/geom.js", "tests/geom.test.js", "core/clip.js", "core/clipper2.js", "core/armature.js", "tests/armature.test.js", "core/path.js", "core/image.js", "tools/image.js", "tests/image.test.js", "tools/fixtures/image-piece.cjs"]
+summary: "Shows a runnable custom Artifex piece and the public validation, noise, responsive-box, interactive-piece and session, solving, rendering, key-outline, depth-armature, cross-contour, path-growing, simulation, static-layer, sprite, image, colour-dissolve, soundtrack and film-finish entry points."
+related_files: ["core/piece.js", "core/sim.js", "core/planck.js", "tests/sim.test.js", "examples/cascade.js", "examples/drape.js", "core/rand.js", "tests/rand.test.js", "core/render.js", "core/time.js", "core/film.js", "core/webgpu-preview.js", "core/surface-vector.js", "examples/pixel-field.js", "examples/refit.js", "examples/readout.js", "examples/drift.js", "examples/settle.js", "examples/cues.js", "examples/stride.js", "core/layer.js", "core/sound.js", "skills/artifex/film-scaffold.cjs", "core/colour.js", "core/finish.js", "core/flash.js", "core/export.js", "tests/finish.test.js", "tests/layer.test.js", "tests/fixtures/sprite-film.cjs", "tests/toolkit.test.js", "tests/piece.test.js", "tests/render.test.js", "tests/time.test.js", "tests/sound.test.js", "tests/film.test.js", "tests/webgpu-preview.test.js", "core/geom.js", "tests/geom.test.js", "core/clip.js", "core/clipper2.js", "core/armature.js", "tests/armature.test.js", "core/path.js", "core/image.js", "tools/image.js", "tests/image.test.js", "tools/fixtures/image-piece.cjs", "core/play.js", "tests/play.test.js", "tests/page-play.test.js", "tools/fixtures/play-piece.cjs"]
 ---
 
 # Piece API
 
-[`FIELDS` in core/piece.js](../../core/piece.js) is the authoritative contract, including defaults and validation messages. A piece declares `name`, `size`, and `draw`; optional fields add state, build stages, parameters, outputs, a seed, a timeline, a soundtrack, an explicitly authored GPU pixel preview, the range of boxes it recomposes to, a box timeline, a film finish, and images to draw over, from or after.
+[`FIELDS` in core/piece.js](../../core/piece.js) is the authoritative contract, including defaults and validation messages. A piece declares `name`, `size`, and `draw`; optional fields add state, build stages, parameters, outputs, a seed, a timeline, a soundtrack, an explicitly authored GPU pixel preview, the range of boxes it recomposes to, a box timeline, a film finish, images to draw over, from or after, and [play](#interactive-pieces), which makes the piece answer pointer and key input.
 
 ## Render a custom piece
 
@@ -51,6 +51,39 @@ A piece with a timeline declares `time: { duration, hz, loop? }`: `duration` is 
 For more than one frame, a looping timeline uses `i/n` and a non-looping timeline uses `i/(n-1)`. A single-frame timeline uses playhead zero. Drawing and export use one frame grid, computed inside Artifex; a piece only receives `t` and `clock` in `draw` and never computes the grid itself.
 
 For fixed source, input data, parameters, output configuration, and execution environment, repeated seed/playhead pairs must produce the same frame. Use addressed randomness from [`core/rand.js`](../../core/rand.js); do not make drawing depend on prior calls or wall-clock time.
+
+## Interactive pieces
+
+A piece that answers a person declares `play` instead of `time`:
+
+```js
+play: {
+  hz: 60,                        // ticks a second, a whole number from 1 to 240; 60 when left out
+  inputs: ['pointer', 'key'],    // what it listens to; both when left out
+  step(state, inputs, tick, R) { /* advance one tick; the only code that changes state after the build */ },
+  describe(state) { return 'Two marks; the cursor is in column 4.'; },  // optional, one sentence for a screen reader
+}
+```
+
+A session starts from the solved state at tick 0. Each tick, `step` gets the inputs that landed in it, in order: `{ kind: 'down' | 'move' | 'up', x, y }` in design units, or `{ kind: 'key', key, down }` with the key's `KeyboardEvent.key`. `tick` counts from 1. `R` is `rng(seed)`, the [addressed source](#noise) of the session's seed, so a choice made with `R('opponent', 'move', tick)` is the same on every run. The picture is `draw(surface, state, t, clock)` with `t` the session time in seconds, `tick / hz` plus the part of a tick already passed, and `clock` holding `tick`, `frame` (the same), `seconds` and `hz`. `draw` stays pure in `(state, t)`; game state changes only in `step`.
+
+A session is a pure function of the seed, the parameters and the input log, so `step` must read nothing but its arguments: no wall clock, no `Math.random`, no device data. Nothing can prove that of arbitrary code; the browser check catches a fixture that breaks it, as replay catches a film. A piece with `play` takes no `time`, `sound` or `preview`, each refused by name: its length is the session's, and one `draw` serves the live page and every export.
+
+[`core/play.js`](../../core/play.js) runs sessions:
+
+| Function | Contract |
+| --- | --- |
+| `session(piece, seed, params)` | A session at tick 0: `{ piece, solved, state, tick, log, advance(inputs), describe(), save() }`. `advance` steps one tick and records its inputs in `log`, moves within one tick folded to the last; an input of another kind or shape, or one the piece does not listen to, throws `PieceError` naming it. Drawing `piece` from `solved` at `tick / hz` draws the session. A build that fails throws, naming the stage. |
+| `rerun(piece, file, onTick)` | Runs a saved session again from its seed and parameters, calling `onTick(session)` at tick 0 and after every tick; returns the session at its last tick. |
+| `checkSession(validatedPiece, file)` | Throws `PieceError` naming the first way `file` is not a session of the piece. |
+| `film(piece, file, name)` | The saved session's film: a validated piece with one frame per tick, frame `i` the session at tick `i`, at the session's seed and parameters. Every film, still and replay tool takes it as any piece with a timeline. |
+| `digest(log)` | The log's digest, `fnv1a32:` and 8 hex digits, as a session's files record it. |
+
+A saved session is the manifest fields (`artifex`, `piece`, `seed`, `size`, `outputs`, `params`) with `hz`, `ticks` and `log`. The log is `[[tick, kind, ...values], ...]` in tick order: `[tick, 'down', x, y]`, also `'move'` and `'up'`, or `[tick, 'key', key, down]`. It is data, checked by shape and never run; it holds at most `MAX_EVENTS` (50000) rows over at most `MAX_TICKS` (216000, an hour at 60 ticks a second) ticks.
+
+The page plays a piece with `play`: each animation frame advances as many ticks as real time asks, at most four, so a stall drops time rather than replaying it as a burst, and a hidden page advances none. The canvas takes focus, the primary pointer and the keys (arrows, Enter, Space, Escape and single characters, without repeats; Tab and shortcuts stay with the page). Restart plays again from the same seed with an empty log; **save session** writes `<name>-<seed>.session.json`. `describe` is announced in a live region when its sentence changes. The page's PNG, SVG and film buttons are off while a piece is played, because a frame of a live game names no session to make it again.
+
+`npm run film -- <piece> --session <file>` saves the session's film, one frame per tick at the session's `hz`, and `npm run still -- <piece> --session <file> --at <seconds>` the frame holding those seconds; without `--out`, each is named after the session file. Both refuse `--seed` beside `--session`, and the film refuses `--reframe` and the still `--box`, since a session plays at its own seed and box. Their manifests record `session: { hz, ticks, digest, file }`, and each command puts a copy of the session beside the file it saves. `npm run replay` reads that session beside the file, refuses one whose log or tick count differs from the manifest, then draws the file again from it. Replay is as long as the session, since every tick is stepped, and exact in the engine that recorded it.
 
 ## Noise
 

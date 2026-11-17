@@ -381,6 +381,57 @@ test('film: every other argument refusal is named, then the usage line', async (
   ]) await t.test(args.join(' '), () => assert.throws(() => filmTarget(parseArgs(args)), refusalFrom(prefix)));
 });
 
+test('film and still: --session plays a saved session, checked before Edge starts and named after it, and every refusal is named, then the usage line', async (t) => {
+  const film = require('../tools/film-cli.js'), still = require('../tools/still-cli.js');
+  const play = require('../core/play.js');
+  const { slash } = require('../tools/piece-input.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'artifex-session-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const PIECE = 'tools/fixtures/play-piece.cjs';
+  const s = play.session(require('../tools/fixtures/play-piece.cjs'), 4);
+  s.advance([{ kind: 'down', x: 10, y: 10 }]);
+  s.advance([]);
+  const file = path.join(dir, 'round-4.session.json');
+  fs.writeFileSync(file, JSON.stringify(s.save()));
+  const filmOf = (...args) => film.filmTarget(film.parseArgs([PIECE, ...args]), ROOT);
+  const stillOf = (...args) => still.stillTarget(still.parseArgs([PIECE, ...args]), ROOT);
+  await t.test('a film plays one frame a tick, named after the session, which it keeps beside the film', () => {
+    const target = filmOf('--session', file);
+    assert.equal(path.basename(target.file), 'round-4.mp4');
+    assert.equal(target.session.name, 'round-4.session.json');
+    assert.equal(target.session.film.time.duration, 3 / 60);
+    assert.equal(target.session.beside, path.join(path.dirname(target.file), 'round-4.session.json'));
+    assert.equal(path.basename(filmOf('--session', file, '--out', path.join(dir, 'kept.mp4')).file), 'kept.mp4');
+  });
+  await t.test('a still reads --at in the session\'s seconds', () => {
+    const target = stillOf('--session', file, '--at', String(2 / 60));
+    assert.equal(path.basename(target.file), 'round-4.png');
+    assert.equal(target.t, 1);
+  });
+  fs.writeFileSync(path.join(dir, 'broken.session.json'), '{');
+  fs.writeFileSync(path.join(dir, 'other.session.json'), JSON.stringify({ ...s.save(), piece: 'other' }));
+  const elsewhere = path.join(dir, 'elsewhere');
+  fs.mkdirSync(elsewhere);
+  fs.writeFileSync(path.join(elsewhere, 'round-4.session.json'), JSON.stringify({ ...s.save(), seed: 5 }));
+  for (const [run, args, cause] of [
+    [() => film.parseArgs([PIECE, '--session', file, '--session', file]), [], 'film: give --session only once'],
+    [() => still.parseArgs([PIECE, '--session', file, '--session', file]), [], 'still: give --session only once'],
+    [filmOf, ['--session', file, '--seed', '3'], 'film: give --seed or --session, not both: a session plays at the seed it was played at'],
+    [filmOf, ['--session', file, '--reframe', '0:160x120,1:160x120'], 'film: give --reframe or --session, not both: a session plays at the box it was played at'],
+    [stillOf, ['--session', file, '--box', '80x60'], 'still: give --box or --session, not both: a session plays at the box it was played at'],
+    [stillOf, ['--at', '1'], 'still: play-piece is interactive, so --at reads a saved session\'s time; pass --session <file> as the page\'s save session wrote it'],
+    [filmOf, ['--session', path.join(dir, 'none.json')], 'film: --session: no session file at ' + slash(path.join(dir, 'none.json')) + '; name the file the page\'s save session wrote'],
+    [filmOf, ['--session', path.join(dir, 'other.session.json')], 'film: --session: session: the session is of piece "other", not play-piece'],
+    [stillOf, ['--session', file, '--at', '1'], 'still: --at 1 is outside play-piece\'s 0.05 s'],
+  ]) await t.test(cause, () => assert.throws(() => run(...args), refusal(cause)));
+  for (const [run, args, prefix] of [
+    [filmOf, ['--session', path.join(dir, 'broken.session.json')], 'film: --session: '],
+    [filmOf, ['--session', file, '--out', path.join(elsewhere, 'film.mp4')], 'film: --session: '],
+  ]) await t.test(args.join(' '), () => assert.throws(() => run(...args), refusalFrom(prefix)));
+  assert.throws(() => filmOf('--session', path.join(dir, 'broken.session.json')), /is not JSON: /);
+  assert.throws(() => filmOf('--session', file, '--out', path.join(elsewhere, 'film.mp4')), /round-4\.session\.json already holds another session, and replay reads the session beside the file it checks; move it, or write the file elsewhere with --out/);
+});
+
 test('still: without --out the file name carries --seed, so two seeds stay apart', () => {
   const { parseArgs, stillTarget } = require('../tools/still-cli.js');
   const name = (...args) => path.basename(stillTarget(parseArgs(['specimen', ...args])).file);

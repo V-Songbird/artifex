@@ -22,7 +22,7 @@ const { callerDirectory, imports, hint } = require('./piece-input.js');
 const { bundle, html } = require('./build-page.js');
 const { pngWithManifest } = require('../core/export.js');
 const { VectorSurface } = require('../core/surface-vector.js');
-const { withEdge, waitFor, evaluateInPieces, pageErrors } = require('./check-browser.js');
+const { withEdge, waitFor, evaluate, evaluateInPieces, pageErrors } = require('./check-browser.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const STYLES = path.resolve(__dirname, '..', 'skills', 'artifex', 'styles');
@@ -683,12 +683,14 @@ async function drawPng(name, seed, t, width, box, tool = 'styles') {
  * The piece `name` drawn by drawPng in installed Edge, from `external` or the
  * registered examples when it is null: the PNG's bytes carrying its replay
  * manifest, and the manifest. A `box` ({ w, h }) draws the piece's copy at
- * that box; `edge` stands in for withEdge in tests; `tool` opens its refusals.
+ * that box; `edge` stands in for withEdge in tests; `tool` opens its refusals;
+ * a `session` ({ file, name }) draws a frame of that saved session's film.
  */
-async function pngInEdge(external, name, seed, t, width, browser = {}, box = null, edge = withEdge, tool = 'styles') {
+async function pngInEdge(external, name, seed, t, width, browser = {}, box = null, edge = withEdge, tool = 'styles', session = null) {
   const drawn = await edge(html(bundle(external), external ? { count: 1 } : {}), { ...browser, command: tool }, async (client, context) => {
     await waitFor(client, context, 'document.readyState === "complete" && !!window.__artifex');
     context.phase = 'drawing ' + name;
+    if (session) await evaluate(client, 'window.__artifex.session(' + JSON.stringify(session.file) + ', ' + JSON.stringify(session.name) + '), true');
     // evaluate() shows a page refusal of `tool` ("still: ...") as its message alone.
     const value = await evaluateInPieces(client, '(' + drawPng.toString() + ')(' + [name, seed, t, width, box, tool].map((v) => JSON.stringify(v)).join(', ') + ')');
     pageErrors(client, context);

@@ -157,6 +157,9 @@ function html(bundle, options = {}) {
   main { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; min-width: 0; }
   canvas { max-width: 100%; max-height: calc(100vh - 48px); background: #fff;
            box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+  /* An interactive piece keeps a drag over it, and shows where focus is. */
+  canvas[role=application] { touch-action: none; }
+  canvas[role=application]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   h1 { font-size: 13px; letter-spacing: .18em; margin: 0 0 4px; text-transform: uppercase; }
   .sub { color: var(--dim); margin: 0 0 18px; line-height: 1.5; font-size: 11px; }
   .group { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 14px; }
@@ -213,6 +216,17 @@ function html(bundle, options = {}) {
       </div>
       <input type="range" id="t" min="0" max="1000" value="0">
       <div class="note"><a id="playerLink" href="?player=1">Open in the live player</a>: the piece alone, fitted to the window.</div>
+    </div>
+
+    <div class="group" id="playGroup" hidden>
+      <div class="label">${caps('Session')}</div>
+      <div class="row">
+        <button id="restart">restart</button>
+        <button id="saveSession">save session</button>
+        <span id="tickread" class="facts"></span>
+      </div>
+      <div class="note" id="describe" role="status" aria-live="polite"></div>
+      <div class="note">Press on the piece, or focus it and use the keys, to play. Restart plays again from the same seed. Its film and stills come from a saved session: npm run film or npm run still with --session.</div>
     </div>
 
     <div class="group" id="paramsGroup" hidden>
@@ -294,6 +308,7 @@ var vector = __req('core/surface-vector.js');
 var gpuPreview = __req('core/webgpu-preview.js');
 var film = __req('core/film.js');
 var exporter = __req('core/export.js'), save = exporter.save;
+var playMod = __req('core/play.js');
 var EXAMPLES = __req('examples/index.js');
 
 var names = Object.keys(EXAMPLES);
@@ -362,7 +377,7 @@ document.getElementById('previewMode').onchange = function () { setPreview(this.
 if (window.addEventListener) window.addEventListener('pagehide', resetPreview);
 
 function kindOf(p) {
-  return (p.time ? Math.round(p.time.duration * p.time.hz) + ' frames' : 'a still')
+  return (p.time ? Math.round(p.time.duration * p.time.hz) + ' frames' : p.play ? 'interactive' : 'a still')
     + ' \\u00b7 ' + p.outputs.join(' + ');
 }
 
@@ -395,9 +410,16 @@ function select(name) {
   document.getElementById('t').value = 0;
   document.getElementById('t').disabled = !current.time;
   document.getElementById('play').disabled = !current.time;
+  document.getElementById('playGroup').hidden = !current.play;
+  // An interactive piece takes focus, the pointer and the keys; any other is a picture, as it always was.
+  if (current.play) c.tabIndex = 0;
+  else if (c.removeAttribute) c.removeAttribute('tabindex');
+  c.setAttribute('role', current.play ? 'application' : 'img');
   var can = current.outputs.indexOf('vector') >= 0;
-  document.getElementById('svg').disabled = !can;
-  document.getElementById('svgnote').textContent = can
+  document.getElementById('svg').disabled = !can || !!current.play;
+  document.getElementById('svgnote').textContent = current.play
+    ? 'PNG and SVG come from a saved session while the piece is played.'
+    : can
     ? 'SVG saves this frame as vector paths, sharp at any size.'
     : 'SVG is off: this piece draws pixels, not vector paths. Export PNG instead.';
   document.getElementById('video').disabled = !current.time || videoBusy;
@@ -408,6 +430,8 @@ function select(name) {
   document.getElementById('filmnote').textContent = current.time
     ? render.playheads(current).length + ' frames, each encoded at its own time however long it takes to draw'
       + (current.sound ? ', with the soundtrack the piece declares.' : '.')
+    : current.play
+    ? 'An interactive piece\\u2019s film is made from a saved session: npm run film -- ' + currentName + ' --session <file>.'
     : film.stillFilmRefusal(current).replace(/^./, function (c) { return c.toUpperCase(); });
   offerFilm();
   Array.prototype.forEach.call(box.children, function (b) { b.classList.toggle('on', b.dataset.name === name); });
@@ -573,15 +597,19 @@ function buildControls(ready) {
   document.getElementById('previewMode').disabled = !ready;
   document.getElementById('play').disabled = !ready || !current.time;
   document.getElementById('t').disabled = !ready || !current.time;
-  document.getElementById('svg').disabled = !ready || current.outputs.indexOf('vector') < 0;
+  document.getElementById('svg').disabled = !ready || current.outputs.indexOf('vector') < 0 || !!current.play;
   document.getElementById('video').disabled = !ready || !current.time || videoBusy;
   Array.prototype.forEach.call(filmButtons, function (b) { b.disabled = !ready || !current.time || filmBusy; });
-  Array.prototype.forEach.call(document.querySelectorAll('[data-png]'), function (b) { b.disabled = !ready; });
+  // A frame of a game being played names no session to make it again, so exports wait for a saved one.
+  Array.prototype.forEach.call(document.querySelectorAll('[data-png]'), function (b) { b.disabled = !ready || !!current.play; });
+  document.getElementById('restart').disabled = !ready || !current.play;
+  document.getElementById('saveSession').disabled = !ready || !current.play;
 }
 
 function failBuild(message) {
   // A partial solve is diagnostic state, never a frame or an export recipe.
   solved = null;
+  playSession = null;
   resetPreview();
   err.textContent = message;
   errNext.textContent = 'Playback and exports are off until the piece builds: try another seed or parameter value, or fix the stage the error names.';
@@ -601,7 +629,12 @@ function resolve() {
   soundtrack = null;
   silence();
   try {
-    solved = piece.solve(current, Number(document.getElementById('seed').value), overrides);
+    // An interactive piece starts a session at tick 0, with an empty log, on its own solve.
+    playSession = null;
+    if (current.play) {
+      playSession = playMod.session(current, Number(document.getElementById('seed').value), overrides);
+      solved = playSession.solved;
+    } else solved = piece.solve(current, Number(document.getElementById('seed').value), overrides);
     err.textContent = '';
     errNext.textContent = '';
   } catch (e) { failBuild(String(e.message)); return; }
@@ -617,17 +650,134 @@ function resolve() {
     previewInfo.presented = null;
   }
   buildControls(true);
+  if (playSession) return startPlay();
   frame();
   // A parameter changed while playing: the transport plays on, so its sound
   // does too, from the new solve.
   if (playing) playSound(transportRevision);
 }
 
+// THE PLAY LOOP. An interactive piece is stepped on fixed ticks, play.hz a
+// second: each animation frame advances as many ticks as real time asks, at
+// most MAX_CATCHUP, so a stall drops time instead of replaying it as a burst,
+// and a hidden page advances none. Real time only decides how fast ticks pass;
+// the tick count is the truth, and the log is all a session keeps. The inputs
+// that arrived since the last tick go to the next one. Then the piece is drawn
+// once, at its session time: the tick plus the part of one already passed.
+var MAX_CATCHUP = 4;
+var playSession = null, playOrigin = 0, playQueue = [], playRaf = 0, tickHook = null, described = null;
+
+function startPlay() {
+  cancelAnimationFrame(playRaf);
+  playQueue = [];
+  described = null;
+  document.getElementById('describe').textContent = '';
+  playOrigin = performance.now();
+  if (!player) c.setAttribute('aria-label', currentName + ', seed ' + solved.seed + ': an interactive piece; press on it, or focus it and use the keys');
+  facts.innerHTML = [
+    'declared <b>' + current.outputs.join(' + ') + '</b>',
+    'design box <b>' + current.size.w + ' \\u00d7 ' + current.size.h + '</b>',
+    'seed <b>' + solved.seed + '</b>',
+    'build <b>' + solved.__ms.toFixed(1) + ' ms</b> in <b>' + solved.stages.of + '</b> stage(s)',
+    'ticks <b>' + current.play.hz + '</b> a second',
+  ].join('<br>');
+  toUrl();
+  drawPlay(playOrigin);
+  playRaf = requestAnimationFrame(playStep);
+}
+
+function playStep(now) {
+  var s = playSession;
+  if (!s) return;
+  var hz = current.play.hz;
+  // Hidden, the page holds its tick: the time it was hidden never reaches the session.
+  if (document.hidden) playOrigin = now - (s.tick * 1000) / hz;
+  var due = Math.floor(((now - playOrigin) * hz) / 1000) - s.tick;
+  if (due > MAX_CATCHUP) { playOrigin += ((due - MAX_CATCHUP) * 1000) / hz; due = MAX_CATCHUP; }
+  for (var i = 0; i < due; i++) {
+    try { s.advance(playQueue.splice(0)); } catch (e) {
+      failBuild('play.step threw at tick ' + (s.tick + 1) + ': ' + String(e.message || e));
+      return;
+    }
+    if (tickHook) tickHook(s);
+  }
+  if (!drawPlay(now)) return;
+  playRaf = requestAnimationFrame(playStep);
+}
+
+// Draws the session where it stands at the time now; false when the frame cannot be drawn.
+function drawPlay(now) {
+  var s = playSession, hz = current.play.hz;
+  var part = Math.min(1, Math.max(0, ((now - playOrigin) * hz) / 1000 - s.tick));
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, c.width, c.height);
+  try { render.drawFrame(ctx, current, solved, (s.tick + part) / hz, { scale: view }); } catch (e) {
+    err.textContent = String(e.message);
+    if (!player) c.setAttribute('aria-label', currentName + ': no picture, the frame could not be drawn');
+    stop();
+    return false;
+  }
+  document.getElementById('tickread').textContent = 'tick ' + s.tick + ', ' + s.log.length + ' inputs';
+  var said = s.describe();
+  // Announced when it changes, and only then.
+  if (said !== null && said !== described) document.getElementById('describe').textContent = described = said;
+  return true;
+}
+
+// Input, normalised before the piece sees it: a pointer in design units through
+// the box and scale the page draws at, mouse, pen and first touch as one
+// pointer, moves within one tick folded to the last; a key by its
+// KeyboardEvent.key, arrows, Enter, Space, Escape and single characters,
+// without repeats. Tab and shortcuts stay with the page.
+var PLAY_KEYS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter', ' ', 'Escape'];
+function listens(kind) { return !!playSession && current.play.inputs.indexOf(kind) >= 0; }
+function pointerInput(kind) {
+  return function (e) {
+    if (!listens('pointer') || e.isPrimary === false) return;
+    var r = c.getBoundingClientRect();
+    if (!(r.width > 0 && r.height > 0)) return;
+    if (kind === 'down') {
+      if (c.focus) c.focus();
+      if (c.setPointerCapture && e.pointerId !== undefined) { try { c.setPointerCapture(e.pointerId); } catch (x) { /* a released pointer cannot be captured */ } }
+    }
+    var last = playQueue[playQueue.length - 1];
+    if (kind === 'move' && last && last.kind === 'move') playQueue.pop();
+    playQueue.push({ kind: kind, x: ((e.clientX - r.left) / r.width) * current.size.w, y: ((e.clientY - r.top) / r.height) * current.size.h });
+    if (e.preventDefault) e.preventDefault();
+  };
+}
+function keyInput(down) {
+  return function (e) {
+    if (!listens('key') || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (PLAY_KEYS.indexOf(e.key) < 0 && String(e.key).length !== 1) return;
+    e.preventDefault();
+    playQueue.push({ kind: 'key', key: e.key, down: down });
+  };
+}
+c.onpointerdown = pointerInput('down');
+c.onpointermove = pointerInput('move');
+c.onpointerup = pointerInput('up');
+c.onkeydown = keyInput(true);
+c.onkeyup = keyInput(false);
+
+// The session as save session writes it, or null for a piece without play.
+function sessionFile() { return playSession ? playSession.save() : null; }
+
+document.getElementById('restart').onclick = function () { if (playSession) resolve(); };
+document.getElementById('saveSession').onclick = function () {
+  var file = sessionFile();
+  if (file) save(new Blob([JSON.stringify(file)], { type: 'application/json' }), exporter.fileName('session', currentName, file.seed));
+};
+
+// Each piece's own declaration while the film of one of its sessions stands in for it.
+var declared = {};
+
 // The frame the playhead asks for, spoken in place of its 0-1000 value.
 function frameText(at) { return current.time ? 'frame ' + (piece.frameIndex(current, at) + 1) + ' of ' + frameTotal : 'a still'; }
 
 function frame() {
   if (!solved) return;
+  if (playSession) return drawPlay(performance.now());
   // Set on request, so a GPU preview still drawing or a frame that fails to draw cannot leave it stale.
   document.getElementById('t').setAttribute('aria-valuetext', frameText(t));
   var revision = ++frameRevision;
@@ -706,6 +856,7 @@ function stop() {
   transportRevision++;
   cancelAnimationFrame(raf);
   silence();
+  cancelAnimationFrame(playRaf);
   var b = document.getElementById('play');
   b.classList.remove('on');
   b.textContent = 'play';
@@ -1035,7 +1186,27 @@ window.__artifex = {
       frames: render.playheads(current).length,
       error: err.textContent || null,
       preview: previewInfo,
+      play: playSession ? { tick: playSession.tick, hz: current.play.hz, inputs: playSession.log.length, describe: described } : null,
     };
+  },
+  // core/play.js, so a check can run a saved session again in this page.
+  play: playMod,
+  // The session being played, as save session writes it; null for a piece without play.
+  saveSession: sessionFile,
+  // Called with the session after every tick the page plays, or never again with null.
+  onTick: function (fn) { tickHook = typeof fn === 'function' ? fn : null; },
+  // The saved session file of one of this page's pieces becomes that piece:
+  // its film, one frame per tick, which select, the exports and a replay's
+  // redraw then take as any piece with a timeline. name, the session file's
+  // name, goes in the manifest of every file made from it. Refused by name
+  // when the file is not a session of the piece it names.
+  session: function (file, name) {
+    var n = file && file.piece;
+    if (!Object.prototype.hasOwnProperty.call(EXAMPLES, n)) throw new Error('session: this page has no piece named ' + JSON.stringify(n));
+    var own = declared[n] || EXAMPLES[n];
+    EXAMPLES[n] = playMod.film(own, file, name || null);
+    declared[n] = own;
+    return { piece: n, ticks: file.ticks, hz: file.hz, frames: file.ticks + 1 };
   },
   // Stop the build after a named stage and describe what it had made. read()
   // above answers what is on screen; this answers what the piece was holding
@@ -1102,12 +1273,15 @@ if (from && EXAMPLES[from.piece]) {
 
 if (player) {
   document.body.classList.add('player');
-  c.tabIndex = 0;
-  c.setAttribute('role', 'button');
-  c.setAttribute('aria-label', currentName + ': play or pause');
   var toggle = function () { var b = document.getElementById('play'); b.onclick.call(b); };
-  c.onclick = toggle;
-  c.onkeydown = function (e) { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(); } };
+  // An interactive piece keeps the pointer and the keys; any other plays or pauses on them.
+  if (!current.play) {
+    c.tabIndex = 0;
+    c.setAttribute('role', 'button');
+    c.setAttribute('aria-label', currentName + ': play or pause');
+    c.onclick = toggle;
+    c.onkeydown = function (e) { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(); } };
+  }
   // Debounced: a rebuild waits until the window has kept its size for 100 ms,
   // so a drag rebuilds once rather than on every event, and it then runs at the
   // start of an animation frame, never in the middle of drawing one.

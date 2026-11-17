@@ -24,6 +24,12 @@ const FLASH_FIXTURE = path.join(ROOT, 'tools', 'fixtures', 'flash-film.cjs');
 // A film drawn over and from an image it declares, so a declared image is seen
 // in the page's own PNG and to replay in its PNG and its film.
 const IMAGE_FIXTURE = path.join(ROOT, 'tools', 'fixtures', 'image-piece.cjs');
+// An interactive piece, played in the page through real pointer and key input,
+// so a recorded session is seen to run again to the same frames, and its film
+// and still to replay from the session saved beside them.
+const PLAY_FIXTURE = path.join(ROOT, 'tools', 'fixtures', 'play-piece.cjs');
+// How many ticks the play fixture is played for after its last input.
+const PLAY_TAIL = 30;
 // Pixels of the image fixture's first frame, away from its marks, where its PNG
 // must show the image itself, and by how many levels a channel there may differ
 // from the image read bilinearly: any smooth upscale of the fixture's linear
@@ -1295,10 +1301,129 @@ async function imageFixtureSteps(report, options, { dir = OUT, edge: inEdge = wi
   return fixture;
 }
 
-/** `npm run browser`: runBrowserCheck, then, without --force, the image fixture (checkImageFixture). */
+// Serialized into the play fixture's page. From a restart, records after every
+// tick the page plays a digest of the session drawn at that tick, on a canvas
+// of its own read back once, until stopTicks; the drawing is the same one a
+// re-run of the saved session makes in rerunTicks.
+function recordTicks() {
+  const api = window.__artifex;
+  const canvas = document.createElement('canvas');
+  const g = canvas.getContext('2d', { willReadFrequently: true });
+  const digestOf = (s) => {
+    canvas.width = s.piece.size.w; canvas.height = s.piece.size.h;
+    api.render.drawFrame(g, s.piece, s.solved, s.tick / s.piece.play.hz);
+    const data = g.getImageData(0, 0, canvas.width, canvas.height).data;
+    let h = 0x811c9dc5;
+    for (let i = 0; i < data.length; i++) h = Math.imul(h ^ data[i], 0x01000193);
+    return h >>> 0;
+  };
+  window.__playDigest = digestOf;
+  window.__playFrames = [];
+  document.getElementById('restart').onclick();
+  api.onTick((s) => window.__playFrames.push(digestOf(s)));
+  return true;
+}
+
+// Serialized into the page: stops recording and returns the saved session with the frames recorded live.
+function stopTicks() {
+  const api = window.__artifex;
+  api.onTick(null);
+  return { session: api.saveSession(), frames: window.__playFrames };
+}
+
+// Serialized into the page: runs `session` again in this page, from the
+// piece's own declaration, and names the first tick whose frame differs from
+// the one recorded live in `frames` (tick 1 first), or null.
+function rerunTicks(name, session, frames) {
+  const api = window.__artifex, again = [];
+  api.play.rerun(api.examples[name], session, (s) => { if (s.tick > 0) again.push(window.__playDigest(s)); });
+  const at = again.findIndex((d, i) => d !== frames[i]);
+  return { rerun: again.length, differs: at < 0 && again.length === frames.length ? null : at < 0 ? Math.min(again.length, frames.length) + 1 : at + 1 };
+}
+
+/**
+ * The play fixture played in installed Edge through the page's own play mode:
+ * presses, a drag and keys sent as real input through DevTools, a digest of
+ * every tick's frame recorded as it plays, then the saved session run again in
+ * the same page and compared tick by tick. Its film and its still at the
+ * middle tick are then made by npm run film's and npm run still's own routes
+ * with the session written beside them as browser-play-piece.session.json, and
+ * each is replayed. Sets `report.playFixture` to { ticks, inputs, kinds,
+ * differs, film, still }, `differs` the first tick whose re-run frame differs,
+ * or null. Every failure names the fixture and carries the run's `report`.
+ */
+async function checkPlayFixture(report, options, { dir = OUT, edge = withEdge, exportFilm, still, replay } = {}) {
+  try { return await playFixtureSteps(report, options, { dir, edge, exportFilm, still, replay }); } catch (error) {
+    if (!/the play fixture/.test(error.message)) error.message = 'browser: the play fixture: ' + error.message;
+    throw Object.assign(error, { report });
+  }
+}
+
+async function playFixtureSteps(report, options, { dir, edge, exportFilm, still, replay }) {
+  const external = loadExternal(PLAY_FIXTURE, ROOT);
+  const [name] = external.names;
+  const browser = { edge: options.edge, timeoutMs: options.timeoutMs, headed: options.headed };
+  const fixture = report.playFixture = {};
+  const { bundle, html } = require('./build-page.js');
+  const played = await edge(html(bundle(external), { count: 1 }), { ...browser, command: 'browser' }, async (client, context) => {
+    await waitFor(client, context, 'document.readyState === "complete" && !!window.__artifex && !!window.__artifex.read().play');
+    context.phase = 'play fixture';
+    await evaluate(client, '(' + recordTicks + ')()');
+    const box = await evaluate(client, '(() => { const r = document.getElementById("c").getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; })()');
+    // A design point of the 160 x 120 fixture as a point on the page.
+    const at = (x, y) => ({ x: box.x + (x / 160) * box.w, y: box.y + (y / 120) * box.h });
+    const mouse = (type, x, y) => client.send('Input.dispatchMouseEvent', { type, ...at(x, y), button: type === 'mouseMoved' ? 'none' : 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 });
+    const key = (type, k, code, vk) => client.send('Input.dispatchKeyEvent', { type, key: k, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
+    const pause = () => delay(60, undefined, { signal: context.signal });
+    await mouse('mousePressed', 30, 30); await pause();
+    await mouse('mouseReleased', 30, 30); await pause();
+    await mouse('mouseMoved', 70, 50); await pause();
+    await mouse('mouseMoved', 90, 60); await pause();
+    await key('rawKeyDown', 'ArrowRight', 'ArrowRight', 39); await key('keyUp', 'ArrowRight', 'ArrowRight', 39); await pause();
+    await key('rawKeyDown', 'Enter', 'Enter', 13); await key('keyUp', 'Enter', 'Enter', 13); await pause();
+    await mouse('mousePressed', 130, 90); await pause();
+    await mouse('mouseReleased', 130, 90);
+    const last = await evaluate(client, 'window.__artifex.read().play.tick');
+    await waitFor(client, context, 'window.__artifex.read().play.tick >= ' + (last + PLAY_TAIL));
+    const recorded = await evaluateInPieces(client, '(' + stopTicks + ')()');
+    const verdict = await evaluate(client, '(' + rerunTicks + ')(' + [name, recorded.session, recorded.frames].map((v) => JSON.stringify(v)).join(', ') + ')');
+    pageErrors(client, context);
+    return { ...recorded, ...verdict };
+  });
+  const { session } = played;
+  const kinds = [...new Set(session.log.map((row) => row[1]))].sort();
+  Object.assign(fixture, { ticks: session.ticks, inputs: session.log.length, kinds, differs: played.differs });
+  if (played.frames.length !== session.ticks || played.rerun !== session.ticks) {
+    throw new Error(`browser: the play fixture recorded ${played.frames.length} frames over ${session.ticks} ticks and its re-run drew ${played.rerun}`);
+  }
+  if (played.differs !== null) throw new Error(`browser: the play fixture's saved session ran again to another frame at tick ${played.differs} of ${session.ticks}`);
+  // Every kind of input sent reached the log, through the page's own input handling.
+  const want = ['down', 'key', 'move', 'up'];
+  if (want.some((k) => !kinds.includes(k))) throw new Error(`browser: the play fixture's log holds inputs of kinds ${JSON.stringify(kinds)}, not each of ${JSON.stringify(want)} the check sent`);
+  const sessionName = 'browser-play-piece.session.json';
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, sessionName), JSON.stringify(session));
+  const target = { name, external, session: { file: session, name: sessionName } };
+  const exported = await (exportFilm ?? require('./film-cli.js').exportFilm)(target, { scale: 1 }, options);
+  fixture.film = {};
+  await replayFilm(fixture.film, 'the play fixture', path.join(dir, 'browser-play-piece.mp4'), exported.bytes, report, options, { replay, piece: PLAY_FIXTURE });
+  const middle = Math.round(session.ticks / 2);
+  const { bytes } = await (still ?? require('./styles.js').pngInEdge)(external, name, session.seed, middle / session.ticks, 160, browser, null, edge, 'browser', target.session);
+  const file = path.join(dir, 'browser-play-piece.png');
+  await fs.writeFile(file, bytes);
+  const shown = await (replay ?? require('./replay.js').replay)(file, { browser, piece: PLAY_FIXTURE });
+  fixture.still = { tick: middle, match: shown.match, file: slash(file), detail: shown.detail };
+  if (!shown.match) throw new Error('browser: the play fixture\'s still DIFFERS on replay: ' + shown.detail);
+  return fixture;
+}
+
+/** `npm run browser`: runBrowserCheck, then, without --force, the image fixture (checkImageFixture) and the play fixture (checkPlayFixture). */
 async function runAll(options) {
   const report = await runBrowserCheck(options);
-  if (!options.force) await checkImageFixture(report, options);
+  if (!options.force) {
+    await checkImageFixture(report, options);
+    await checkPlayFixture(report, options);
+  }
   return report;
 }
 
@@ -1696,7 +1821,7 @@ async function main(args = process.argv.slice(2), run = runAll, dir = OUT) {
       : '; no example has a timeline, so no film was exported';
     // Every Edge that failed only to clean up says so in the failure (withEdge's
     // "browser: cleanup failed"); any other failure came after every browser was cleaned up.
-    const image = report.imageFixture;
+    const image = report.imageFixture, play = report.playFixture;
     // A forced run's verdict is about its fallback, and must never read as the
     // default run's; nor may a run that accepted any colour route.
     console.log('browser' + (report.forced ? ' with ' + FORCED[report.forced].means : '')
@@ -1707,6 +1832,8 @@ async function main(args = process.argv.slice(2), run = runAll, dir = OUT) {
       + (image && image.png && image.png.match ? '; the image fixture\'s page credited its image, and its PNG showed it and replayed as matching'
         + (image.replay ? ', and its film was exported' + replayPhrase(image.replay) : '')
         + (image.decode && image.decode.converted ? '; npm run image converted a gamma-tagged PNG to sRGB in Edge' : '') : '')
+      + (play && play.still && play.still.match ? '; the play fixture was played for ' + play.ticks + ' ticks through ' + play.inputs + ' real inputs, its saved session ran again to the same frames'
+        + ', its film was exported' + replayPhrase(play.film.replay) + ', and its still replayed as matching' : '')
       + (failure && /browser: cleanup failed/.test(failure.message) ? '; cleanup failed' : '; owned browser, server and profile cleaned up'));
     if (!options.json) console.log('report: ' + slash(await saveReport('browser', report, dir)));
   }
@@ -1718,5 +1845,5 @@ if (require.main === module) main().catch((error) => { console.error(error.messa
 module.exports = {
   parseArgs, findEdge, browserCandidates, connectCDP, evaluate, servePage, inspectPiece, inspectStill, pagePng, stillVerdict, filmsToExport, inspectFilm, runBrowserCheck, checkPage, replayFilms, requireReplays,
   stopBrowser, stopRelaunched, removeProfile, main, saveReport, FORCED, retryBehindSchedule, crashPartway, sheetReady, sheetData, captureSheet, frameMatch, soundMatch, loudnessMatch, PAGE_LOUDNESS_MATCH, withEdge, waitFor, pageErrors, routeVerdict, redrawPhrase,
-  evaluateInPieces, PIECE_CHARS, SHOT_BYTES, bandRows, sheetPieces, sheetCuts, writePieces, removeGoneSections, sheetParts, sheetClip, checkFlashFixture, checkImageFixture, imageMiss, TIMEOUT_MS, timeoutArg, SHEET_PROGRESS,
+  evaluateInPieces, PIECE_CHARS, SHOT_BYTES, bandRows, sheetPieces, sheetCuts, writePieces, removeGoneSections, sheetParts, sheetClip, checkFlashFixture, checkImageFixture, checkPlayFixture, imageMiss, TIMEOUT_MS, timeoutArg, SHEET_PROGRESS,
 };
