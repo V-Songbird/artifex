@@ -859,6 +859,16 @@ test('simulate: a contact between two bodies names the first frame whose poses t
     assert.equal(c.frame, touch, `at ${speed} with ${substeps} substeps the contact names frame ${c.frame}, not ${touch}`);
     assert.ok(c.seconds <= touch / 24 && c.seconds > (touch - 1) / 24, `the contact at ${c.seconds} s is not within frame ${touch}`);
   }
+  // Closing at 4 from 2 apart, too slowly to be swept, they come within
+  // planck's contact distance on frame 8; with one step a frame the next step
+  // finds the touch as it opens, before it moves anything, so frame 8 shows
+  // it and frame 9 the push.
+  const r = simulate({ frames: 20, hz: 24, substeps: 1, bodies: [{ x: -21, y: 0, width: 40, height: 40, vx: 4 }, { x: 21, y: 0, width: 40, height: 40 }] });
+  assert.equal(r.contacts.length, 1);
+  const [c] = r.contacts;
+  assert.ok(!(r.motion(8, 1)[0] > 0) && r.motion(9, 1)[0] > 0, 'slowly, the second box is pushed first on frame 9');
+  assert.equal(c.frame, 8, `slowly, the contact names frame ${c.frame}, not 8`);
+  assert.ok(c.seconds <= 8 / 24 && c.seconds > 7 / 24, `slowly, the contact at ${c.seconds} s is not within frame 8`);
 });
 
 test('simulate refuses bodies it cannot solve, by name', () => {

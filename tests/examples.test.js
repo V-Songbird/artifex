@@ -3162,6 +3162,15 @@ test('refit: while its box moves it releases at most one thing a frame, none whi
     assert.ok(came.length > 30, `${came.length} things arrive while the box widens`);
     assert.equal(lost.length, 0, `${lost.map((th) => th.i).join(', ')} of the ${came.length} things that arrive while the box widens are lost`);
   }
+  // A box that narrows while its first fill waits takes nothing on its last
+  // narrowing frame either, where no narrowing still to come holds the rain
+  // back, only the narrowing itself.
+  const early = atBox(p0, [{ t: 0, w: 1280, h: 720 }, { t: 0.08, w: 1280, h: 720 }, { t: 0.2, w: 800, h: 720 }, { t: 1, w: 800, h: 720 }]);
+  const boxes = playheads(early).map((t) => clockAt(early, t).box);
+  const narrows = (f) => f > 0 && (boxes[f].w < boxes[f - 1].w || boxes[f].h < boxes[f - 1].h);
+  assert.ok(boxes.filter((b, f) => narrows(f)).length > 20, 'the early box narrows over more than twenty frames');
+  const squeezed = solve(early, p0.seed).state.things.filter((th) => narrows(th.born));
+  assert.equal(squeezed.length, 0, `${squeezed.map((th) => `thing ${th.i} at frame ${th.born}`).join(', ')} come while the early box narrows, to be squeezed out`);
 });
 
 test('refit: its shortest, smallest, lowest and narrowest declared boxes each fill early in the film with the things that fit them, at every grain, the narrow tall ones at the strongest grip too', () => {
@@ -3203,6 +3212,10 @@ test('refit: a full container in a still box takes nothing more as its pile pack
   const things = refitHeld(s, last);
   const released = Math.max(...s.things.map((th) => th.born));
   assert.ok(released < 0.55 * last, `the full container takes its last thing at frame ${released} of ${last}`);
+  // Nor does anything appear in it after its first fill: the room its pile
+  // opens as it packs closer stays open.
+  const late = s.things.filter((th) => th.grows);
+  assert.equal(late.length, 0, `${late.length} things appear after the first fill, the first at frame ${late[0]?.born}, as the pile packs closer`);
   refitLoses(s, things, 'a wide box at the strongest grip');
   refitSettled(things, 1920, 720, 8);
 });
