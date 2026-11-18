@@ -769,7 +769,8 @@ test('contact sheet: --reference shows a photo at its centre, pixel for pixel, t
   assert.match(captioned(300, 200, null, 1), /reference photo torn-paper\.webp · 100%, centre, 300 × 200 photo px from \(0, 0\)<\/figcaption>/,
     'a photo smaller than the crop is captioned with its own size, not the cell\'s');
   assert.match(captioned(1024, 1024, null, 2), /· 200%, centre, 320 × 213 photo px from \(352, 405\)<\/figcaption>/);
-  assert.match(html, /if \(photo\) sheet\.appendChild\(photo\)/, 'the photo is the strip\'s first cell');
+  // A test, not assert.match, so a miss does not print the whole page.
+  assert.ok(/if \(photo\) sheet\.appendChild\(photo\)/.test(html), 'the photo is the strip\'s first cell');
   assert.ok(!page(['readout'], 3, 1, [], null, null, { frames: 3, loupe: true }).includes('id="reference"'));
 });
 
@@ -2143,7 +2144,8 @@ test('contact sheet: a strip page draws its flags into window.__sheet and onto t
   const html = page(['readout'], 3, 1, [], null, null, { frames: 3 });
   assert.match(html, new RegExp('var RULES = ' + JSON.stringify(STRIP_RULES).replace(/[.{}]/g, '\$&') + ';'));
   assert.match(html, /flags = stripFlags\(results, lumas, RULES, p\.size\.w, STRIP\.twoValues\);/);
-  assert.match(html, /flags: flags, failures:/);
+  // A test, not assert.match, so a miss does not print the whole page.
+  assert.ok(/flags: flags, failures:/.test(html), 'window.__sheet carries the strip\'s flags');
   assert.match(html, /nearly empty: detail under/);
   assert.doesNotThrow(() => new vm.Script([...html.matchAll(/<script>([\s\S]*?)<\/script>/g)][0][1]));
   const fixture = loadExternal(path.join(__dirname, 'fixtures', 'empty-film.cjs'));
