@@ -970,7 +970,12 @@ test('a tall captured sheet is written at full scale, in parts of whole rows of 
         return { result: { value: await vm.runInContext(params.expression, page) } };
       },
     };
-    const edge = (html, options, work) => work(client, { errors: [], phase: null });
+    // A sheet that never reads ready fails here in seconds instead of waiting forever.
+    const stalled = new AbortController();
+    const edge = (html, options, work) => {
+      const timer = setTimeout(() => stalled.abort(new Error('the sheet never read ready')), 10000);
+      return work(client, { errors: [], phase: null, signal: stalled.signal }).finally(() => clearTimeout(timer));
+    };
     const { shots } = await captureSheet('<html></html>', path.join(dir, 'seeds'), { cells: 0 }, edge);
     assert.deepEqual(shots.map((s) => [path.basename(s.file), s.width, s.height]), [
       ['seeds-a.png', 1280, 1000],
