@@ -5301,10 +5301,10 @@ const MUTATIONS = [
     expect: '--style draws nothing: page and seeds refuse it by exit code with the style\'s guide and module, and write nothing',
   },
   {
-    why: 'npm run seeds throws a refused style past its catch, printing a stack trace instead of its reason',
+    why: 'npm run seeds leaves a refused style\'s rejection uncaught, printing a stack trace instead of its reason',
     file: 'tools/contact-sheet.js',
-    from: 'Promise.resolve().then(main).catch(',
-    to: 'Promise.resolve(main()).catch(',
+    from: '  Promise.resolve().then(main).catch((error) => { console.error(error.message); process.exitCode = 1; });',
+    to: '  main();',
     expect: '--style draws nothing: page and seeds refuse it by exit code with the style\'s guide and module, and write nothing',
   },
   {
@@ -6969,15 +6969,15 @@ const MUTATIONS = [
   {
     why: 'refit takes a landed thing that a squeeze flings up over the rim while it is still in the air, clear of every thing, wall and floor, instead of letting it fly on until it touches something again',
     file: 'examples/refit.js',
-    from: '          const goes = new Map(on.filter((k) => over.has(k) && grounded.has(k)).map((k) => [k, under(k)]));',
-    to: '          const goes = new Map(on.filter((k) => over.has(k)).map((k) => [k, under(k)]));',
+    from: 'if (goes.has(k) || (y < -th.r',
+    to: 'if (goes.has(k) || over.has(k) || (y < -th.r',
     expect: 'refit: along its box timeline every thing stays inside the walls, falls in from above and leaves only by vanishing over the rim',
   },
   {
     why: 'refit counts a wall as touched along the sim\'s whole wall line, which reaches up over the box, so a landed thing a squeeze flings up over the surround is taken in mid-air as soon as it brushes that line, high above the drawn wall',
     file: 'examples/refit.js',
-    from: '              const up = Math.max(0, rim - LIP - live.y[k]);',
-    to: '              const up = 0;',
+    from: '          const over = new Set(on.filter(',
+    to: '          const LIP = Infinity, over = new Set(on.filter(',
     expect: 'refit: a film whose timeline visits a box far smaller than its frame scales its things only as far as that box still takes the smallest of them, takes nothing out of the air as the box closes, and ends with some held',
   },
   {
@@ -7682,7 +7682,7 @@ const MUTATIONS = [
     file: 'examples/refit.js',
     from: '              if (inL === L && xa >= inL + r && xa - inL - r < ra) take(',
     to: '              if (xa >= inL + r && xa - inL - r < ra) take(',
-    expect: 'refit: after the first fill nothing falls in again: a box that widens fills its new room with the next things, each appearing where it rests, clear of the rest, and growing from nothing there, its own film',
+    expect: 'refit: after the first fill nothing falls in again: a box that widens fills its new room with the next things, each appearing where it rests, clear of the rest, and growing from nothing there, tall narrow to largest',
   },
   {
     why: 'refit starts a thing born on the floor still while the box grows taller, so the floor descends from under it and it hangs in the air as it grows',
@@ -7696,7 +7696,7 @@ const MUTATIONS = [
     file: 'examples/refit.js',
     from: '      return { x: snap[3 * k], y: snap[3 * k + 1] + th.r * (1 - scale), r: th.r * scale, turn: snap[3 * k + 2], scale };',
     to: '      return { x: snap[3 * k], y: snap[3 * k + 1], r: th.r * scale, turn: snap[3 * k + 2], scale };',
-    expect: 'refit: after the first fill nothing falls in again: a box that widens fills its new room with the next things, each appearing where it rests, clear of the rest, and growing from nothing there, its own film',
+    expect: 'refit: after the first fill nothing falls in again: a box that widens fills its new room with the next things, each appearing where it rests, clear of the rest, and growing from nothing there, portrait to wide',
   },
   {
     why: 'refit gives a thing that appears after the first fill its whole weight at once, so while it is still growing it presses what cradles it apart and sinks between them',
@@ -7757,8 +7757,8 @@ const MUTATIONS = [
   {
     why: 'refit shrinks a thing that no longer fits about its own centre where it went, so it floats off what held it while it shrinks',
     file: 'examples/refit.js',
-    from: '            for (const [k, touches] of ready) { things[k].from = touches.find(settled); left--; }',
-    to: '            for (const [k, touches] of ready) { things[k].from = undefined; left--; }',
+    from: '      const th = s.things[k];\n      if (!at || !at.gone || at.placed) return;',
+    to: '      const th = { ...s.things[k], from: undefined };\n      if (!at || !at.gone || at.placed) return;',
     expect: 'refit: along its box timeline every thing stays inside the walls, falls in from above and leaves only by vanishing over the rim',
   },
   {
@@ -8476,10 +8476,10 @@ const MUTATIONS = [
     expect: 'the film scaffold warns when music is not quieter than a caused voice it plays with, or a beat carries more than one sting',
   },
   {
-    why: 'the film scaffold takes music as louder than a caused voice started at velocity 0, which is silent',
+    why: 'the film scaffold judges a caused voice on a frame its gain keys silence as covered by the music over it',
     file: 'skills/artifex/film-scaffold.cjs',
-    from: 'if (!(event?.peak > 0 && m.frame',
-    to: 'if (!(event && m.frame',
+    from: 'if (level > 0 && level <= music.level(',
+    to: 'if (level <= music.level(',
     expect: 'the film scaffold warns when music is not quieter than a caused voice it plays with, or a beat carries more than one sting',
   },
   {
