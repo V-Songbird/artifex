@@ -213,7 +213,7 @@ require('artifex/core/grow.js')    // stipple (tone as dots), colonise (lines th
   // branch towards attractors)
 require('artifex/core/diagram.js') // radar, timeline, layered, sankey (diagrams laid
   // out as geometry for the piece to draw)
-require('artifex/core/deform.js')  // shapeMesh, deformer, riders (a filled outline
+require('artifex/core/deform.js')  // shapeMesh, deformer, riders, squashStretch (a filled outline
   // bent by a few pins; marks that ride it)
 require('artifex/core/solid.js')   // box, prism, cylinder, loft, place, camera,
   // outlines (model once, draw its lines from
