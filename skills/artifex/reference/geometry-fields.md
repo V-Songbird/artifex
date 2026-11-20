@@ -267,6 +267,8 @@ beside `pts`, and you add whatever end a nib, brush or cut edge needs.
   left out for what is hidden. A rounded form is built from `ellipsoid`
   parts instead: `hullOutline` gives the exact outline of one, or of the
   smooth hull round several, as a ring that `union` merges with the rest.
+  To tone or shadow the same solids, `bvh` casts rays at them: the face a
+  ray meets, whether a light reaches a point, how open the sky is above it.
   See [solids drawn as lines](../../../docs/apis/solids.md).
 - **`worley2` and `turbulence` have creases by design.** `f1`, `f2` and each
   folded octave change slope abruptly along cell edges and fold lines, so

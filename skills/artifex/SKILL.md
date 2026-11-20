@@ -219,7 +219,8 @@ require('artifex/core/solid.js')   // box, prism, cylinder, loft, place, camera,
   // outlines (model once, draw its lines from
   // any angle, hidden parts cut away),
   // ellipsoid, hullOutline (the exact outline
-  // of rounded parts and the hull of several)
+  // of rounded parts and the hull of several),
+  // bvh (rays: hits, shadows, open sky)
 require('artifex/core/maps.js')    // fill, noise, cells, warp, levels, steps, blur,
   // slopeBlur, combine, shade, relief, toImage, over
   // (a material built as maps: height, then light,
