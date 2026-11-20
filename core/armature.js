@@ -210,4 +210,100 @@ function project(segments, { view = [0, 0, 1], up = [0, -1, 0], focal = Infinity
   };
 }
 
-module.exports = { pose, reach, project };
+/**
+ * Solves a chain of any number of joints toward `target` by FABRIK (Aristidou
+ * and Lasenby, 2011): each pass pulls the chain from its end to the target and
+ * back to its root, keeping every segment's length. Joints are all `[x, y]` or
+ * all `[x, y, z]`; the result has the same form. A target beyond the chain's
+ * length straightens it toward the target. `pole` turns each middle joint, about
+ * the line through its neighbours, to the pole's side; `maxBend` (radians, in
+ * `(0, PI]`) caps the turn at each middle joint, so a target it rules out is not
+ * reached. Returns `{ joints, reached, iterations, error }`.
+ */
+function fabrik(joints, target, opt = {}) {
+  if (!Array.isArray(joints) || joints.length < 2) {
+    throw new TypeError(`fabrik: joints must be a list of at least 2 points, got ${Array.isArray(joints) ? joints.length : joints}`);
+  }
+  const dim = Array.isArray(joints[0]) ? joints[0].length : 0;
+  if (dim !== 2 && dim !== 3) throw new TypeError('fabrik: joints must be finite [x, y] or [x, y, z] points');
+  const to3 = (p, what) => {
+    if (!Array.isArray(p) || p.length !== dim || !p.every(Number.isFinite)) {
+      throw new TypeError(`fabrik: ${what} must be a finite ${dim === 2 ? '[x, y]' : '[x, y, z]'}, like the joints`);
+    }
+    return dim === 2 ? [p[0], p[1], 0] : p.slice();
+  };
+  const { pole: poleIn = null, maxBend = null, tolerance = 1e-5, iterations: cap = 32 } = opt;
+  const out = joints.map((p, i) => to3(p, `joint ${i}`));
+  const goal = to3(target, 'target');
+  const pole = poleIn === null ? null : to3(poleIn, 'pole');
+  if (!(Number.isFinite(tolerance) && tolerance > 0)) throw new RangeError(`fabrik: tolerance must be a distance over 0, got ${tolerance}`);
+  if (!Number.isInteger(cap) || cap < 1 || cap > 256) throw new RangeError(`fabrik: iterations must be a whole number from 1 to 256, got ${cap}`);
+  if (maxBend !== null && !(Number.isFinite(maxBend) && maxBend > 0 && maxBend <= Math.PI)) {
+    throw new RangeError(`fabrik: maxBend must be radians in (0, PI], got ${maxBend}`);
+  }
+
+  const n = out.length;
+  const sub = (p, q) => comb(p, 1, q, -1);
+  const len = (v) => Math.hypot(v[0], v[1], v[2]);
+  const dir = (from, to, fallback) => { const v = sub(to, from), l = len(v); return l > EPS ? v.map((x) => x / l) : fallback; };
+  const lengths = [];
+  for (let i = 0; i < n - 1; i++) {
+    lengths.push(len(sub(out[i + 1], out[i])));
+    if (!(lengths[i] > 0)) throw new RangeError(`fabrik: joints ${i} and ${i + 1} must not coincide`);
+  }
+  const total = lengths.reduce((a, b) => a + b, 0);
+  const root = out[0].slice();
+  const along = dir(root, goal, [0, 1, 0]);
+  const done = (iterations) => {
+    const error = len(sub(out[n - 1], goal));
+    return { joints: out.map((p) => p.slice(0, dim)), reached: error <= tolerance, iterations, error };
+  };
+
+  if (len(sub(goal, root)) >= total) {
+    for (let i = 0; i < n - 1; i++) out[i + 1] = comb(out[i], 1, along, lengths[i]);
+    return done(0);
+  }
+
+  // The part of `v` across the line with direction `axis`.
+  const across = (v, axis) => comb(v, 1, axis, -dot(v, axis));
+  // A straight chain has no side to bend to, so it is nudged toward the pole,
+  // or toward one fixed side of the line to the target.
+  let side = pole ? across(sub(pole, root), along) : [0, 0, 0];
+  if (len(side) <= EPS) side = across(dim === 2 ? [-along[1], along[0], 0] : cross(along, Math.abs(along[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0]), along);
+  side = side.map((x) => x / len(side));
+  const straight = out.every((p, i) => i === 0 || len(across(sub(p, root), dir(root, out[n - 1], along))) <= 1e-9 * total);
+  if (straight) for (let i = 1; i < n - 1; i++) out[i] = comb(out[i], 1, side, total * 1e-3);
+
+  // Turns middle joint i about the line through its neighbours to the pole's side;
+  // the turn keeps both of its segment lengths.
+  const toPole = (i) => {
+    const a = out[i - 1], axis = dir(a, out[i + 1], null);
+    if (!axis) return;
+    const offset = across(sub(out[i], a), axis), towards = across(sub(pole, a), axis);
+    const r = len(offset), t = len(towards);
+    if (r > EPS && t > EPS) out[i] = comb(comb(a, 1, axis, dot(sub(out[i], a), axis)), 1, towards, r / t);
+  };
+  // The direction from joint i, limited to maxBend from the segment before it.
+  const limit = (i, d) => {
+    if (maxBend === null || i === 0) return d;
+    const prev = dir(out[i - 1], out[i], d);
+    const c = Math.max(-1, Math.min(1, dot(prev, d)));
+    if (Math.acos(c) <= maxBend) return d;
+    const perp = across(d, prev), l = len(perp);
+    const u = l > EPS ? perp.map((x) => x / l) : side;
+    return comb(prev, Math.cos(maxBend), u, Math.sin(maxBend));
+  };
+
+  let iterations = 0;
+  while (len(sub(out[n - 1], goal)) > tolerance && iterations < cap) {
+    iterations++;
+    out[n - 1] = goal.slice();
+    for (let i = n - 2; i >= 0; i--) out[i] = comb(out[i + 1], 1, dir(out[i + 1], out[i], along.map((x) => -x)), lengths[i]);
+    if (pole) for (let i = 1; i < n - 1; i++) toPole(i);
+    out[0] = root.slice();
+    for (let i = 0; i < n - 1; i++) out[i + 1] = comb(out[i], 1, limit(i, dir(out[i], out[i + 1], along)), lengths[i]);
+  }
+  return done(iterations);
+}
+
+module.exports = { pose, reach, project, fabrik };

@@ -7,7 +7,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { pose, reach, project } = require('../core/armature.js');
+const { pose, reach, project, fabrik } = require('../core/armature.js');
 
 const near = (a, b, eps = 1e-9) => Math.abs(a - b) < eps;
 const dot = (p, q) => p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
@@ -224,4 +224,44 @@ test('inputs are not changed and outputs share no arrays', () => {
   assert.deepStrictEqual(root, [0, 0, 0]);
   assert.deepStrictEqual(segs[0].radius, [1, 1]);
   assert.notStrictEqual(out[0].radius, segs[0].radius);
+});
+
+test('fabrik solves 2D and 3D chains while preserving exact segment lengths and respecting poles', () => {
+  const chain3 = [[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]];
+  const res = fabrik(chain3, [1.5, 1.5, 0.5], { pole: [0, 3, 0], maxBend: Math.PI * 0.75, tolerance: 1e-5, iterations: 64 });
+  assert.strictEqual(res.reached, true);
+  assert.ok(dist(res.joints[0], chain3[0]) < 1e-12);
+  assert.ok(dist(res.joints[3], [1.5, 1.5, 0.5]) < 1e-4);
+  for (let i = 0; i < 3; i++) assert.ok(near(dist(res.joints[i], res.joints[i + 1]), 1, 1e-6));
+
+  const far = fabrik(chain3, [10, 0, 0]);
+  assert.strictEqual(far.reached, false);
+  assert.ok(near(dist(far.joints[0], far.joints[3]), 3, 1e-6));
+
+  const res2 = fabrik([[0, 0], [2, 0], [4, 0]], [2, 2], { pole: [0, 4] });
+  assert.strictEqual(res2.reached, true);
+  assert.strictEqual(res2.joints[0].length, 2);
+});
+
+test('fabrik bends a straight chain, to the pole side it is given', () => {
+  const chain = [[0, 0], [1, 0], [2, 0], [3, 0]];
+  const onLine = fabrik(chain, [2.5, 0]);
+  assert.strictEqual(onLine.reached, true, `a straight chain must bend to reach a nearer point on its line, error ${onLine.error}`);
+  for (const sign of [1, -1]) {
+    const r = fabrik(chain, [2, 0.5], { pole: [1.5, 5 * sign] });
+    assert.strictEqual(r.reached, true);
+    for (const j of r.joints.slice(1, 3)) assert.ok(Math.sign(j[1] - 0.25 * j[0]) === sign, `joint ${j} is not on the pole's side`);
+    for (let i = 0; i < 3; i++) assert.ok(near(Math.hypot(r.joints[i + 1][0] - r.joints[i][0], r.joints[i + 1][1] - r.joints[i][1]), 1, 1e-9));
+  }
+  const limited = fabrik(chain, [1, 1], { maxBend: 0.6, iterations: 200 });
+  assert.strictEqual(limited.reached, false, 'a target the bend limit rules out is not reached');
+  assert.deepStrictEqual(chain, [[0, 0], [1, 0], [2, 0], [3, 0]]);
+});
+
+test('fabrik refuses joints, a target or options it cannot use', () => {
+  assert.throws(() => fabrik([[0, 0]], [1, 1]), /fabrik: joints must be a list of at least 2 points, got 1/);
+  assert.throws(() => fabrik([[0, 0], [0, 0]], [1, 1]), /fabrik: joints 0 and 1 must not coincide/);
+  assert.throws(() => fabrik([[0, 0], [1, 0]], [1, 1, 1]), /fabrik: target must be a finite \[x, y\], like the joints/);
+  assert.throws(() => fabrik([[0, 0], [1, 0]], [1, 1], { maxBend: 4 }), /fabrik: maxBend must be radians in \(0, PI\], got 4/);
+  assert.throws(() => fabrik([[0, 0], [1, 0]], [1, 1], { iterations: 0 }), /fabrik: iterations must be a whole number from 1 to 256, got 0/);
 });
