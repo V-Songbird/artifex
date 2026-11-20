@@ -9,7 +9,7 @@
     "quality": 0.82
   },
   "sources": {
-    "../skills/artifex/styles/kit.js": "30ffe34ac03451d65646e2f5d3870e987e460fcd79710fa4b91629fe87fdd797",
+    "../skills/artifex/styles/kit.js": "8fc14f253e4c615a18ba271d7add63272e8a6b3a9ee6db896378f40a22241688",
     "../skills/artifex/styles/light-painting.js": "001e7d68fb3dce9939ddea0d4d87d18127601d95702dc22f8644cc988a2c6485",
     "core/colour.js": "21fb41835c359f30836f13b1711f1ba7577f9c805d5ebac697731f2a424f371e",
     "core/geom.js": "e3e21ed547d90f2038649ddfa928c111f6eeb744d420ddbe27554c08eab2f6a8",

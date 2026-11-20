@@ -6,6 +6,8 @@
 const { resample } = require('../../../core/geom.js');
 const { noise2 } = require('../../../core/rand.js');
 const { sibling } = require('../../../core/layer.js');
+const { rgb, hex, toLinear, toSRGB, oklch, oklabOfLinear, luma, contrast } = require('../../../core/colour.js');
+const { clamp, clamp01, lerp } = require('../../../core/num.js');
 
 // Place unit points at (x, y) with scale s, optional mirror and rotation.
 function place(pts, x, y, s, rot = 0, flip = false) {
@@ -197,4 +199,125 @@ function caption(g, text, font, colour, x = 40, y = 950, size = 14) {
   g.restore();
 }
 
-module.exports = { place, path, sub, wobble, ellipse, star, bristles, grain, shadow, soft, caption };
+// Value keys, value-planned palettes and notan counts, in OKLCh lightness.
+// Optional tools: they hand back colours and shares and decide nothing.
+
+// [darkest, middle, lightest] OKLab lightness of each key.
+const VALUE_KEYS = { high: [0.58, 0.78, 0.94], mid: [0.24, 0.56, 0.84], low: [0.12, 0.28, 0.54], chiaroscuro: [0.14, 0.48, 0.9] };
+// Hue offsets in degrees from the base hue.
+const HARMONIES = {
+  monochrome: [0], analogous: [0, 28, -28], complementary: [0, 180],
+  'split-complementary': [0, 150, 210], triadic: [0, 120, 240], tetradic: [0, 60, 180, 240],
+};
+const NOTAN = [0.35, 0.7];
+
+function valueKeyOf(who, key) {
+  const anchors = VALUE_KEYS[key];
+  if (!anchors) throw new Error(`kit ${who}: key takes high, mid, low or chiaroscuro, got ${JSON.stringify(key)}`);
+  return anchors;
+}
+
+// Lightness u (0 to 1) placed in a key; chiaroscuro leaves its middle empty.
+function keyed(key, u) {
+  const [lo, mid, hi] = VALUE_KEYS[key];
+  if (key === 'chiaroscuro') return u < 0.5 ? lerp(lo, lo + 0.16, u * 2) : lerp(hi - 0.14, hi, (u - 0.5) * 2);
+  return u < 0.5 ? lerp(lo, mid, u * 2) : lerp(mid, hi, (u - 0.5) * 2);
+}
+
+// OKLCh to linear light; the same matrices as core/colour.js, kept here so
+// that file's private helper stays private.
+function linearOfOklch(L, C, h) {
+  const A = C * Math.cos(h); const B = C * Math.sin(h);
+  const l = (L + 0.3963377774 * A + 0.2158037573 * B) ** 3;
+  const m = (L - 0.1055613458 * A - 0.0638541728 * B) ** 3;
+  const s = (L - 0.0894841775 * A - 1.2914855480 * B) ** 3;
+  return [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
+  ];
+}
+
+// Linear light at OKLCh (L, C, h), chroma lowered until it fits sRGB.
+function fitted(L, C, h) {
+  const fits = (c) => c.every((v) => v > -1e-6 && v < 1 + 1e-6);
+  let lin = linearOfOklch(L, C, h);
+  if (!fits(lin)) {
+    let lo = 0; let hi = C;
+    for (let i = 0; i < 24; i++) { const c = (lo + hi) / 2; if (fits(linearOfOklch(L, c, h))) lo = c; else hi = c; }
+    lin = linearOfOklch(L, lo, h);
+  }
+  return lin.map(clamp01);
+}
+
+const display = (lin) => hex(lin.map(toSRGB));
+const notanOf = (L, lo = NOTAN[0], hi = NOTAN[1]) => (L < lo ? 'dark' : L >= hi ? 'light' : 'mid');
+
+// A colour moved into a value key, keeping its hue, chroma where sRGB allows,
+// and alpha: its OKLab lightness is mapped from 0..1 into the key's range.
+function valueKey(colour, key = 'mid') {
+  valueKeyOf('valueKey', key);
+  const [L, C, h] = oklch(colour);
+  const alpha = rgb(colour)[3];
+  return hex([...fitted(keyed(key, clamp01(L)), C, h).map(toSRGB), alpha]);
+}
+
+// `count` swatches stepping dark to light through a value key, their hues
+// spread by a harmony from `hue` (radians, as oklch gives it). With `ground`
+// and `minContrast`, a swatch short of that WCAG contrast is moved away from
+// the ground's lightness until it reaches it, or as far as sRGB goes.
+function perceptualPalette(opt = {}) {
+  const { hue = 0.6, harmony = 'analogous', key = 'mid', count = 5, chroma = 0.13, ground = null, minContrast = 0 } = opt;
+  const offsets = HARMONIES[harmony];
+  if (!offsets) throw new Error(`kit perceptualPalette: harmony takes ${Object.keys(HARMONIES).join(', ')}, got ${JSON.stringify(harmony)}`);
+  valueKeyOf('perceptualPalette', key);
+  if (!Number.isInteger(count) || count < 1) throw new Error(`kit perceptualPalette: count takes a whole number of 1 or more, got ${count}`);
+  if (!Number.isFinite(hue)) throw new Error(`kit perceptualPalette: hue takes a finite number of radians, got ${hue}`);
+  if (!Number.isFinite(chroma) || chroma < 0) throw new Error(`kit perceptualPalette: chroma takes a number of 0 or more, got ${chroma}`);
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    const L = keyed(key, count === 1 ? 0.5 : i / (count - 1));
+    const C = clamp(chroma, 0, 0.28) * clamp(1 - 0.55 * (2 * (L - 0.5)) ** 2, 0.25, 1);
+    const h = hue + offsets[i % offsets.length] * Math.PI / 180;
+    let lin = fitted(L, C, h);
+    if (ground && minContrast > 1 && contrast(display(lin), ground) < minContrast) {
+      let near = L; let far = oklch(ground)[0] < 0.5 ? 0.99 : 0.02;
+      let best = fitted(far, C, h);
+      for (let k = 0; k < 24; k++) {
+        const mid = (near + far) / 2;
+        const cand = fitted(mid, C, h);
+        if (contrast(display(cand), ground) >= minContrast) { best = cand; far = mid; } else near = mid;
+      }
+      lin = best;
+    }
+    const col = display(lin);
+    const lch = oklch(col);
+    out.push({ hex: col, linear: rgb(col).slice(0, 3).map(toLinear), oklch: lch, notan: notanOf(lch[0]) });
+  }
+  return out;
+}
+
+// Samples (hex strings or linear [r, g, b]) sorted into dark, mid and light by
+// OKLab lightness below `low` and from `high` up; low === high gives two values.
+function notan(samples, opt = {}) {
+  if (!Array.isArray(samples) || samples.length === 0) throw new Error('kit notan: samples takes a non-empty array of hex colours or linear [r, g, b], got ' + JSON.stringify(samples));
+  const lo = Math.min(opt.low ?? NOTAN[0], opt.high ?? NOTAN[1]);
+  const hi = Math.max(opt.low ?? NOTAN[0], opt.high ?? NOTAN[1]);
+  const share = { dark: 0, mid: 0, light: 0 };
+  let lumaSum = 0; let minL = Infinity; let maxL = -Infinity;
+  const bins = samples.map((s) => {
+    const string = typeof s === 'string';
+    if (!string && !(Array.isArray(s) && s.length === 3 && s.every(Number.isFinite))) throw new Error('kit notan: each sample takes a hex colour or linear [r, g, b], got ' + JSON.stringify(s));
+    const lin = string ? rgb(s).slice(0, 3).map(toLinear) : s;
+    const L = oklabOfLinear(lin)[0];
+    minL = Math.min(minL, L); maxL = Math.max(maxL, L);
+    lumaSum += string ? luma(s) : 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+    const bin = notanOf(L, lo, hi);
+    share[bin]++;
+    return bin;
+  });
+  const n = samples.length;
+  return { bins, darkShare: share.dark / n, midShare: share.mid / n, lightShare: share.light / n, meanLuma: lumaSum / n, minL, maxL, contrastSpan: maxL - minL };
+}
+
+module.exports = { place, path, sub, wobble, ellipse, star, bristles, grain, shadow, soft, caption, valueKey, perceptualPalette, notan };
