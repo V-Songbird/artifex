@@ -204,7 +204,7 @@ require('artifex/core/spatial.js') // pointIndex (points within a radius), inner
   // (largest circle in a shape), poissonDisk (even scatter from R)
 require('artifex/core/clip.js')    // union, intersection, difference, xor, offset
   // (polygon booleans; outlines that never cross)
-require('artifex/core/armature.js') // pose, reach, project (jointed
+require('artifex/core/armature.js') // pose, reach, project, fabrik (jointed
   // segments in depth, foreshortened to the picture)
 require('artifex/core/field.js')   // sampleGrid, gradient, curl, warp, threshold,
   // isolines, streamline, streamlines,

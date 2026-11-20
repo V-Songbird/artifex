@@ -78,7 +78,9 @@ draw(g, s, t, clock) {
 - **`pose`, `reach` and `project` give any jointed thing depth.** `pose` chains
   segments in 3D, each joint a twist then a bend; `reach`'s `bendDir` puts a
   two-segment solve's middle joint on its side, such as a body's forward for a
-  knee and its back for an elbow, instead of sideways. `project` returns each segment's picture ends, its
+  knee and its back for an elbow, instead of sideways. `fabrik` solves a chain
+  of any length, such as a tail, a tentacle or a crane boom, toward a target,
+  its `pole` choosing the side every middle joint bends to. `project` returns each segment's picture ends, its
   foreshortening and a section ellipse at each end with the rim half nearer the
   viewer, so strokes know which way a surface turns; its `centre` sets where
   weak perspective scales and where depth starts (default the world origin), so
