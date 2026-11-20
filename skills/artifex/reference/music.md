@@ -407,7 +407,7 @@ const pluck = voice(ctx, R, 'pluck 4.0', 8, {      // the hook's first note
 ## A score by rule
 
 A score made of choices addressed by `R` needs rules that make any choice
-sound intended. `core/score.js` holds four, each a short published method:
+sound intended. `core/score.js` holds these, each a short published method:
 
 - **A rhythm spread evenly.** `euclid(k, n)` puts `k` hits in `n` steps as
   evenly as they go: 3 in 8, 5 in 8 and 7 in 16 are rhythms heard the world
@@ -424,6 +424,14 @@ sound intended. `core/score.js` holds four, each a short published method:
 - **Cuts on bar lines.** `barCuts(lengths, { bpm })` rounds each shot to
   whole bars, so every cut lands on a downbeat. Size the shots first, then
   let the tempo settle their exact length.
+- **Colour past the triad.** `extendChord(chord, '7' | 'maj7' | '9' | ...)`
+  adds sevenths, sixths, ninths or suspensions to a triad, and
+  `scale(root, mode)` gives a mode's pitch classes for a melody to walk.
+  Both feed `lead` as any chord does.
+- **A phrase that breathes.** `express(notes, { R, name, tonic, arch })`
+  swells velocity toward a phrase's middle, leans harder on notes far from
+  the tonic and nudges each onset by a few seeded milliseconds, so a line
+  of equal notes rises and falls.
 
 ```js
 const { euclid, tones, shift, lead } = require('artifex/core/score.js');

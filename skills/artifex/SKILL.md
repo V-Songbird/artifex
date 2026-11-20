@@ -233,7 +233,7 @@ require('artifex/core/time.js')    // span, ease, tween, keys, flow, gait, drawi
   // shots, shotAt, spring, follow
 require('artifex/core/instruments.js') // recipe, play, INSTRUMENTS (acoustic
   // voices by name, each from its physics)
-require('artifex/core/score.js')   // euclid, tones, shift, lead, barCuts (rhythms,
+require('artifex/core/score.js')   // euclid, tones, shift, lead, barCuts, extendChord, scale, express (rhythms,
   // chord moves and voicings chosen by rule)
 require('artifex/core/layer.js')   // layer, sibling, sprite, held,
   // BUDGET, MAX_SCALE, MAX_BAKE (sprite limits),
