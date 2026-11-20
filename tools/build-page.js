@@ -14,6 +14,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadExternal, shown, outputDirectory } = require('./piece-input.js');
+const { blank } = require('./js-comments.js');
 
 const ROOT = path.join(__dirname, '..');
 /**
@@ -76,8 +77,19 @@ function requires(id) {
     }
     return base.join('/');
   };
-  const src = fs.readFileSync(path.join(ROOT, id), 'utf8');
-  return [...src.matchAll(/require\('([^']+)'\)/g)].filter((m) => !m[1].startsWith('node:')).map((m) => [m[1], resolve(id, m[1])]);
+  return extractRequires(fs.readFileSync(path.join(ROOT, id), 'utf8')).map((spec) => [spec, resolve(id, spec)]);
+}
+
+/**
+ * The module paths of the literal require('…') and require("…") calls in `src`,
+ * node: built-ins left out. It matches over the source with its comments and
+ * the text of its strings, templates and regular expressions blanked, so a
+ * require written in any of those, or a member .require(), is not read as one.
+ */
+function extractRequires(src) {
+  return [...blank(src).matchAll(/(?<![\w$.])require\s*\(\s*(['"])[^'"]*\1\s*\)/g)]
+    .map((m) => { const at = m.index + m[0].indexOf(m[1]) + 1; return src.slice(at, m.index + m[0].lastIndexOf(m[1])); })
+    .filter((spec) => !spec.startsWith('node:'));
 }
 
 /**
@@ -1434,7 +1446,7 @@ function bundle(external = null, ids = MODULES) {
   return [RUNTIME].concat(ids.map(wrap), external ? [external.source] : []).join(String.fromCharCode(10));
 }
 
-module.exports = { modules, checkResolvable, reach, checkParses, bundle, html, wrap, pageFile, MODULES };
+module.exports = { modules, checkResolvable, reach, checkParses, bundle, html, wrap, pageFile, extractRequires, MODULES };
 
 // Requirable, so the resolution check can be tested. Without this the only
 // check the delivery tool has would itself be unchecked. It runs after the

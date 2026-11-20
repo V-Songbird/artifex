@@ -4391,6 +4391,27 @@ test('a bundle of a module list holds what the list reaches, and refuses a list 
   assert.match(grab(() => bundle(null, reach(['core/nope.js']))).message, /core\/nope\.js is asked for, but it is not a module/);
 });
 
+test('the page builder reads a module\'s requires as code, not as text', () => {
+  // A single-quote regex missed require("…"), so a style module required that
+  // way was never bundled and the page threw on load, and it read a require in
+  // a comment or string as a dependency, so a build could refuse a module it
+  // never needed.
+  const { extractRequires } = require('../tools/build-page.js');
+  const src = [
+    "const a = require('./a.js');",
+    'const b = require("../styles/b.js");',
+    "const c = require ( /* why */ './c.js' );",
+    "const fs = require('node:fs');",
+    "// const gone = require('./gone.js');",
+    "/* require('./block.js') */",
+    "const note = \"call require('./quoted.js') here\";",
+    "const t = `require('./template.js')`;",
+    "const re = /require\\('\\.\\/regex\\.js'\\)/;",
+    "loader.require('./member.js');",
+  ].join('\n');
+  assert.deepEqual(extractRequires(src), ['./a.js', '../styles/b.js', './c.js']);
+});
+
 test('the page builder refuses to write a page that does not parse', () => {
   // checkResolvable proves the MODULES can find each other and looks at nothing
   // else. The page body around them is one template literal in build-page.js,
