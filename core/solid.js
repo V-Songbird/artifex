@@ -2,7 +2,8 @@
 // cylinders and lofts in a space where z is up, a camera that looks at them,
 // and the edges a line drawing shows, with what hides behind a face left out;
 // and the exact outline of ellipsoids and of the convex hull of several.
-// The result is paths in the picture, for any style's marks to draw.
+// The result is paths in the picture, for any style's marks to draw; and
+// rays cast at the solids, for how much light or sky reaches a point.
 //
 // Nothing here knows what kind of art a piece makes.
 'use strict';
@@ -198,6 +199,24 @@ function hullOutline(parts, cam, opt = {}) {
 // Nearer than this to the eye, in the model's units, nothing is drawn.
 const NEAR = 1e-6;
 
+// A face's normal by Newell's method, its length twice the face's area: zero for a face with no area.
+function faceNormal(pts) {
+  let n = [0, 0, 0];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    n = [n[0] + (a[1] - b[1]) * (a[2] + b[2]), n[1] + (a[2] - b[2]) * (a[0] + b[0]), n[2] + (a[0] - b[0]) * (a[1] + b[1])];
+  }
+  return n;
+}
+
+// A face as triangles: a fan for a face of four points or fewer, an ear cut for a larger one, laid flat on its own plane.
+function faceTriangles(pts, normal) {
+  if (pts.length <= 4) return pts.slice(2).map((p, i) => [pts[0], pts[i + 1], p]);
+  const u = unit(Math.abs(normal[2]) < 0.9 ? cross(normal, [0, 0, 1]) : cross(normal, [1, 0, 0])), v = cross(normal, u);
+  const flat = pts.map((p) => [dot(p, u), dot(p, v)]), index = new Map(flat.map((p, i) => [p, pts[i]]));
+  return triangulate(flat).map((t) => t.map((p) => index.get(flat.find((q) => q[0] === p[0] && q[1] === p[1]))));
+}
+
 /**
  * The lines a drawing of `solids` shows from `cam`: where a surface turns
  * away from the eye ('silhouette'), where two faces meet at an angle
@@ -227,23 +246,11 @@ function outlines(solids, cam, opt = {}) {
     const byEdge = new Map();
     solid.faces.forEach((face, f) => {
       const pts = face.ring.map((i) => solid.points[i]);
-      let normal = [0, 0, 0];
-      for (let i = 0; i < pts.length; i++) {
-        const a = pts[i], b = pts[(i + 1) % pts.length];
-        normal = [normal[0] + (a[1] - b[1]) * (a[2] + b[2]), normal[1] + (a[2] - b[2]) * (a[0] + b[0]), normal[2] + (a[0] - b[0]) * (a[1] + b[1])];
-      }
+      let normal = faceNormal(pts);
       if (Math.hypot(...normal) === 0) return;
       normal = unit(normal);
       const info = { normal, front: dot(normal, sub(eye, pts[0])) > 0, soft: face.soft, id: `${s}:${f}` };
-      // Triangles: a fan for a face of four points or fewer, an ear cut for a larger one, laid flat on its own plane.
-      let cut;
-      if (pts.length <= 4) cut = pts.slice(2).map((p, i) => [pts[0], pts[i + 1], p]);
-      else {
-        const u = unit(Math.abs(normal[2]) < 0.9 ? cross(normal, [0, 0, 1]) : cross(normal, [1, 0, 0])), v = cross(normal, u);
-        const flat = pts.map((p) => [dot(p, u), dot(p, v)]), index = new Map(flat.map((p, i) => [p, pts[i]]));
-        cut = triangulate(flat).map((t) => t.map((p) => index.get(flat.find((q) => q[0] === p[0] && q[1] === p[1]))));
-      }
-      for (const t of cut) {
+      for (const t of faceTriangles(pts, normal)) {
         const q = t.map(cam.project);
         if (q.some((p) => p[2] <= NEAR)) continue;
         tris.push({ a: t[0], ab: sub(t[1], t[0]), ac: sub(t[2], t[0]), face: info.id, x0: Math.min(q[0][0], q[1][0], q[2][0]), x1: Math.max(q[0][0], q[1][0], q[2][0]), y0: Math.min(q[0][1], q[1][1], q[2][1]), y1: Math.max(q[0][1], q[1][1], q[2][1]) });
@@ -313,4 +320,154 @@ function outlines(solids, cam, opt = {}) {
   return out;
 }
 
-module.exports = { box, prism, cylinder, loft, place, camera, outlines, ellipsoid, hullOutline };
+function boxHit(lo, hi, o, inv, near, far) {
+  for (let i = 0; i < 3; i++) {
+    let t0 = (lo[i] - o[i]) * inv[i], t1 = (hi[i] - o[i]) * inv[i];
+    if (t0 > t1) { const s = t0; t0 = t1; t1 = s; }
+    // 0 * Infinity on a slab the ray runs along is NaN: inside the slab it limits nothing.
+    if (t0 > near) near = t0;
+    if (t1 < far) far = t1;
+    if (near > far) return false;
+  }
+  return true;
+}
+
+function triHit(o, d, p, near, far) {
+  const h = cross(d, p.ac), det = dot(p.ab, h);
+  if (Math.abs(det) < 1e-12) return -1;
+  const inv = 1 / det, s = sub(o, p.a), u = dot(s, h) * inv;
+  if (u < 0 || u > 1) return -1;
+  const q = cross(s, p.ab), v = dot(d, q) * inv;
+  if (v < 0 || u + v > 1) return -1;
+  const t = dot(p.ac, q) * inv;
+  return t >= near && t <= far ? t : -1;
+}
+
+// Two unit vectors at right angles to `n` and to each other.
+function across(n) {
+  const t = unit(cross(Math.abs(n[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0], n));
+  return [t, cross(n, t)];
+}
+
+/**
+ * A tree of boxes over the faces of `solids` that answers ray questions fast:
+ * the first face a ray meets, whether anything lies along it, how open the
+ * sky is above a point and how much of a light reaches it. Returns
+ * `{ bounds, intersect, occluded, ao, softShadow }`.
+ */
+function bvh(solids) {
+  if (!Array.isArray(solids)) throw new TypeError('bvh: takes a list of solids, such as [box([1, 1, 1])]');
+  const prims = [];
+  solids.forEach((solid, s) => {
+    if (!solid || !Array.isArray(solid.points) || !Array.isArray(solid.faces)) throw new TypeError('bvh: each solid must come from box, prism, cylinder, loft or place');
+    solid.faces.forEach((face, f) => {
+      const pts = face.ring.map((i) => solid.points[i]), n = faceNormal(pts);
+      if (Math.hypot(...n) === 0) return;
+      const normal = unit(n);
+      for (const [a, b, c] of faceTriangles(pts, normal)) {
+        if (Math.hypot(...cross(sub(b, a), sub(c, a))) < 1e-12) continue;
+        prims.push({
+          a, ab: sub(b, a), ac: sub(c, a), normal, solid: s, face: f,
+          mid: [0, 1, 2].map((k) => (a[k] + b[k] + c[k]) / 3),
+          lo: [0, 1, 2].map((k) => Math.min(a[k], b[k], c[k])), hi: [0, 1, 2].map((k) => Math.max(a[k], b[k], c[k])),
+        });
+      }
+    });
+  });
+
+  // Split each node at the middle of its centres' widest spread, four triangles or fewer to a leaf.
+  const nodes = [];
+  const build = (start, end) => {
+    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity], cLo = [...lo], cHi = [...hi];
+    for (let i = start; i < end; i++) {
+      for (let k = 0; k < 3; k++) {
+        lo[k] = Math.min(lo[k], prims[i].lo[k]); hi[k] = Math.max(hi[k], prims[i].hi[k]);
+        cLo[k] = Math.min(cLo[k], prims[i].mid[k]); cHi[k] = Math.max(cHi[k], prims[i].mid[k]);
+      }
+    }
+    const at = nodes.length;
+    nodes.push({ lo, hi, start, end });
+    if (end - start <= 4) return at;
+    const ext = [0, 1, 2].map((k) => cHi[k] - cLo[k]);
+    const axis = ext[0] >= ext[1] && ext[0] >= ext[2] ? 0 : ext[1] >= ext[2] ? 1 : 2, split = (cLo[axis] + cHi[axis]) / 2;
+    let mid = start;
+    for (let i = start; i < end; i++) if (prims[i].mid[axis] < split) { const p = prims[i]; prims[i] = prims[mid]; prims[mid] = p; mid++; }
+    if (mid === start || mid === end) mid = (start + end) >> 1;
+    nodes[at].left = build(start, mid);
+    nodes[at].right = build(mid, end);
+    return at;
+  };
+  if (prims.length) build(0, prims.length);
+
+  const ray = (who, origin, dir, from = 'origin', along = 'dir') => {
+    point3(who, from, origin);
+    point3(who, along, dir);
+    if (Math.hypot(...dir) === 0) throw new RangeError(`${who}: ${along} must not be [0, 0, 0]`);
+    return unit(dir);
+  };
+  // Every triangle the ray meets between near and far, nearest first when `first`; stops at the first hit otherwise.
+  const walk = (o, d, near, far, first) => {
+    if (!nodes.length) return null;
+    const inv = d.map((v) => 1 / v), stack = [0];
+    let best = null;
+    while (stack.length) {
+      const node = nodes[stack.pop()];
+      if (!boxHit(node.lo, node.hi, o, inv, near, far)) continue;
+      if (node.left === undefined) {
+        for (let i = node.start; i < node.end; i++) {
+          const t = triHit(o, d, prims[i], near, far);
+          if (t < 0) continue;
+          if (!first) return prims[i];
+          far = t;
+          best = { t, p: prims[i] };
+        }
+      } else stack.push(node.right, node.left);
+    }
+    return best;
+  };
+
+  const intersect = (origin, dir, near = 1e-6, far = Infinity) => {
+    const d = ray('intersect', origin, dir), hit = walk(origin, d, near, far, true);
+    if (!hit) return null;
+    const { t, p } = hit;
+    return { t, point: [0, 1, 2].map((k) => origin[k] + d[k] * t), normal: [...p.normal], solid: p.solid, face: p.face };
+  };
+  const occluded = (origin, dir, near = 1e-6, far = Infinity) => walk(origin, ray('occluded', origin, dir), near, far, false) !== null;
+
+  const sampling = (who, R, id, samples) => {
+    if (typeof R !== 'function') throw new TypeError(`${who}: R must be the piece's random source, such as rng(seed)`);
+    if (!(Number.isInteger(id) && id >= 0 && id < 2 ** 25)) throw new RangeError(`${who}: id must be a whole number from 0 to 2^25 - 1, got ${id}`);
+    if (!(Number.isInteger(samples) && samples >= 1 && samples <= 64)) throw new RangeError(`${who}: samples must be a whole number from 1 to 64, got ${samples}`);
+  };
+  const ao = (point, normal, R, id = 0, opt = {}) => {
+    const { samples = 16, radius = 1 } = opt;
+    sampling('ao', R, id, samples);
+    if (!(radius > 0)) throw new RangeError(`ao: radius must be a distance over 0, got ${radius}`);
+    const n = ray('ao', point, normal, 'point', 'normal'), [t1, t2] = across(n), o = point.map((v, k) => v + n[k] * 1e-4);
+    let open = 0;
+    for (let i = 0; i < samples; i++) {
+      // Cosine-weighted directions over the half sphere the normal faces.
+      const u = R('bvh-ao', 'u', id * 64 + i), a = 2 * Math.PI * R('bvh-ao', 'a', id * 64 + i), r = Math.sqrt(u), z = Math.sqrt(1 - u);
+      const d = [0, 1, 2].map((k) => t1[k] * r * Math.cos(a) + t2[k] * r * Math.sin(a) + n[k] * z);
+      if (!occluded(o, d, 1e-6, radius)) open++;
+    }
+    return open / samples;
+  };
+  const softShadow = (point, normal, toLight, R, id = 0, opt = {}) => {
+    const { samples = 8, spread = 0.05, far = Infinity } = opt;
+    sampling('softShadow', R, id, samples);
+    if (!(spread >= 0 && Number.isFinite(spread))) throw new RangeError(`softShadow: spread must be a finite number of 0 or more, got ${spread}`);
+    const n = ray('softShadow', point, normal, 'point', 'normal'), l = ray('softShadow', point, toLight, 'point', 'toLight'), [t1, t2] = across(l), o = point.map((v, k) => v + n[k] * 1e-4);
+    let lit = 0;
+    for (let i = 0; i < samples; i++) {
+      const r = spread * Math.sqrt(R('bvh-shadow', 'r', id * 64 + i)), a = 2 * Math.PI * R('bvh-shadow', 'a', id * 64 + i);
+      const d = [0, 1, 2].map((k) => l[k] + t1[k] * r * Math.cos(a) + t2[k] * r * Math.sin(a));
+      if (!occluded(o, d, 1e-6, far)) lit++;
+    }
+    return lit / samples;
+  };
+
+  return { bounds: nodes.length ? { min: [...nodes[0].lo], max: [...nodes[0].hi] } : null, intersect, occluded, ao, softShadow };
+}
+
+module.exports = { box, prism, cylinder, loft, place, camera, outlines, ellipsoid, hullOutline, bvh };

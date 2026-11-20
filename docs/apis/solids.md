@@ -1,12 +1,12 @@
 ---
 type: api_spec
-summary: "Defines core/solid.js: solids modelled once, a camera, the outline, crease and boundary lines a drawing shows with hidden parts cut away, and the exact outline of ellipsoids and their convex hulls; read when a piece must draw an object from a chosen angle."
+summary: "Defines core/solid.js: solids modelled once, a camera, the outline, crease and boundary lines a drawing shows with hidden parts cut away, and the exact outline of ellipsoids and their convex hulls, and rays cast at the solids for shadows and occlusion; read when a piece must draw an object from a chosen angle."
 related_files: ["core/solid.js", "core/mesh.js", "core/geom.js", "core/clip.js", "core/delaunator.js", "tests/solid.test.js", "skills/artifex/reference/geometry-fields.md"]
 ---
 
 # Solids drawn as lines
 
-Import helpers from `core/solid.js`. A piece models an object once, in a space where z is up, picks a camera, and gets back paths in the picture for its own marks to draw: a pen, a pencil, ink, any style. Turn the camera and the same model gives another drawing. Nothing is filled or shaded here; for pixels lit by rays, see the `render-3d` style.
+Import helpers from `core/solid.js`. A piece models an object once, in a space where z is up, picks a camera, and gets back paths in the picture for its own marks to draw: a pen, a pencil, ink, any style. Turn the camera and the same model gives another drawing. Nothing is filled or shaded here, but [rays](#rays) cast at the same solids tell a piece how much light or sky reaches a point, for it to tone as it likes; for pixels lit by rays through signed distances, see the `render-3d` style.
 
 ## Solids
 
@@ -70,4 +70,32 @@ const rings = [hullOutline([a, b], cam), hullOutline([c], cam)].filter(Boolean);
 const shape = offset(offset(union(rings), 6, { join: 'round' }), -6, { join: 'round' });
 ```
 
-Run `node --test tests/solid.test.js` for the camera, the edge kinds, hiding, the smooth outlines against analytic circles and ellipses and against sampled surfaces, and the refusals. The tests do not establish that a drawing reads well.
+## Rays
+
+`bvh(solids)` sorts the faces of `solids` into a tree of boxes, once, so that each ray tests the few faces near its path, not all of them. Build it again when the solids move. It returns `{ bounds, intersect, occluded, ao, softShadow }`; `bounds` is `{ min, max }` round every face, or `null` for no faces.
+
+| Function | Returns |
+| --- | --- |
+| `intersect(origin, dir, near, far)` | The first face the ray from `origin` along `dir` meets between `near` (default `1e-6`) and `far` (default `Infinity`), as `{ t, point, normal, solid, face }`, or `null`. `t` is the distance along `dir`, made unit length; `normal` is the face's flat outward normal; `solid` and `face` are indices into `solids` and its `faces`. |
+| `occluded(origin, dir, near, far)` | Whether any face lies on the ray between `near` and `far`: quicker than `intersect` when the answer is all a piece needs, such as whether a point sees the sun. |
+| `ao(point, normal, R, id, opt)` | How open the sky is over `point` on a surface facing `normal`, from 0 (closed in) to 1 (nothing above within `opt.radius`, default 1): the share of `opt.samples` rays (default 16, from 1 to 64), spread over the half sphere as light falls on a matt surface, that reach `opt.radius` without meeting a face. |
+| `softShadow(point, normal, toLight, R, id, opt)` | How much of a light in direction `toLight` reaches `point`, from 0 to 1: the share of `opt.samples` rays (default 8, from 1 to 64), aimed within `opt.spread` (default 0.05, about the tangent of the light's angular radius) of it, that meet no face before `opt.far` (default `Infinity`). A `spread` of 0 is a hard shadow. |
+
+`ao` and `softShadow` take their directions from `R`, the piece's random source, under the entity names `'bvh-ao'` and `'bvh-shadow'`, and `id`, a whole number from 0 to 2^25 - 1 that keeps each point's directions its own: give each point you sample its own `id`, and the same seed gives the same tone. Both nudge `point` `1e-4` along `normal` so that the surface does not shadow itself; `near`, `far`, `radius` and the nudge are in the model's own units, so a model far larger or smaller than a few units wide should set them to match.
+
+A face counts from either side: a ray from inside a solid meets the face it leaves by. A face's normal is the flat one of its plane, the same for every point on it, even on a cylinder's curved side. A face of more than four points is cut along its own outline, so the hollow of a prism's ring is open, as in `outlines`; a face of four points is split along one diagonal, so keep four-point faces convex.
+
+The camera gives no ray through a pixel, so cast from the points a piece already has: a face's middle, the points along an outline, the eye.
+
+```js
+const { box, cylinder, bvh } = require('artifex/core/solid.js');
+const { rng } = require('artifex/core/rand.js');
+const solids = [box([10, 10, 0.2], [-5, -5, -0.2]), box([2, 2, 3]), cylinder(0.6, 2, { at: [4, 3, 0] })];
+const rays = bvh(solids), sun = [-0.4, -0.6, 0.7], R = rng(7);
+// The ground's tone at a point: dark in a shadow, darker where the sky is closed in.
+const tone = (p, i) => 0.3 + 0.7 * rays.softShadow(p, [0, 0, 1], sun, R, i) * rays.ao(p, [0, 0, 1], R, i, { radius: 3 });
+```
+
+Limits: everything here is a test of whole rays against flat faces; nothing is lit, coloured or drawn. The tones come from samples, so they are noisy at a few samples and smooth only at many: average neighbouring points or take more samples for a still.
+
+Run `node --test tests/solid.test.js` for the camera, the edge kinds, hiding, the smooth outlines against analytic circles and ellipses and against sampled surfaces, rays against a test of every face, open sky against an open floor, a wall and a closed box, and the refusals. The tests do not establish that a drawing reads well.
