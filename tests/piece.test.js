@@ -52,6 +52,26 @@ test('required keys are named when missing', () => {
   }
 });
 
+test('a validate refusal carries what it read as data, and any other refusal carries null', () => {
+  const { FIELDS } = require('../core/piece.js');
+  const read = (piece) => grab(() => validate(piece)).diagnostic;
+  assert.deepEqual(read([]), { code: 'not-object', path: '', expected: 'object', got: 'array' });
+  assert.deepEqual(read(null), { code: 'not-object', path: '', expected: 'object', got: 'null' });
+  const unknown = read({ ...minimal(), pallete: {}, sise: 1 });
+  assert.deepEqual([unknown.code, unknown.path, unknown.got], ['unknown-key', '', ['pallete', 'sise']]);
+  assert.deepEqual(unknown.expected, Object.keys(FIELDS));
+  const p = minimal();
+  delete p.draw;
+  assert.deepEqual(read(p), { code: 'missing-key', path: 'draw', expected: FIELDS.draw.doc });
+  assert.deepEqual(read({ ...minimal(), size: { w: 0, h: 10 } }), { code: 'invalid-field', path: 'size', expected: FIELDS.size.doc });
+  const e = grab(() => validate({ ...minimal(), sound: () => [] }));
+  assert.equal(e.message, 'sound: a soundtrack needs a timeline; declare time: { duration, hz }', 'the message is unchanged');
+  assert.deepEqual(e.diagnostic, { code: 'conflict', path: 'sound' });
+  assert.deepEqual(read({ ...minimal(), boxes: { w: [200, 400], h: [25, 200] } }), { code: 'conflict', path: 'boxes' });
+  assert.equal(grab(() => atBox(validate(minimal()), { w: 50, h: 25 })).diagnostic, null);
+  assert.equal(grab(() => solve(validate(minimal()), 1, { nope: 1 })).diagnostic, null);
+});
+
 test('size must be a positive finite box, and carries no other keys', () => {
   assert.throws(() => validate({ ...minimal(), size: { w: 0, h: 10 } }), /size\.w must be a positive/);
   assert.throws(() => validate({ ...minimal(), size: { w: 10, h: Infinity } }), /size\.h must be a positive/);

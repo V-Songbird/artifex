@@ -302,8 +302,11 @@ function checkPlay(v) {
 // no piece's own state key can be read as one. Set by core/play.js film().
 const SESSION = Symbol('artifex session');
 
+// `diagnostic` is what validate() read, for a caller that acts on the refusal
+// instead of showing it: { code, path } with expected and got only where it
+// holds them as data. Any other refusal carries null.
 class PieceError extends Error {
-  constructor(msg) { super(msg); this.name = 'PieceError'; }
+  constructor(msg, diagnostic = null) { super(msg); this.name = 'PieceError'; this.diagnostic = diagnostic; }
 }
 
 /**
@@ -313,7 +316,7 @@ class PieceError extends Error {
  */
 function validate(piece) {
   if (!piece || typeof piece !== 'object' || Array.isArray(piece)) {
-    throw new PieceError('a piece must be an object');
+    throw new PieceError('a piece must be an object', { code: 'not-object', path: '', expected: 'object', got: piece === null ? 'null' : Array.isArray(piece) ? 'array' : typeof piece });
   }
 
   const unknown = Object.keys(piece).filter((k) => !(k in FIELDS));
@@ -321,50 +324,53 @@ function validate(piece) {
     throw new PieceError(
       `unknown key(s): ${unknown.join(', ')}. Known keys: ${Object.keys(FIELDS).join(', ')}; `
       + 'spell a misspelled key as listed, and keep the piece\'s own values and helpers in state(), a build stage or the piece\'s module, outside the piece object',
+      { code: 'unknown-key', path: '', expected: Object.keys(FIELDS), got: unknown },
     );
   }
 
+  // A field that is fine alone but not beside another one.
+  const conflict = (path, msg) => new PieceError(msg, { code: 'conflict', path });
   const out = {};
   for (const [name, f] of Object.entries(FIELDS)) {
     const present = Object.prototype.hasOwnProperty.call(piece, name);
     if (!present) {
-      if (f.required) throw new PieceError(`missing required key: ${name} -- ${f.doc}`);
+      if (f.required) throw new PieceError(`missing required key: ${name} -- ${f.doc}`, { code: 'missing-key', path: name, expected: f.doc });
       out[name] = f.default();
       continue;
     }
     const why = f.check(piece[name]);
-    if (why) throw new PieceError(`${name}: ${why}`);
+    if (why) throw new PieceError(`${name}: ${why}`, { code: 'invalid-field', path: name, expected: f.doc });
     out[name] = piece[name];
   }
   if (out.preview && out.outputs.includes('vector')) {
-    throw new PieceError('preview: webgpu-pixels requires raster-only outputs');
+    throw conflict('preview', 'preview: webgpu-pixels requires raster-only outputs');
   }
   if (out.play) {
     const p = out.play;
     out.play = { hz: p.hz === undefined ? 60 : p.hz, inputs: (p.inputs || INPUTS).slice(), step: p.step, describe: p.describe || null };
     // A session is as long as somebody plays it, and one draw serves the live page and every export.
-    if (out.time) throw new PieceError('play: an interactive piece runs as long as its session, so it takes no time; drop time, or drop play for a film');
-    if (out.sound) throw new PieceError('sound: a piece with play has no fixed length for a soundtrack to fill; drop sound, and push sound cues onto state.cues.sounds from play.step instead');
-    if (out.preview) throw new PieceError('preview: a piece with play draws live and in its exports with one draw, so it takes no GPU preview; drop preview');
+    if (out.time) throw conflict('play', 'play: an interactive piece runs as long as its session, so it takes no time; drop time, or drop play for a film');
+    if (out.sound) throw conflict('sound', 'sound: a piece with play has no fixed length for a soundtrack to fill; drop sound, and push sound cues onto state.cues.sounds from play.step instead');
+    if (out.preview) throw conflict('preview', 'preview: a piece with play draws live and in its exports with one draw, so it takes no GPU preview; drop preview');
     // A session replays at the box it was played at, and a box chosen mid-game would restart it.
-    if (out.boxes) throw new PieceError('boxes: a piece with play draws at its own size, so every session replays at the box it was played at; drop boxes');
+    if (out.boxes) throw conflict('boxes', 'boxes: a piece with play draws at its own size, so every session replays at the box it was played at; drop boxes');
   }
   // A soundtrack is as long as the film, and a still has no film.
   if (out.sound && !out.time) {
-    throw new PieceError('sound: a soundtrack needs a timeline; declare time: { duration, hz }');
+    throw conflict('sound', 'sound: a soundtrack needs a timeline; declare time: { duration, hz }');
   }
   // A finish models a film's process; a still keeps its texture on its marks.
   if (out.finish && !out.time) {
-    throw new PieceError('finish: a film finish needs a timeline; a still keeps its texture on its marks');
+    throw conflict('finish', 'finish: a film finish needs a timeline; a still keeps its texture on its marks');
   }
   const off = out.boxes && outside(out.boxes, out.size);
-  if (off) throw new PieceError(`boxes: size ${off}`);
+  if (off) throw conflict('boxes', `boxes: size ${off}`);
   if (out.reframe) {
     const why = reframeFits(out, out.reframe);
-    if (why) throw new PieceError(`reframe: ${why}`);
+    if (why) throw conflict('reframe', `reframe: ${why}`);
     const f = frameOf(out.reframe);
     if (f.w !== out.size.w || f.h !== out.size.h) {
-      throw new PieceError(`reframe: size must be the largest box, ${f.w} x ${f.h}, which stays the film's frame; got ${out.size.w} x ${out.size.h}`);
+      throw conflict('reframe', `reframe: size must be the largest box, ${f.w} x ${f.h}, which stays the film's frame; got ${out.size.w} x ${out.size.h}`);
     }
   }
   return out;

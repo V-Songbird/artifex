@@ -6787,7 +6787,7 @@ const MUTATIONS = [
   {
     why: 'a piece whose size lies outside the boxes it declares validates',
     file: 'core/piece.js',
-    from: '  if (off) throw new PieceError(`boxes: size ${off}`);\n',
+    from: '  if (off) throw conflict(\'boxes\', `boxes: size ${off}`);\n',
     to: '',
     expect: 'boxes are opt-in ranges that hold the size, and carry no other keys',
   },
