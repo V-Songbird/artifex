@@ -3,7 +3,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { shapeMesh, deformer, riders } = require('../core/deform.js');
+const { shapeMesh, deformer, riders, squashStretch } = require('../core/deform.js');
 
 const bar = [[0, 0], [200, 0], [200, 40], [0, 40]];
 const nearest = (mesh, x, y) => mesh.points.reduce((best, p, i) => ((p[0] - x) ** 2 + (p[1] - y) ** 2 < (mesh.points[best][0] - x) ** 2 + (mesh.points[best][1] - y) ** 2 ? i : best), 0);
@@ -92,4 +92,24 @@ test('deformer refuses a mesh, a pin or a round count it cannot use', () => {
   assert.throws(() => bend([[9999, [0, 0]]]), /deformer: each pin must be \[index, \[x, y\]\] with an index into the mesh points/);
   assert.throws(() => bend('pin'), /deformer: pins must be a list of \[index, \[x, y\]\]/);
   assert.throws(() => bend([], { rounds: 0 }), /deformer: rounds must be a whole number from 1 to 200, got 0/);
+});
+
+test('squashStretch preserves area in 2D and volume in 3D along any axis', () => {
+  const sq = [[0, 0], [1, 0], [1, 1], [0, 1]];
+  const d2 = squashStretch(sq, { pivot: [0.5, 0.5], axis: [1, 1], stretch: 2.25 });
+  const area = Math.abs((d2[1][0] - d2[0][0]) * (d2[3][1] - d2[0][1]) - (d2[1][1] - d2[0][1]) * (d2[3][0] - d2[0][0]));
+  assert.ok(Math.abs(area - 1) < 1e-12, `2D area drifted: ${area}`);
+
+  const basis = [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  const d3 = squashStretch(basis, { pivot: [0, 0, 0], axis: [1, 2, -0.5], stretch: 2.5 });
+  const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+  const vx = sub(d3[1], d3[0]), vy = sub(d3[2], d3[0]), vz = sub(d3[3], d3[0]);
+  const cross = [vy[1] * vz[2] - vy[2] * vz[1], vy[2] * vz[0] - vy[0] * vz[2], vy[0] * vz[1] - vy[1] * vz[0]];
+  const vol = Math.abs(vx[0] * cross[0] + vx[1] * cross[1] + vx[2] * cross[2]);
+  assert.ok(Math.abs(vol - 1) < 1e-12, `3D volume drifted: ${vol}`);
+  assert.throws(() => squashStretch([[0, 0]], { stretch: 0 }), /squashStretch: stretch must be a factor over 0, got 0/);
+  assert.throws(() => squashStretch([[0, 0]], { axis: [0, 0] }), /squashStretch: axis must have length above 0/);
+  assert.throws(() => squashStretch([[0, 0], [1, 2, 3]]), /squashStretch: every point must be a finite 2D array/);
+  const pivotStays = squashStretch([[3, 4]], { pivot: [3, 4], axis: [1, 0], stretch: 3 });
+  assert.deepEqual(pivotStays, [[3, 4]]);
 });

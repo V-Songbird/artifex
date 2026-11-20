@@ -159,4 +159,46 @@ function riders(mesh, places) {
   };
 }
 
-module.exports = { shapeMesh, deformer, riders };
+/**
+ * Volume-preserving (3D) or area-preserving (2D) squash & stretch of `points`
+ * about `pivot` along `axis`. In 2D, axial scale is `stretch` and transverse
+ * scale is `1 / stretch` (det = 1). In 3D, axial scale is `stretch` and both
+ * transverse axes scale by `1 / sqrt(stretch)` (s * (1/sqrt(s))^2 = 1).
+ */
+function squashStretch(points, opt = {}) {
+  if (!Array.isArray(points) || points.length === 0) {
+    throw new TypeError('squashStretch: points must be a non-empty list of finite [x, y] or [x, y, z] points');
+  }
+  const dim = Array.isArray(points[0]) ? points[0].length : 0;
+  if (dim !== 2 && dim !== 3) throw new TypeError('squashStretch: points must be 2D [x, y] or 3D [x, y, z]');
+  for (const p of points) {
+    if (!Array.isArray(p) || p.length !== dim || !p.every(Number.isFinite)) {
+      throw new TypeError(`squashStretch: every point must be a finite ${dim}D array`);
+    }
+  }
+  const stretch = opt.stretch ?? 1;
+  if (!Number.isFinite(stretch) || stretch <= 0) {
+    throw new RangeError(`squashStretch: stretch must be a factor over 0, got ${stretch}`);
+  }
+  const pivot = opt.pivot ?? (dim === 2 ? [0, 0] : [0, 0, 0]);
+  const axisRaw = opt.axis ?? (dim === 2 ? [0, 1] : [0, 1, 0]);
+  if (!Array.isArray(pivot) || pivot.length !== dim || !pivot.every(Number.isFinite)) {
+    throw new TypeError(`squashStretch: pivot must be a finite ${dim}D point`);
+  }
+  if (!Array.isArray(axisRaw) || axisRaw.length !== dim || !axisRaw.every(Number.isFinite)) {
+    throw new TypeError(`squashStretch: axis must be a finite ${dim}D vector`);
+  }
+  const alen = Math.hypot(...axisRaw);
+  if (!(alen > 0)) throw new RangeError('squashStretch: axis must have length above 0');
+  const u = axisRaw.map((v) => v / alen);
+  const perpScale = dim === 2 ? 1 / stretch : 1 / Math.sqrt(stretch);
+
+  return points.map((p) => {
+    const rel = p.map((v, i) => v - pivot[i]);
+    let par = 0;
+    for (let i = 0; i < dim; i++) par += rel[i] * u[i];
+    return rel.map((v, i) => pivot[i] + par * stretch * u[i] + (v - par * u[i]) * perpScale);
+  });
+}
+
+module.exports = { shapeMesh, deformer, riders, squashStretch };
