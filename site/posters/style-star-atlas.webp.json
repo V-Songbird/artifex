@@ -9,10 +9,12 @@
     "quality": 0.82
   },
   "sources": {
-    "../skills/artifex/styles/kit.js": "30ffe34ac03451d65646e2f5d3870e987e460fcd79710fa4b91629fe87fdd797",
+    "../skills/artifex/styles/kit.js": "8fc14f253e4c615a18ba271d7add63272e8a6b3a9ee6db896378f40a22241688",
     "../skills/artifex/styles/star-atlas.js": "d5fd86235f6671ac40339c58d003273dfd27756e50e0d4b03a6984da1b0aff39",
+    "core/colour.js": "21fb41835c359f30836f13b1711f1ba7577f9c805d5ebac697731f2a424f371e",
     "core/geom.js": "e3e21ed547d90f2038649ddfa928c111f6eeb744d420ddbe27554c08eab2f6a8",
     "core/layer.js": "e049fe4e75e4e65a50af36d394c3fa718ff4a50621f9f6bc0ab05c792ec50d1d",
+    "core/num.js": "f0ae1c682945a48b284a78ea079a2510717d5b013e30b7548f33d768199a3455",
     "core/rand.js": "8d8d11109d8b6271812535de899010f4c0ef90f0d48b58a293a31fa95306f203",
     "core/robust-predicates.js": "3116ba65b729ab1cc4ad9e37a48625eb2a6fc884a72a36d46bdeb0e20bbcbbbb",
     "core/stroke-font.js": "7b62854d15db56b58820f7c144dd6336819afb220e5df4bd5e46ae2443dd12a9",

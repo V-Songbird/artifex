@@ -10,7 +10,7 @@
   },
   "sources": {
     "../skills/artifex/styles/gouache.js": "c593f9f7ca23fd18ee2bb5718b3d4caaaa936610eb5a311701bc4fef39090e5e",
-    "../skills/artifex/styles/kit.js": "30ffe34ac03451d65646e2f5d3870e987e460fcd79710fa4b91629fe87fdd797",
+    "../skills/artifex/styles/kit.js": "8fc14f253e4c615a18ba271d7add63272e8a6b3a9ee6db896378f40a22241688",
     "core/colour.js": "21fb41835c359f30836f13b1711f1ba7577f9c805d5ebac697731f2a424f371e",
     "core/geom.js": "e3e21ed547d90f2038649ddfa928c111f6eeb744d420ddbe27554c08eab2f6a8",
     "core/layer.js": "e049fe4e75e4e65a50af36d394c3fa718ff4a50621f9f6bc0ab05c792ec50d1d",

@@ -84,6 +84,26 @@ it fills each lane of hairs as a ribbon whose width follows the brush's
 wobbling edges and ends a wet body raggedly, which fixed-width polylines do
 not give.
 
+`kit.js` also has three optional colour tools, in OKLab lightness, for a
+piece that wants to plan its values before its marks; none is needed to use a
+style. `valueKey(colour, key)` moves a colour into a value key (`'high'`,
+`'mid'`, `'low'` or `'chiaroscuro'`, which leaves the middle values empty),
+keeping its hue, alpha and as much chroma as sRGB allows.
+`perceptualPalette({ hue, harmony, key, count, chroma, ground, minContrast })`
+returns `count` swatches `{ hex, linear, oklch, notan }` stepping dark to light
+through the key, their hues spread from `hue` (radians, as `oklch` gives it) by
+`harmony`: `'monochrome'`, `'analogous'`, `'complementary'`,
+`'split-complementary'`, `'triadic'` or `'tetradic'`. With `ground` and
+`minContrast` a swatch short of that WCAG contrast is moved away from the
+ground's lightness until it reaches it, or as far as sRGB allows, so check a
+demanding target. `notan(samples, { low, high })` sorts hex colours or linear
+`[r, g, b]` into dark (OKLab lightness under `low`, default 0.35), light (from
+`high` up, default 0.7) and mid, and returns `{ bins, darkShare, midShare,
+lightShare, meanLuma, minL, maxL, contrastSpan }`; `low` equal to `high` gives
+two values, and `meanLuma` is linear luminance, not OKLab lightness. Sampled
+from a drawn frame, it says how the picture's masses divide, for the painter
+to judge.
+
 `npm --prefix "<library root>" run styles -- check <name>` checks a built-in style: its module exports
 mark functions and no piece, and its guide has every section.
 

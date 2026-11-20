@@ -1043,6 +1043,47 @@ test('kit bristles: a wet stroke is one unbroken run per hair, a dry one breaks 
   }
 });
 
+test('kit valueKey, perceptualPalette and notan: lightness lands in the key, contrast reaches the ground, shares count every sample', () => {
+  const { valueKey, perceptualPalette, notan } = require('../skills/artifex/styles/kit.js');
+  const { oklch, contrast } = require('../core/colour.js');
+  const L = (c) => oklch(c)[0];
+  const tol = 0.01; // hex rounding
+  const ranges = { high: [0.58, 0.94], mid: [0.24, 0.84], low: [0.12, 0.54] };
+  for (const [key, [lo, hi]] of Object.entries(ranges)) {
+    for (const c of ['#000000', '#6688aa', '#d9524f', '#ffffff', '#20c040']) {
+      const out = valueKey(c, key);
+      assert.ok(L(out) >= lo - tol && L(out) <= hi + tol, `${c} in ${key} is ${out}, L ${L(out).toFixed(3)}`);
+    }
+  }
+  assert.ok(L(valueKey('#000', 'low')) < L(valueKey('#888', 'low')) && L(valueKey('#888', 'low')) < L(valueKey('#fff', 'low')), 'order of values is kept');
+  assert.ok(L(valueKey('#333', 'chiaroscuro')) <= 0.3 + tol && L(valueKey('#ccc', 'chiaroscuro')) >= 0.76 - tol, 'chiaroscuro empties the middle');
+  assert.equal(valueKey('#6688aa80', 'high').slice(7), '80', 'alpha is kept');
+  assert.throws(() => valueKey('#6688aa', 'dim'), /^Error: kit valueKey: key takes high, mid, low or chiaroscuro, got "dim"$/);
+
+  const low = perceptualPalette({ hue: 0.8, harmony: 'triadic', key: 'low', count: 5 });
+  assert.equal(low.length, 5);
+  for (let i = 1; i < low.length; i++) assert.ok(low[i].oklch[0] > low[i - 1].oklch[0], 'swatches step dark to light');
+  for (const s of low) assert.match(s.hex, /^#[0-9a-f]{6}$/);
+  const onDark = perceptualPalette({ hue: 0.8, harmony: 'triadic', key: 'low', count: 5, ground: '#1a1a1a', minContrast: 4.5 });
+  for (const s of onDark) assert.ok(contrast(s.hex, '#1a1a1a') >= 4.5, `${s.hex} against #1a1a1a is ${contrast(s.hex, '#1a1a1a').toFixed(2)}`);
+  const onLight = perceptualPalette({ key: 'high', count: 4, ground: '#f4f0e8', minContrast: 3 });
+  for (const s of onLight) assert.ok(contrast(s.hex, '#f4f0e8') >= 3, `${s.hex} against #f4f0e8`);
+  assert.equal(perceptualPalette({ count: 1 }).length, 1);
+  assert.equal(new Set(perceptualPalette({ harmony: 'monochrome', count: 3, chroma: 0.1 }).map((s) => Math.round(s.oklch[2] * 10))).size, 1, 'monochrome keeps one hue');
+  assert.throws(() => perceptualPalette({ harmony: 'clashing' }), /^Error: kit perceptualPalette: harmony takes monochrome, analogous, .*got "clashing"$/);
+  assert.throws(() => perceptualPalette({ count: 0 }), /^Error: kit perceptualPalette: count takes a whole number of 1 or more, got 0$/);
+  assert.throws(() => perceptualPalette({ hue: NaN }), /^Error: kit perceptualPalette: hue takes a finite number of radians, got NaN$/);
+
+  const n = notan(['#000000', '#101010', '#808080', '#ffffff', [1, 1, 1]]);
+  assert.deepEqual(n.bins, ['dark', 'dark', 'mid', 'light', 'light']);
+  assert.equal(n.darkShare + n.midShare + n.lightShare, 1);
+  assert.ok(Math.abs(n.meanLuma - (0 + 0.0052 + 0.2159 + 1 + 1) / 5) < 1e-3, 'meanLuma is linear luminance: ' + n.meanLuma);
+  assert.ok(Math.abs(n.contrastSpan - 1) < 1e-6 && n.minL === 0);
+  assert.deepEqual(notan(['#404040', '#808080', '#c0c0c0'], { low: 0.7, high: 0.7 }).bins, ['dark', 'dark', 'light'], 'low === high gives two values');
+  assert.throws(() => notan([]), /^Error: kit notan: samples takes a non-empty array/);
+  assert.throws(() => notan([[1, 2]]), /^Error: kit notan: each sample takes a hex colour or linear \[r, g, b\], got \[1,2\]$/);
+});
+
 // A mock 2D context for the flat cartoon marks: a log of every call and set,
 // and the polygon each fill() closed over.
 function recorder() {
