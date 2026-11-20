@@ -117,4 +117,83 @@ function barCuts(lengths, opt = {}) {
   });
 }
 
-module.exports = { euclid, tones, shift, lead, barCuts };
+const CHORD_EXT = {
+  triad: (r, third, fifth) => [r, third, fifth],
+  sus2: (r, _third, fifth) => [r, (r + 2) % 12, fifth],
+  sus4: (r, _third, fifth) => [r, (r + 5) % 12, fifth],
+  6: (r, third, fifth) => [r, third, fifth, (r + 9) % 12],
+  7: (r, third, fifth) => [r, third, fifth, (r + 10) % 12],
+  maj7: (r, third, fifth) => [r, third, fifth, (r + 11) % 12],
+  add9: (r, third, fifth) => [r, third, fifth, (r + 2) % 12],
+  9: (r, third, fifth) => [r, third, fifth, (r + 10) % 12, (r + 2) % 12],
+  m7b5: (r) => [r, (r + 3) % 12, (r + 6) % 12, (r + 10) % 12],
+  dim7: (r) => [r, (r + 3) % 12, (r + 6) % 12, (r + 9) % 12],
+};
+
+/**
+ * Extended chord pitch classes (`'triad' | '7' | 'maj7' | '9' | 'add9' | 'sus2' | 'sus4' | '6' | 'm7b5' | 'dim7'`)
+ * over `{ root, minor }`, ready for `lead(from, extendChord(chord, kind))`.
+ */
+function extendChord(chord, kind = '7') {
+  const { root, minor } = chordOf('extendChord', chord);
+  const fn = CHORD_EXT[kind];
+  if (!fn) throw new RangeError(`extendChord: kind must be one of ${Object.keys(CHORD_EXT).join(', ')}, got ${JSON.stringify(kind)}`);
+  return fn(root, (root + (minor ? 3 : 4)) % 12, (root + 7) % 12);
+}
+
+const SCALES = {
+  major: [0, 2, 4, 5, 7, 9, 11],
+  ionian: [0, 2, 4, 5, 7, 9, 11],
+  dorian: [0, 2, 3, 5, 7, 9, 10],
+  phrygian: [0, 1, 3, 5, 7, 8, 10],
+  lydian: [0, 2, 4, 6, 7, 9, 11],
+  mixolydian: [0, 2, 4, 5, 7, 9, 10],
+  minor: [0, 2, 3, 5, 7, 8, 10],
+  aeolian: [0, 2, 3, 5, 7, 8, 10],
+  locrian: [0, 1, 3, 5, 6, 8, 10],
+  'harmonic-minor': [0, 2, 3, 5, 7, 8, 11],
+  'melodic-minor': [0, 2, 3, 5, 7, 9, 11],
+  pentatonic: [0, 2, 4, 7, 9],
+  'minor-pentatonic': [0, 3, 5, 7, 10],
+  'whole-tone': [0, 2, 4, 6, 8, 10],
+};
+
+/**
+ * The pitch classes (`0..11`) of `mode` over `root` (`0..11`).
+ */
+function scale(root, mode = 'major') {
+  if (!Number.isInteger(root) || root < 0 || root > 11) throw new RangeError(`scale: root must be a pitch class from 0 to 11, got ${root}`);
+  const steps = SCALES[mode];
+  if (!steps) throw new RangeError(`scale: mode must be one of ${Object.keys(SCALES).join(', ')}, got ${JSON.stringify(mode)}`);
+  return steps.map((s) => (root + s) % 12);
+}
+
+/**
+ * Shapes a phrase of notes (`[{ at, note, length, velocity }]`) with a deterministic
+ * phrasing arch (`arch` in `[0, 1]`), harmonic tension toward `tonic` (`0..11`), and
+ * micro-timing humanization from `R(name, 'timing' | 'accent', i)`.
+ */
+function express(notes, opt = {}) {
+  if (!Array.isArray(notes)) throw new TypeError('express: notes must be a list of note events');
+  const { R, name = 'phrase', tonic = 0, arch = 0.25, humanize = 0.008 } = opt;
+  if (!Number.isInteger(tonic) || tonic < 0 || tonic > 11) throw new RangeError(`express: tonic must be a pitch class from 0 to 11, got ${tonic}`);
+  if (!(arch >= 0 && arch <= 1)) throw new RangeError(`express: arch must be from 0 to 1, got ${arch}`);
+  if (!(humanize >= 0 && humanize <= 0.1)) throw new RangeError(`express: humanize must be seconds from 0 to 0.1, got ${humanize}`);
+  if (R !== undefined && typeof R !== 'function') throw new TypeError('express: R must be the piece\'s R(entity, property, index)');
+  const TENSION = [0, 0.9, 0.35, 0.25, 0.2, 0.3, 0.95, 0.1, 0.4, 0.25, 0.45, 0.75];
+  const n = notes.length;
+  return notes.map((ev, i) => {
+    if (!ev || !Number.isFinite(ev.note)) throw new TypeError(`express: note ${i} must be { at, note } with note a MIDI number, got ${JSON.stringify(ev)}`);
+    const u = n > 1 ? i / (n - 1) : 0.5;
+    const contour = Math.sin(Math.PI * u);
+    const pc = ((Math.round(ev.note) - tonic) % 12 + 12) % 12;
+    const tension = TENSION[pc];
+    const dt = R ? humanize * (2 * R(name, 'timing', i) - 1) : 0;
+    const dv = R ? 0.06 * (2 * R(name, 'accent', i) - 1) : 0;
+    const baseVel = ev.velocity === undefined ? 0.75 : ev.velocity;
+    const velocity = Math.min(1, Math.max(0.05, baseVel * (1 - 0.5 * arch + arch * contour) + 0.1 * tension + dv));
+    return { ...ev, at: Math.max(0, (ev.at ?? 0) + dt), velocity, tension };
+  });
+}
+
+module.exports = { euclid, tones, shift, lead, barCuts, extendChord, scale, express };

@@ -3,7 +3,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { euclid, tones, shift, lead, barCuts } = require('../core/score.js');
+const { euclid, tones, shift, lead, barCuts, extendChord, scale, express } = require('../core/score.js');
 
 const draw = (p) => p.map((on) => (on ? 'x' : '.')).join('');
 
@@ -105,4 +105,27 @@ test('barCuts makes every shot a whole number of bars, end to start, never under
   assert.throws(() => barCuts([1], {}), /barCuts: bpm must be a positive number of beats a minute, got undefined/);
   assert.throws(() => barCuts([0], { bpm: 100 }), /barCuts: lengths must be a list of seconds, each over 0/);
   assert.throws(() => barCuts([1], { bpm: 100, beats: 0 }), /barCuts: beats must be a whole number, 1 or more, got 0/);
+});
+
+test('extendChord, scale and express build extended harmonies, modal collections and phrased contours', () => {
+  const { rng } = require('../core/rand.js');
+  const C = { root: 0, minor: false };
+  assert.deepEqual(extendChord(C, '7'), [0, 4, 7, 10]);
+  assert.deepEqual(extendChord(C, 'maj7'), [0, 4, 7, 11]);
+  assert.deepEqual(extendChord(C, '9'), [0, 4, 7, 10, 2]);
+  assert.deepEqual(extendChord(C, 'sus4'), [0, 5, 7]);
+  assert.deepEqual(scale(2, 'dorian'), [2, 4, 5, 7, 9, 11, 0]);
+  assert.deepEqual(scale(0, 'pentatonic'), [0, 2, 4, 7, 9]);
+
+  const raw = [{ at: 0, note: 60 }, { at: 0.5, note: 66 }, { at: 1, note: 67 }];
+  const phrased = express(raw, { R: rng(5), name: 'mel', tonic: 0, arch: 0.3, humanize: 0.005 });
+  assert.equal(phrased.length, 3);
+  assert.ok(phrased[1].tension > phrased[2].tension, 'tritone has higher tension than fifth');
+  assert.ok(phrased.every((n) => n.velocity >= 0.05 && n.velocity <= 1));
+  assert.deepEqual(express(raw, { R: rng(5), name: 'mel' }), express(raw, { R: rng(5), name: 'mel' }), 'the same seed phrases the same way');
+  assert.ok(Number.isFinite(express([{ at: 0, note: 60.5 }])[0].velocity), 'a microtonal note still gets a velocity');
+  assert.throws(() => express([{ at: 0 }]), /express: note 0 must be \{ at, note \} with note a MIDI number/);
+  assert.throws(() => express(raw, { R: 3 }), /express: R must be the piece's R/);
+  assert.throws(() => extendChord(C, 'maj13'), /extendChord: kind must be one of/);
+  assert.throws(() => scale(12, 'dorian'), /scale: root must be a pitch class from 0 to 11, got 12/);
 });
