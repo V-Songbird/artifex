@@ -1,0 +1,46 @@
+name: Gallery
+
+# Checks every pull request to the gallery branch with Artifex's own gallery
+# check from main: one new item, its rules, its pack proved and its demo loaded
+# within its own files. A pull request runs untrusted code, so this runs on
+# pull_request only, never pull_request_target, with read-only permissions and
+# no stored credentials.
+on:
+  pull_request:
+    branches: [gallery]
+  push:
+    branches: [gallery]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check the gallery
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the gallery
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: gallery
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out Artifex
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          path: artifex
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: artifex/.nvmrc
+          package-manager-cache: false
+      - name: Check a pull request's one new item
+        if: ${{ github.event_name == 'pull_request' }}
+        run: node artifex/tools/gallery.js gallery --base ${{ github.event.pull_request.base.sha }}
+      - name: Check every item
+        if: ${{ github.event_name != 'pull_request' }}
+        run: node artifex/tools/gallery.js gallery
