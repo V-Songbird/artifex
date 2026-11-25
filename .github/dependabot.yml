@@ -1,0 +1,20 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      github-actions:
+        patterns: ["*"]
+  # The gallery branch's own workflow, which shares no history with main.
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: gallery
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      gallery-actions:
+        patterns: ["*"]

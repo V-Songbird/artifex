@@ -1,0 +1,6 @@
+interface:
+  display_name: "Style Pack"
+  short_description: "Package a style's guide, mark functions and proof as an installable pack"
+  default_prompt: "Use $style-pack to package this style as an installable style pack."
+  icon_small: "./assets/icon.png"
+  icon_large: "./assets/icon.png"

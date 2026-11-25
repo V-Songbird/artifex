@@ -1,0 +1,70 @@
+#!/usr/bin/env node
+'use strict';
+
+// Render every example that declares vector, and report what each one reached.
+// The numbers are printed rather than assumed: every example publishes what it
+// DECLARED and what it REACHED.
+
+const fs = require('node:fs');
+const path = require('node:path');
+
+const { validate, solve, frameCount } = require('../core/piece.js');
+const { renderVector } = require('../core/render.js');
+const EXAMPLES = require('../examples/index.js');
+
+const OUT = require('./piece-input.js').outRoot();
+const USAGE = 'usage: npm run examples';
+
+const args = process.argv.slice(2);
+if (args.includes('--help') || args.includes('-h')) console.log(USAGE);
+else if (args.length) {
+  console.error('examples: ' + (args[0].startsWith('-') ? 'unknown option ' + args[0] : 'unexpected argument "' + args[0] + '"') + '\n' + USAGE);
+  process.exitCode = 1;
+}
+else render();
+
+function render() {
+  fs.mkdirSync(OUT, { recursive: true });
+
+  const rows = [];
+  for (const [name, raw] of Object.entries(EXAMPLES)) {
+    const p = validate(raw);
+
+    const row = {
+      name,
+      declared: p.outputs.join('+'),
+      box: `${p.size.w}x${p.size.h}`,
+      frames: frameCount(p),
+      build: '',
+      reached: '',
+    };
+
+    if (p.outputs.includes('vector')) {
+      // renderVector builds the piece itself, so its stage times are the build.
+      const t1 = Date.now();
+      const r = renderVector(raw, { t: p.time ? 1 : 0 });
+      fs.writeFileSync(path.join(OUT, `${name}.svg`), r.svg);
+      row.build = `${r.stages.ms.reduce((a, [, ms]) => a + ms, 0)}ms`;
+      row.reached = `${r.marks} marks, ${(r.svg.length / 1024).toFixed(0)} kB svg, ${Date.now() - t1}ms`;
+    } else {
+      const t0 = Date.now();
+      solve(p, p.seed);
+      row.build = `${Date.now() - t0}ms`;
+      // Report a capability skip explicitly so it cannot be mistaken for a render.
+      row.reached = 'SKIP: declares raster only, so there is no vector file to write';
+    }
+    rows.push(row);
+  }
+
+  const w = (k) => Math.max(...rows.map((r) => String(r[k]).length), k.length);
+  const cols = ['name', 'declared', 'box', 'frames', 'build', 'reached'];
+  const line = (r) => cols.map((c) => String(r[c]).padEnd(w(c))).join('  ');
+  console.log(line(Object.fromEntries(cols.map((c) => [c, c]))));
+  console.log(cols.map((c) => '-'.repeat(w(c))).join('  '));
+  for (const r of rows) console.log(line(r));
+
+  const timelines = rows.filter((r) => r.frames > 1);
+  console.log(`\n${rows.length} examples, ${rows.filter((r) => r.declared.includes('vector')).length} reach a plotter, `
+    + `${timelines.length} have a timeline (${timelines.reduce((a, r) => a + r.frames, 0)} frames in total).`);
+  console.log(`SVG written to ${path.relative(path.join(__dirname, '..'), OUT).startsWith('..') ? OUT : 'out'}${path.sep}`);
+}

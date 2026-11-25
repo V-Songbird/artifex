@@ -1,0 +1,33 @@
+{
+  "name": "artifex",
+  "version": "0.1.0",
+  "description": "Art from code: one seeded piece draws a page, a PNG, an SVG and a film with sound, and each file carries the recipe that redraws it.",
+  "license": "FSL-1.1-ALv2",
+  "private": true,
+  "scripts": {
+    "check": "npm run lint && npm test",
+    "test": "node --test \"tests/*.test.js\"",
+    "test:changed": "node tools/run-tests.js",
+    "test:all": "node tools/run-tests.js --all",
+    "negative": "node tests/negative.js",
+    "lint": "node tools/lint-unread.js",
+    "page": "node tools/build-page.js",
+    "browser": "node tools/check-browser.js",
+    "seeds": "node tools/contact-sheet.js",
+    "replay": "node tools/replay.js",
+    "film": "node tools/film-cli.js",
+    "still": "node tools/still-cli.js",
+    "edge": "node tools/warm-edge.js",
+    "stitch": "node tools/stitch.js",
+    "styles": "node tools/styles.js",
+    "measure": "node tools/measure-reference.js",
+    "image": "node tools/image.js",
+    "examples": "node tools/render-examples.js",
+    "bench": "node tools/bench.js",
+    "bench:sim": "node tools/bench-sim.js",
+    "gallery": "node tools/gallery.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

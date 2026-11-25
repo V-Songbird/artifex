@@ -1,0 +1,65 @@
+# Repository baseline. Copy into a project's .gitignore and add its own rules.
+# Keep source, shared configuration, fixtures and public documentation visible.
+
+# Private working material and documentation
+.private/
+docs/tasks/
+docs/decisions/
+docs/knowledge/private/
+docs/apis/private/
+
+# Local environment values; public .env.example/.sample/.template files stay visible
+.env
+.env.local
+.env.*.local
+.dev.vars
+.dev.vars.*.local
+id_rsa
+id_ed25519
+
+# Machine-local agent state; shared instructions, skills and hook configuration stay visible
+**/.claude/settings.local.json
+**/.claude/memory/
+**/.claude/backups/
+**/.claude/logs/
+**/.claude/worktrees/
+**/.claude/transcripts/
+**/.claude/skills/synced/
+**/.claude/skills/.trash/
+**/.claude/plugins/synced/
+**/.claude/plugins/.trash/
+.claude.json.corrupted.*
+CLAUDE.local.md
+AGENTS.override.md
+
+# Reproducible dependency and interpreter caches
+node_modules/
+__pycache__/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.gradle/
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Add project-specific outputs and local secret filenames below after inspecting them.
+# Do not assume build/, dist/, target/, bin/, out/ or configuration directories are disposable.
+
+# Project planning remains at its existing location
+ROADMAP.jsonl
+.foreman/
+
+# Generated artwork and local comparison outputs; tools write a piece's output under out/ or beside the piece (the rule: docs/knowledge/command-line-tools.md)
+out/
+
+# wrangler's local state from `wrangler dev` or a dry-run deploy of the site
+.wrangler/
+
+# Workstation editor project
+.idea/

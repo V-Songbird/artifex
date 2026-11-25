@@ -1,0 +1,68 @@
+name: Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mutations:
+    name: Mutations (${{ matrix.shard }}/20)
+    # Started by hand only: a full run takes hours of runner time across its shards.
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    # Each shard runs the suite once as its control (18 to 34 minutes on the
+    # first full run, 2026-11-17), then a twentieth of the mutations one after
+    # another (49 to 108 s each there). Six shards of 90 minutes judged 456 of 1249.
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        # The shard count also appears in the job name and the run step.
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Run mutation checks
+        # Through npm, which sets npm_execpath for tests that run npm themselves.
+        run: npm run negative -- --shard ${{ matrix.shard }}/20
+        env:
+          # One suite run takes about six minutes on a hosted runner, over the 300 s default.
+          ARTIFEX_NEGATIVE_TIMEOUT_MS: 900000
+
+  check:
+    name: Check (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Reject tracked ignored files
+        run: |
+          node -e "const { execFileSync } = require('node:child_process'); const paths = execFileSync('git', ['ls-files', '-ci', '--exclude-standard'], { encoding: 'utf8' }).trim(); if (paths) { console.error('Ignored files are tracked:\n' + paths); process.exit(1); }"
+      - name: Run lint and tests
+        run: npm run check
+      - name: Build the standalone page
+        run: npm run page
